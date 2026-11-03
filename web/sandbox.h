@@ -1155,8 +1155,7 @@ struct play_ui : ui_functions {
 			card.push_back({k ? k : pick_key(sp[i].label), sp[i].label, C_SPELL,
 			                U::None, have_energy, sp[i].tech});
 		}
-		// Cancel whatever this unit is mid-way through: a nuke it's painting, an addon it's
-		// building, or a Zerg morph. (A production queue is cancelled via its status chips.)
+		// Cancel the current ability, construction, or last queued production item.
 		int cancel_op = 0;
 		if (unit_is_ghost(u) && u->connected_unit && unit_is(u->connected_unit, U::Terran_Nuclear_Missile))
 			cancel_op = 46;
@@ -1167,6 +1166,12 @@ struct play_ui : ui_functions {
 			cancel_op = 25;
 		else if (u_grounded_building(u) && !u_completed(u))
 			cancel_op = 24;   // a building still going up (Terran/Protoss); refunds and frees the worker
+		else if (!u->build_queue.empty())
+			cancel_op = 32;
+		else if (unit_is_researching(u))
+			cancel_op = 49;
+		else if (unit_is_upgrading(u))
+			cancel_op = 51;
 		if (cancel_op)
 			// Cancel's hotkey is Escape in the original, not an auto-assigned letter. '\x1b'
 			// is matched by run_command from both the Escape key (see the key handler) and a
@@ -1796,7 +1801,12 @@ struct play_ui : ui_functions {
 			                      pending_spell_order = s->order; pending_spell_unit = s->targ_unit;
 			                      start_target(T_SPELL);
 			                  } break;
-			case C_CANCEL:    sync_selection();
+			case C_CANCEL:    if (c.unit == 32 || c.unit == 49 || c.unit == 51) {
+				                      if (unit_t* u = primary_selected())
+				                          cancel_queue_slot(c.unit == 32 ? (int)u->build_queue.size() - 1 : 0);
+				                      break;
+				                  }
+				                  sync_selection();
 			                  if (c.unit == 46) cmds.cancel_nuke();
 			                  else if (c.unit == 52) cmds.cancel_addon();
 			                  else if (c.unit == 24) cmds.cancel_build();
@@ -2697,7 +2707,7 @@ struct play_ui : ui_functions {
 				clear_pending(); targeting = false; menu = 0; refresh_card();
 				return true;
 			}
-			// Nothing pending: Escape is the Cancel hotkey (construction, morph, addon, nuke).
+			// Nothing pending: Escape is the current card's Cancel hotkey.
 			run_command('\x1b');
 			return true;
 		}
