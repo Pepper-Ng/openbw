@@ -47,6 +47,7 @@ jobs:
           mkdir -p _site
           cp web/index.html web/openbw.js web/net.js web/openbw.wasm \
              web/openbw-bot.wasm web/openbw-mcrave.wasm web/CNAME _site/
+           mkdir -p _site/vendor && cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE _site/vendor/
           # A committed map (if any) ships too; otherwise the map is fetched at runtime.
           if compgen -G "web/maps/*.scx" > /dev/null; then
             mkdir -p _site/maps && cp web/maps/*.scx _site/maps/

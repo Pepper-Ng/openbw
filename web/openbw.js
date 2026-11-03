@@ -272,11 +272,24 @@ try { altEsc = localStorage.getItem('openbw-alt-esc') || ''; } catch {}
 // (image-rendering: pixelated). 1x = native resolution, the default and minimum;
 // zooming in gives bigger, chunkier OG-style pixels. Pinch / Ctrl+wheel adjusts it.
 let zoom = 1;
-// Max zoom: never render narrower than the original 640x480 — whichever axis
-// hits its limit first caps the zoom.
-const zoomMax = () => Math.max(1, Math.min(window.innerWidth / 640, window.innerHeight / 480));
+const coarsePointer = () => window.matchMedia('(pointer: coarse)').matches;
+const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const viewportSize = () => {
+  if (!coarsePointer()) return [window.innerWidth, window.innerHeight];
+  const rectangle = $('screen').getBoundingClientRect();
+  return [rectangle.width, rectangle.height];
+};
+const zoomMax = () => {
+  const [minimumWidth, minimumHeight] = coarsePointer() ? [320, 240] : [640, 480];
+  const [width, height] = viewportSize();
+  return Math.max(1, Math.min(coarsePointer() ? 3 : Infinity,
+    width / minimumWidth, height / minimumHeight));
+};
 try { zoom = Math.min(zoomMax(), Math.max(1, parseFloat(localStorage.getItem('openbw-zoom')) || 1)); } catch {}
-const winSize = () => [Math.max(320, (window.innerWidth / zoom) | 0), Math.max(240, (window.innerHeight / zoom) | 0)];
+const winSize = () => {
+  const [width, height] = viewportSize();
+  return [Math.max(320, (width / zoom) | 0), Math.max(240, (height / zoom) | 0)];
+};
 
 function wireInput(canvas, x) {
   const xy = (e) => {
@@ -296,7 +309,8 @@ function wireInput(canvas, x) {
   wireInput.lockWanted = false;   // set by the settings wiring in boot()
   wireInput.cursorPos = () => [vx | 0, vy | 0];   // for the native cursor overlay
   canvas.addEventListener('click', () => {
-    if ((wireInput.lockWanted || document.fullscreenElement) && !locked()) canvas.requestPointerLock();
+    if (!coarsePointer() && (wireInput.lockWanted || fullscreenElement()) && !locked() && canvas.requestPointerLock)
+      Promise.resolve(canvas.requestPointerLock()).catch(() => {});
   });
 
   // Reflect a mouse event's modifier flags into the engine's key-state, which is
@@ -344,6 +358,7 @@ function wireInput(canvas, x) {
     syncMods(e); const [px, py] = pos(e); x.openbw_mouse_button(1, sdlButton(e.button), px, py, e.detail || 1);
   });
   window.addEventListener('mouseup', (e) => {
+    if (e.target.closest?.('#touch-controls, #touch-shortcuts')) return;
     if (domDownEl) {
       // Complete the DOM click if the release is still over the pressed element.
       const el = domUnderCursor();
@@ -399,6 +414,19 @@ function wireInput(canvas, x) {
   // do the rest; 1x (native, the default) is the floor — never more zoomed out.
   // The engine keeps the minimap at constant size via the view scale.
   let zoomTimer = 0, lastZoomApply = 0, appliedZoom = zoom;
+  const updateZoomButtons = () => {
+    $('touch-zoom-out').disabled = zoom <= 1;
+    $('touch-zoom-in').disabled = zoom >= zoomMax();
+    if (coarsePointer()) {
+      const bounds = canvas.getBoundingClientRect();
+      const scaleX = bounds.width / x.openbw_framebuffer_width();
+      const scaleY = bounds.height / x.openbw_framebuffer_height();
+      const mapWidth = Math.round(x.openbw_map_w() / zoom);
+      const mapHeight = Math.round(x.openbw_map_h() / zoom);
+      document.body.style.setProperty('--minimap-edge', (bounds.left + (mapWidth + 4) * scaleX + 8) + 'px');
+      document.body.style.setProperty('--touch-rows', mapHeight * scaleY >= 90 ? '2' : '1');
+    }
+  };
   const applyZoom = () => {
     zoomTimer = 0;
     lastZoomApply = performance.now();
@@ -413,87 +441,175 @@ function wireInput(canvas, x) {
     x.openbw_pan(Math.round(vx * (1 - k)), Math.round(vy * (1 - k)));
     vx *= k; vy *= k;
     x.openbw_mouse_move(vx | 0, vy | 0);
+    updateZoomButtons();
+  };
+  const setZoom = (value) => {
+    zoom = Math.min(zoomMax(), Math.max(1, value));
+    try { localStorage.setItem('openbw-zoom', zoom.toFixed(2)); } catch {}
+    const since = performance.now() - lastZoomApply;
+    if (since >= 30) { clearTimeout(zoomTimer); applyZoom(); }
+    else if (!zoomTimer) zoomTimer = setTimeout(applyZoom, 30 - since);
+    updateZoomButtons();
+  };
+  wireInput.resize = () => {
+    cancelTouch();
+    clearTimeout(zoomTimer);
+    zoomTimer = 0;
+    zoom = Math.min(zoom, zoomMax());
+    appliedZoom = zoom;
+    if (x.openbw_set_view_scale) x.openbw_set_view_scale(zoom);
+    x.openbw_resize(...winSize());
+    updateZoomButtons();
   };
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      zoom = Math.min(zoomMax(), Math.max(1, zoom * Math.exp(-e.deltaY * 0.01)));
-      try { localStorage.setItem('openbw-zoom', zoom.toFixed(2)); } catch {}
-      // Throttle to ~30ms so a pinch tracks continuously without a resize per event.
-      const since = performance.now() - lastZoomApply;
-      if (since >= 30) applyZoom();
-      else if (!zoomTimer) zoomTimer = setTimeout(applyZoom, 30 - since);
+      setZoom(zoom * Math.exp(-e.deltaY * 0.01));
       return;
     }
     const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.height : 1;
     x.openbw_pan(Math.round(e.deltaX * scale), Math.round(e.deltaY * scale));
   }, { passive: false });
 
-  // --- Touch: gestures onto the mouse behaviours the engine already knows.
-  //   short tap            → select                (left click)
-  //   double tap           → select all of type    (double left click)
-  //   drag                 → pan the camera
-  //   long-press then drag → box select            (left-button drag)
-  //   long-press then lift → smart order            (right click: move / attack / gather)
-  //   two-finger tap       → smart order            (right click — the trackpad's gesture)
-  // The HTML command card keeps working, so tapping a verb (Attack…) then a target is the
-  // discoverable order path; two-finger tap (tablet) and long-press (one-handed phone) are
-  // the right-click shortcuts. Everything routes to existing exports — no engine changes.
   const LONG_MS = 350, DBL_MS = 300, MOVE_PX = 12, MOVE2 = MOVE_PX * MOVE_PX;
   const d2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
-  let tt = null;                            // the active gesture, or null
-  let lastTap = { t: -1e9, x: 0, y: 0 };    // for double-tap detection
-  // Park the engine cursor off-screen after a gesture: otherwise its last position lingers
-  // and, if that was near a screen edge, edge-scroll keeps running with no finger down.
+  let tt = null;
+  let lastTap = { t: -1e9, x: 0, y: 0 };
+  wireInput.queue = false;
+  wireInput.inspect = false;
   const park = () => x.openbw_mouse_move(-1, -1);
+  const cancelTouch = () => {
+    if (!tt) return;
+    clearTimeout(tt.timer);
+    if (tt.mode === 'box') {
+      x.openbw_mouse_button(0, 1, tt.x | 0, tt.y | 0, 1);
+      x.openbw_render(performance.now());
+    }
+    x.openbw_key(0, 0, 225);
+    tt = null;
+    park();
+  };
+  const tap = (button, px, py, clicks = 1) => {
+    x.openbw_key(wireInput.queue ? 1 : 0, 0, 225);
+    x.openbw_mouse_move(px | 0, py | 0);
+    x.openbw_mouse_button(1, button, px | 0, py | 0, clicks);
+    x.openbw_mouse_button(0, button, px | 0, py | 0, clicks);
+    x.openbw_render(performance.now());
+    x.openbw_key(0, 0, 225);
+  };
+  const pressKey = (symbol, scancode = 0) => {
+    x.openbw_key(1, symbol, scancode);
+    x.openbw_key(0, symbol, scancode);
+  };
+  const clearInspect = () => {
+    for (const command of document.querySelectorAll('#card .inspect')) {
+      command.classList.remove('inspect');
+      command.setAttribute('aria-expanded', 'false');
+    }
+  };
+  $('touch-queue').onclick = () => {
+    wireInput.queue = !wireInput.queue;
+    $('touch-queue').setAttribute('aria-pressed', String(wireInput.queue));
+  };
+  $('touch-info').onclick = () => {
+    wireInput.inspect = !wireInput.inspect;
+    $('touch-info').setAttribute('aria-pressed', String(wireInput.inspect));
+    clearInspect();
+  };
+  $('touch-cancel').onclick = () => { cancelTouch(); clearInspect(); pressKey(0, 41); };
+  for (const button of document.querySelectorAll('[data-touch-group]')) {
+    let holdTimer = 0, assigned = false;
+    const save = () => {
+      assigned = true;
+      x.openbw_key(1, 0, 224);
+      pressKey(button.dataset.touchGroup.charCodeAt(0));
+      x.openbw_render(performance.now());
+      x.openbw_key(0, 0, 224);
+      button.classList.add('saved');
+      setTimeout(() => button.classList.remove('saved'), 800);
+    };
+    button.addEventListener('pointerdown', (event) => {
+      assigned = false;
+      holdTimer = setTimeout(save, 450);
+      button.setPointerCapture(event.pointerId);
+    });
+    for (const event of ['pointerup', 'pointercancel', 'lostpointercapture'])
+      button.addEventListener(event, () => clearTimeout(holdTimer));
+    button.addEventListener('contextmenu', event => event.preventDefault());
+    button.onclick = () => {
+      if (!assigned) pressKey(button.dataset.touchGroup.charCodeAt(0));
+      assigned = false;
+    };
+  }
+  for (const [id, factor] of [['touch-zoom-out', 1 / 1.2], ['touch-zoom-in', 1.2]]) {
+    $(id).onclick = () => {
+      vx = canvas.width / 2; vy = canvas.height / 2;
+      setZoom(zoom * factor);
+    };
+  }
+  updateZoomButtons();
+  document.body.classList.add('playing');
+  if (window.lucide) window.lucide.createIcons();
 
   canvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
-    const t = e.changedTouches[0];
-    const [px, py] = xy(t);
-    if (tt) {
-      // A second finger while the first is still a pending tap → two-finger tap = right
-      // click, mirroring the trackpad. Cancels the first finger's single-tap/long-press.
-      if (tt.mode === 'pending' && tt.id2 === undefined) {
-        clearTimeout(tt.timer);
-        tt.mode = 'two'; tt.id2 = t.identifier; tt.x02 = px; tt.y02 = py;
-      }
+    clearInspect();
+    if (e.touches.length >= 2) {
+      if (tt?.mode === 'pinch') return;
+      const first = e.touches[0], second = e.touches[1];
+      const canTap = tt?.mode === 'pending';
+      cancelTouch();
+      tt = { mode: 'pinch', distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY),
+        zoom, cx: (first.clientX + second.clientX) / 2, cy: (first.clientY + second.clientY) / 2,
+        moved: false, canTap, target: xy(first) };
       return;
     }
-    tt = { id: t.identifier, x0: px, y0: py, x: px, y: py, mode: 'pending', armed: false, id2: undefined, up: 0 };
-    tt.timer = setTimeout(() => { if (tt) tt.armed = true; }, LONG_MS);   // long-press fires
+    if (tt) return;
+    const t = e.changedTouches[0];
+    const [px, py] = xy(t);
+    tt = { id: t.identifier, x0: px, y0: py, x: px, y: py, cx: t.clientX, cy: t.clientY,
+      mode: 'pending', armed: false };
+    const gesture = tt;
+    tt.timer = setTimeout(() => { if (tt === gesture) tt.armed = true; }, LONG_MS);
   }, { passive: false });
 
   canvas.addEventListener('touchmove', (e) => {
     if (!tt) return;
     e.preventDefault();
-    if (tt.mode === 'two' || tt.mode === 'dead') {
-      // Movement of either finger means it's a pan/pinch, not a tap — cancel the order.
-      for (const c of e.changedTouches) {
-        if (c.identifier !== tt.id && c.identifier !== tt.id2) continue;
-        const [cx, cy] = xy(c), first = c.identifier === tt.id;
-        if (d2(cx, cy, first ? tt.x0 : tt.x02, first ? tt.y0 : tt.y02) > MOVE2) tt.mode = 'dead';
-      }
+    if (tt.mode === 'pinch') {
+      if (e.touches.length < 2) return;
+      const first = e.touches[0], second = e.touches[1];
+      const distance = Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+      const cx = (first.clientX + second.clientX) / 2, cy = (first.clientY + second.clientY) / 2;
+      if (Math.abs(distance - tt.distance) > 4 || d2(cx, cy, tt.cx, tt.cy) > MOVE2) tt.moved = true;
+      if (!tt.moved) return;
+      [vx, vy] = xy({ clientX: cx, clientY: cy });
+      const rectangle = canvas.getBoundingClientRect();
+      x.openbw_pan(Math.round((tt.cx - cx) * canvas.width / rectangle.width),
+        Math.round((tt.cy - cy) * canvas.height / rectangle.height));
+      setZoom(tt.zoom * distance / Math.max(1, tt.distance));
+      tt.cx = cx; tt.cy = cy;
       return;
     }
     const t = [...e.changedTouches].find((c) => c.identifier === tt.id);
     if (!t) return;
     const [px, py] = xy(t);
-    const far = d2(px, py, tt.x0, tt.y0) > MOVE2;
+    const far = d2(t.clientX, t.clientY, tt.cx, tt.cy) > MOVE2;
     if (tt.mode === 'pending' && far) {
       clearTimeout(tt.timer);
-      if (tt.armed) {                       // long-press held, now dragging → box select
+      if (tt.armed) {
         tt.mode = 'box';
+        x.openbw_key(wireInput.queue ? 1 : 0, 0, 225);
         x.openbw_mouse_move(tt.x0, tt.y0);
-        x.openbw_mouse_button(1, 1, tt.x0, tt.y0, 1);   // left down at the press point
+        x.openbw_mouse_button(1, 1, tt.x0, tt.y0, 1);
         x.openbw_mouse_move(px, py);
-      } else {                              // moved before the long-press → pan
+      } else {
         tt.mode = 'pan';
       }
     } else if (tt.mode === 'pan') {
-      x.openbw_pan(tt.x - px, tt.y - py);   // drag the world with the finger
+      x.openbw_pan(tt.x - px, tt.y - py);
     } else if (tt.mode === 'box') {
-      x.openbw_mouse_move(px, py);          // grow the selection rectangle
+      x.openbw_mouse_move(px, py);
     }
     tt.x = px; tt.y = py;
   }, { passive: false });
@@ -501,42 +617,35 @@ function wireInput(canvas, x) {
   const endTouch = (e) => {
     if (!tt) return;
     e.preventDefault();
-    const t = [...e.changedTouches].find((c) => c.identifier === tt.id || c.identifier === tt.id2);
-    if (!t) return;                         // a finger we aren't tracking
-    if (tt.mode === 'two' || tt.mode === 'dead') {
-      if (++tt.up < 2) return;              // wait until both fingers have lifted
-      if (tt.mode === 'two') {              // clean two-finger tap → smart order at the anchor
-        x.openbw_mouse_move(tt.x0, tt.y0);
-        x.openbw_mouse_button(1, 3, tt.x0, tt.y0, 1);
-        x.openbw_mouse_button(0, 3, tt.x0, tt.y0, 1);
-      }
+    if (tt.mode === 'pinch') {
+      if (e.touches.length) return;
+      if (!tt.moved && tt.canTap) tap(3, ...tt.target);
       tt = null; park();
       return;
     }
-    if (t.identifier !== tt.id) return;     // single-finger modes only track the primary
+    const t = [...e.changedTouches].find((c) => c.identifier === tt.id);
+    if (!t) return;
     clearTimeout(tt.timer);
     const [px, py] = xy(t);
     if (tt.mode === 'box') {
-      x.openbw_mouse_button(0, 1, px, py, 1);           // left up completes the box
-    } else if (tt.mode === 'pending' && tt.armed) {
-      x.openbw_mouse_button(1, 3, tt.x0, tt.y0, 1);     // long-press, no drag → right click
-      x.openbw_mouse_button(0, 3, tt.x0, tt.y0, 1);
+      x.openbw_mouse_button(0, 1, px, py, 1);
+      x.openbw_render(performance.now());
+      x.openbw_key(0, 0, 225);
     } else if (tt.mode === 'pending') {
       const now = performance.now();
       const dbl = now - lastTap.t < DBL_MS && d2(px, py, lastTap.x, lastTap.y) < MOVE2 * 4;
-      const clicks = dbl ? 2 : 1;                        // clicks=2 → engine select-all-of-type
-      x.openbw_mouse_move(px, py);
-      x.openbw_mouse_button(1, 1, px, py, clicks);
-      x.openbw_mouse_button(0, 1, px, py, clicks);
+      const cursor = x.openbw_cursor();
+      const targeting = cursor === 1 || cursor === 2 || cursor === 4;
+      const button = targeting ? 1 : tt.armed ? 3
+        : x.openbw_touch_button ? x.openbw_touch_button(px | 0, py | 0) : 1;
+      tap(button, px, py, button === 1 && dbl ? 2 : 1);
       lastTap = { t: now, x: px, y: py };
     }
-    // 'pan' → nothing to emit on release
     tt = null;
     park();
   };
   canvas.addEventListener('touchend', endTouch, { passive: false });
-  canvas.addEventListener('touchcancel', () => { if (tt) { clearTimeout(tt.timer); tt = null; park(); } },
-                          { passive: false });
+  canvas.addEventListener('touchcancel', cancelTouch, { passive: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +856,7 @@ async function boot(session) {
   const ctx = canvas.getContext('2d');
 
   hb('boot:engine-init');
+  zoom = Math.min(zoom, zoomMax());
   x._initialize();
   const { slots, mySlot, link = null, delay = 0 } = session;
   if (slots.length > 1) {
@@ -773,6 +883,19 @@ async function boot(session) {
     bot2 = { slot: session.bot2.slot };
   }
   wireInput(canvas, x);
+  const cancelIcon = x.openbw_command_icon ? x.openbw_command_icon(236) : 0;
+  if (cancelIcon) {
+    const width = x.openbw_icon_w(), height = x.openbw_icon_h();
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d');
+    const image = context.createImageData(width, height);
+    image.data.set(new Uint8Array(memory.buffer, cancelIcon, width * height * 4));
+    context.putImageData(image, 0, 0);
+    const icon = document.createElement('img');
+    icon.src = canvas.toDataURL(); icon.alt = '';
+    $('touch-cancel').replaceChildren(icon);
+  }
   // View zoom + native cursor overlay (feature-detected: a stale module falls back
   // to the engine-drawn cursor and a zoom-scaled minimap).
   if (x.openbw_set_view_scale) x.openbw_set_view_scale(zoom);
@@ -808,18 +931,36 @@ async function boot(session) {
   // ticked (and silently re-engage on the next click). Fullscreen's automatic lock
   // is independent of the checkbox and doesn't count.
   document.addEventListener('pointerlockchange', () => {
-    if (!document.pointerLockElement && optLock.checked && !document.fullscreenElement) {
+    if (!document.pointerLockElement && optLock.checked && !fullscreenElement()) {
       optLock.checked = false;
       wireInput.lockWanted = false;
       try { localStorage.setItem('openbw-mouselock', '0'); } catch {}
     }
   });
-  const toggleFullscreen = () => {
-    if (document.fullscreenElement) document.exitFullscreen();
-    else document.documentElement.requestFullscreen().catch(() => {});
-  };
   const fsBtn = $('opt-fullscreen');
-  fsBtn.textContent = `Fullscreen (${navigator.platform.startsWith('Mac') ? '\u2325\u21a9' : 'Alt-Enter'})`;
+  const appMode = navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  const root = document.documentElement;
+  const canFullscreen = !!((document.fullscreenEnabled && root.requestFullscreen)
+    || (document.webkitFullscreenEnabled && root.webkitRequestFullscreen));
+  fsBtn.disabled = appMode || !canFullscreen;
+  fsBtn.textContent = appMode ? 'App mode' : !canFullscreen ? 'Fullscreen unavailable'
+    : coarsePointer() ? 'Fullscreen' : `Fullscreen (${navigator.platform.startsWith('Mac') ? '\u2325\u21a9' : 'Alt-Enter'})`;
+  fsBtn.title = !canFullscreen && !appMode ? 'Launch from the Home Screen for an app window without Safari bars.' : '';
+  const toggleFullscreen = async () => {
+    if (appMode || !canFullscreen) return;
+    try {
+      if (fullscreenElement()) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else await document.webkitExitFullscreen();
+      } else if (root.requestFullscreen) {
+        await root.requestFullscreen({ navigationUI: 'hide' });
+      } else {
+        await root.webkitRequestFullscreen();
+      }
+    } catch {
+      fsBtn.title = 'Fullscreen was not permitted by this browser.';
+    }
+  };
   fsBtn.onclick = () => {
     settingsPop.style.display = 'none';
     toggleFullscreen();
@@ -837,17 +978,20 @@ async function boot(session) {
   // delivered to the game — so Esc keeps working as cancel, and it no longer drops
   // pointer lock — while HOLDING Esc exits fullscreen (the browser shows the hint).
   // Browsers without the API keep today's behavior (Esc exits; Alt-Esc covers cancel).
-  document.addEventListener('fullscreenchange', () => {
-    if (document.fullscreenElement) {
+  const fullscreenChanged = () => {
+    if (fullscreenElement()) {
       if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(['Escape']).catch(() => {});
       // Capture the mouse too: without pointer lock, macOS reveals the menu bar when
       // the cursor touches the screen top. If the activation expired, the next click
       // engages it (the canvas click handler treats fullscreen as lock-wanted).
-      try { canvas.requestPointerLock(); } catch {}
+      if (!coarsePointer() && canvas.requestPointerLock)
+        Promise.resolve(canvas.requestPointerLock()).catch(() => {});
     } else if (navigator.keyboard && navigator.keyboard.unlock) {
       navigator.keyboard.unlock();
     }
-  });
+  };
+  document.addEventListener('fullscreenchange', fullscreenChanged);
+  document.addEventListener('webkitfullscreenchange', fullscreenChanged);
 
   // Alternative Esc key: click the button, press the key to bind (Esc itself clears).
   // Stored as KeyboardEvent.code; the key handler routes it as a full Esc press.
@@ -990,7 +1134,7 @@ async function boot(session) {
   let resizeTimer = 0;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => x.openbw_resize(...winSize()), 150);
+    resizeTimer = setTimeout(() => wireInput.resize(), 150);
   });
 
   $('overlay').style.display = 'none';
@@ -1247,7 +1391,7 @@ async function boot(session) {
   // Command card overlay: openbw_card() returns "title\nKEY\tLabel\n…".
   const cardEl = $('card');
   const dec = new TextDecoder();
-  let lastCard = '', lastBtnSig = null;
+  let lastCard = '', lastBtnSig = null, lastTouchCard = '';
   const readCString = (ptr) => {
     const mem = new Uint8Array(memory.buffer);
     let end = ptr; while (mem[end]) end++;
@@ -1261,7 +1405,8 @@ async function boot(session) {
   const ictx = iconCanvas.getContext('2d');
   const iconURL = (id) => {
     if (iconCache.has(id)) return iconCache.get(id);
-    const ptr = x.openbw_icon(id), w = x.openbw_icon_w(), h = x.openbw_icon_h();
+    const ptr = x.openbw_command_icon ? x.openbw_command_icon(id) : id < 228 ? x.openbw_icon(id) : 0;
+    const w = x.openbw_icon_w(), h = x.openbw_icon_h();
     let url = '';
     if (ptr && w && h) {
       iconCanvas.width = w; iconCanvas.height = h;
@@ -1277,6 +1422,26 @@ async function boot(session) {
   const updateCard = () => {
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
+    const cursor = x.openbw_cursor();
+    const targeting = cursor === 1 || cursor === 2 || cursor === 4;
+    const touchCard = text + '\n' + cursor;
+    if (coarsePointer() && touchCard !== lastTouchCard) {
+      lastTouchCard = touchCard;
+      const rows = text.split('\n');
+      const title = rows.shift().split('\t')[0];
+      const commands = rows.map(row => row.split('\t'));
+      const buildMenu = title === 'Build' || title === 'Advanced Build';
+      const canMove = commands.some(command => command[1] === 'Move');
+      const hasDetails = commands.some(command => +command[4] || +command[5] || command[7] || command[8]);
+      $('touch-queue').hidden = !canMove || buildMenu;
+      $('touch-info').hidden = targeting || !hasDetails;
+      $('touch-cancel').hidden = !targeting && !buildMenu && !commands.some(command => command[0] === '\x1b');
+      document.body.classList.toggle('touch-targeting', targeting);
+      if ($('touch-info').hidden && wireInput.inspect) {
+        wireInput.inspect = false;
+        $('touch-info').setAttribute('aria-pressed', 'false');
+      }
+    }
     if (text === lastCard) return;
     lastCard = text;
     if (!text) { cardEl.innerHTML = ''; lastBtnSig = null; return; }
@@ -1289,6 +1454,7 @@ async function boot(session) {
     // nothing" while its hotkey worked). Build the title and the button grid separately and
     // only touch the button DOM when the button set itself changes.
     const t0 = lines[0].split('\t');
+    cardEl.classList.toggle('building-menu', t0[0] === 'Build' || t0[0] === 'Advanced Build');
     let titleHtml = `<span class="title">${t0[0]}</span>`;
     if (t0[1]) titleHtml += `<span class="stat">${t0[1]}</span>`;
     if (t0[2]) titleHtml += `<span class="stat">${t0[2]}</span>`;
@@ -1297,20 +1463,18 @@ async function boot(session) {
     if (btnSig === lastBtnSig) {
       // Buttons unchanged: refresh only the title spans, leaving the .cmd nodes (and any
       // in-flight click on them) intact.
-      const firstCmd = cardEl.querySelector('.cmd');
-      while (cardEl.firstChild && cardEl.firstChild !== firstCmd) cardEl.removeChild(cardEl.firstChild);
-      if (firstCmd) firstCmd.insertAdjacentHTML('beforebegin', titleHtml);
-      else cardEl.innerHTML = titleHtml;
+      cardEl.querySelector('.card-heading').innerHTML = titleHtml;
       return;
     }
     lastBtnSig = btnSig;
     const ri = getResIcons();   // mineral / gas sprite icons for the cost popup
-    let html = titleHtml;
+    let html = '';
     for (let i = 1; i < lines.length; i++) {
       const f = lines[i].split('\t');   // KEY, Label, enabled(1/0), iconUnitId(-1 = none)
       if (f.length < 2) continue;
       const off = f[2] === '0' ? ' off' : '';
       const id = f.length > 3 ? parseInt(f[3], 10) : -1;
+      const building = id >= 106 && id <= 173;
       const url = id >= 0 ? iconURL(id) : '';
       const ico = url ? `<img class="ico" src="${url}">` : '';
       // Highlight the hotkey letter inside the label (first match — usually the first
@@ -1333,7 +1497,7 @@ async function boot(session) {
       // fronting each amount with the same delivery sprite used in the resource HUD.
       const mIco = ri[0] ? `<img class="cico" src="${ri[0]}">` : '';
       const gIco = ri[1] ? `<img class="cico" src="${ri[1]}">` : '';
-      const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
       // Popup on hover: what it does (for upgrades/research/abilities) above the cost; a grayed
       // build instead shows the prerequisite it's waiting on.
       const desc = f.length > 8 ? f[8] : '';
@@ -1341,7 +1505,7 @@ async function boot(session) {
         ? `<b class="m">${mIco}${minC}</b>${gasC ? ` <b class="g">${gIco}${gasC}</b>` : ''}`
         : '';
       const cost = (desc || costInner)
-        ? `<span class="cost">${desc ? `<div class="d">${esc(desc)}</div>` : ''}${costInner ? `<div>${costInner}</div>` : ''}</span>`
+        ? `<span class="cost"><div class="d">${esc(label)}</div>${desc ? `<div class="d">${esc(desc)}</div>` : ''}${costInner ? `<div>${costInner}</div>` : ''}</span>`
         : '';
       const req = f.length > 7 ? f[7] : '';
       const popup = off && req ? `<span class="req">Requires ${esc(req)}</span>` : cost;
@@ -1349,9 +1513,9 @@ async function boot(session) {
       const active = f.length > 9 && f[9] === '1' ? ' active' : '';
       // Wrap the label in one span so the flex `gap` on .cmd spaces only the icon from
       // the label — not the highlighted <b> from the rest of the word ("B uild").
-      html += `<span class="cmd${off}${poor}${active}" data-key="${dataKey}">${ico}<span class="lbl">${labelHtml}</span>${popup}</span>`;
+      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
     }
-    cardEl.innerHTML = html;
+    cardEl.innerHTML = `<div class="card-heading">${titleHtml}</div><div class="command-grid">${html}</div>`;
   };
 
   // Clicking a card button does the same as pressing its key (shift-click queues).
@@ -1360,11 +1524,24 @@ async function boot(session) {
   cardEl.addEventListener('click', (e) => {
     const cmd = e.target.closest('.cmd');
     if (!cmd) return;
+    if (coarsePointer() && wireInput.inspect) {
+      const expanded = !cmd.classList.contains('inspect');
+      for (const command of cardEl.querySelectorAll('.cmd')) {
+        command.classList.toggle('inspect', expanded && command === cmd);
+        command.setAttribute('aria-expanded', String(expanded && command === cmd));
+      }
+      return;
+    }
     const key = cmd.dataset.key;
     if (!key) return;
-    x.openbw_key(e.shiftKey ? 1 : 0, 0, 225);   // reflect shift for queuing
+    const queued = e.shiftKey || (coarsePointer() && wireInput.queue);
+    x.openbw_key(queued ? 1 : 0, 0, 225);
     const sym = key.charCodeAt(0);
     x.openbw_key(1, sym, 0); x.openbw_key(0, sym, 0);   // frame loop processes it
+    if (!e.shiftKey) {
+      if (queued) x.openbw_render(performance.now());
+      x.openbw_key(0, 0, 225);
+    }
   });
 
   // Group wireframes: one 32x32 tile per selected unit when 2+ are selected (BW's

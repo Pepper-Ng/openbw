@@ -1276,8 +1276,37 @@ struct play_ui : ui_functions {
 		fx_add(sel->parasite_flags,               "Parasited");
 		card_text += '\t'; card_text += fx.c_str();
 		for (auto& c : card) {
-			// Icon frame for build/train buttons is the unit id; -1 for plain orders.
+			// Command GRP frames share unit IDs; orders and abilities use separate frames.
 			int icon = (c.ut != UnitTypes::None) ? (int)c.ut : -1;
+			switch (c.act) {
+			case C_MOVE: icon = 228; break;
+			case C_STOP: icon = 229; break;
+			case C_ATTACK: icon = 230; break;
+			case C_GATHER: icon = 231; break;
+			case C_REPAIR: icon = 232; break;
+			case C_RETURN: icon = 233; break;
+			case C_BUILDMENU: icon = my_race == race_t::zerg ? 257 : my_race == race_t::protoss ? 272 : 234; break;
+			case C_ADVMENU: icon = my_race == race_t::zerg ? 258 : my_race == race_t::protoss ? 273 : 235; break;
+			case C_CANCEL: icon = 236; break;
+			case C_STIM: icon = 237; break;
+			case C_SIEGE: icon = 245; break;
+			case C_UNSIEGE: icon = 246; break;
+			case C_CLOAK: icon = 252; break;
+			case C_DECLOAK: icon = 253; break;
+			case C_PATROL: icon = 254; break;
+			case C_HOLD: icon = 255; break;
+			case C_BURROW: icon = 259; break;
+			case C_UNBURROW: icon = 260; break;
+			case C_LIFT: icon = 282; break;
+			case C_LAND: icon = 283; break;
+			case C_RALLY: icon = 286; break;
+			case C_UNLOAD: case C_UNLOADALL: icon = 312; break;
+			case C_ARCHON: icon = (int)UnitTypes::Protoss_Archon; break;
+			case C_DARCHON: icon = (int)UnitTypes::Protoss_Dark_Archon; break;
+			case C_UPGRADE: icon = get_upgrade_type(c.upg)->icon; break;
+			case C_RESEARCH: case C_SPELL: icon = get_tech_type(c.tech)->icon; break;
+			default: break;
+			}
 			int minc = 0, gasc = 0;   // resource cost of the thing this button makes
 			if (c.act == C_UPGRADE) {
 				const upgrade_type_t* up = get_upgrade_type(c.upg);
@@ -1884,19 +1913,22 @@ struct play_ui : ui_functions {
 
 	// Rasterize GRP frame `fi` into an RGBA icon: palette-expanded and nearest-neighbour
 	// downscaled to fit ICON_MAX. `pc` (or null) is the player-colour ramp for indices
-	// 8..15 (as in draw_image); index 0 stays transparent. Uses the tileset palette (the
-	// only one OpenBW loads — the game's cmdicons need a UI palette not in our assets).
+	// 8..15 (as in draw_image); index 0 stays transparent. Command icons supply their
+	// own palette; unit and resource sprites use the current tileset palette.
 	// Returns the pixels (valid until the next call) with icon_w/icon_h set.
-	const uint8_t* rasterize_icon(const grp_t* grp, size_t fi, const uint8_t* pc) {
+	const uint8_t* rasterize_icon(const grp_t* grp, size_t fi, const uint8_t* pc, const uint8_t* palette = nullptr, bool native_canvas = false) {
 		static const int ICON_MAX = 36;
 		if (fi >= grp->frames.size()) fi = 0;
 		const auto& f = grp->frames.at(fi);
-		int w = f.size.x, h = f.size.y;
+		int w = native_canvas ? grp->width : f.size.x;
+		int h = native_canvas ? grp->height : f.size.y;
+		int offset_x = native_canvas ? (w - f.size.x) / 2 : 0;
+		int offset_y = native_canvas ? (h - f.size.y) / 2 : 0;
 		icon_index.assign((size_t)w * h, 0);
-		draw_frame(f, false, icon_index.data(), w, 0, 0, w, h,
+		draw_frame(f, false, icon_index.data() + (size_t)offset_y * w + offset_x, w, 0, 0, f.size.x, f.size.y,
 		           [pc](uint8_t c, uint8_t) -> uint8_t { return (pc && c >= 8 && c < 16) ? pc[c - 8] : c; });
 
-		int scale = std::max(1, (std::max(w, h) + ICON_MAX - 1) / ICON_MAX);
+		int scale = native_canvas ? 1 : std::max(1, (std::max(w, h) + ICON_MAX - 1) / ICON_MAX);
 		int ow = (w + scale - 1) / scale, oh = (h + scale - 1) / scale;
 		icon_rgba.assign((size_t)ow * oh * 4, 0);
 		const auto& wpe = tileset_img.wpe;
@@ -1908,7 +1940,10 @@ struct play_ui : ui_functions {
 				uint8_t c = icon_index[(size_t)sy * w + sx];
 				if (!c) continue;   // transparent
 				uint8_t* o = &icon_rgba[((size_t)y * ow + xo) * 4];
-				o[0] = wpe[4 * c + 0]; o[1] = wpe[4 * c + 1]; o[2] = wpe[4 * c + 2]; o[3] = 255;
+				o[0] = palette ? palette[3 * c] : wpe[4 * c];
+				o[1] = palette ? palette[3 * c + 1] : wpe[4 * c + 1];
+				o[2] = palette ? palette[3 * c + 2] : wpe[4 * c + 2];
+				o[3] = 255;
 			}
 		}
 		icon_w = ow; icon_h = oh;
@@ -2051,6 +2086,34 @@ struct play_ui : ui_functions {
 			o[3] = 255;
 		}
 		return wire_rgba.data();
+	}
+
+	grp_t command_icons;
+	std::array<uint8_t, 768> command_palette{};
+	bool command_icons_loaded = false;
+	bool command_palette_loaded = false;
+
+	const uint8_t* render_command_icon(int frame) {
+		if (!command_icons_loaded) {
+			command_icons_loaded = true;
+			a_vector<uint8_t> data;
+			load_data_file(data, "unit\\cmdbtns\\cmdicons.grp");
+			command_icons = read_grp(data_loading::data_reader_le(data.data(), data.data() + data.size()));
+			load_data_file(data, "unit\\cmdbtns\\ticon.pcx");
+			if (data.size() >= 769 && data[data.size() - 769] == 12) {
+				const auto remap = load_pcx_data(data);
+				if (remap.data.size() < 16) return nullptr;
+				std::copy(data.end() - 768, data.end(), command_palette.begin());
+				for (size_t index = 0; index != 16; ++index) {
+					const size_t source = data.size() - 768 + (size_t)remap.data[index] * 3;
+					for (size_t component = 0; component != 3; ++component)
+						command_palette[index * 3 + component] = data[source + component];
+				}
+				command_palette_loaded = true;
+			}
+		}
+		if (frame < 0 || (size_t)frame >= command_icons.frames.size() || !command_palette_loaded) return nullptr;
+		return rasterize_icon(&command_icons, (size_t)frame, nullptr, command_palette.data(), true);
 	}
 
 	// Command-card icon: a unit's sprite, coloured with the player's ramp. Directional

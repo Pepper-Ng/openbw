@@ -202,6 +202,15 @@ OPENBW_EXPORT(openbw_cursor) int openbw_cursor() {
 	return g_ui ? g_ui->cursor() : 0;
 }
 
+OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mouse_y) {
+	if (!g_ui || g_ui->pending_build || g_ui->targeting || !g_ui->primary_selected()) return 1;
+	xy minimap_position;
+	if (g_ui->minimap_point(mouse_x, mouse_y, minimap_position)) return 1;
+	unit_t* target = g_ui->select_get_unit_at(g_ui->screen_to_map(mouse_x, mouse_y));
+	if (target && !g_ui->unit_hidden_by_fog(target) && target->owner == g_ui->my_player) return 1;
+	return 3;
+}
+
 // Render a command-button icon (frame == unit id) to RGBA; returns a pointer into
 // wasm memory valid until the next call, with the size in openbw_icon_w/h.
 OPENBW_EXPORT(openbw_icon) const uint8_t* openbw_icon(int frame) {
@@ -209,6 +218,10 @@ OPENBW_EXPORT(openbw_icon) const uint8_t* openbw_icon(int frame) {
 }
 OPENBW_EXPORT(openbw_icon_w) int openbw_icon_w() { return g_ui ? g_ui->icon_w : 0; }
 OPENBW_EXPORT(openbw_icon_h) int openbw_icon_h() { return g_ui ? g_ui->icon_h : 0; }
+
+OPENBW_EXPORT(openbw_command_icon) const uint8_t* openbw_command_icon(int frame) {
+	return g_ui ? g_ui->render_command_icon(frame) : nullptr;
+}
 
 // Resource-HUD icon (0 = minerals, 1 = gas) to RGBA; same size convention as openbw_icon.
 OPENBW_EXPORT(openbw_res_icon) const uint8_t* openbw_res_icon(int which) {
