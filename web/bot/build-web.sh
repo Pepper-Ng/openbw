@@ -37,8 +37,9 @@ python3 "$HERE/patch-vendor.py"
 # 1. BWAPI server libs for wasm32 (one consistent CMake config; engine = repo).
 #    Shared across bots — the .obj outputs live under $BUILD and are linked below.
 echo "==> configuring + building bwapi libs..."
-cmake -S "$BWAPI" -B "$BUILD" \
+cmake -S "$V/bwapi" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$WSDK/share/cmake/wasi-sdk-p1.cmake" \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENBW_DIR="$ROOT" -DOPENBW_ENABLE_UI=0 -DBUILD_SHARED_LIBS=OFF \
   -DCMAKE_CXX_FLAGS="-fno-exceptions -DOPENBW_NO_EXCEPTIONS -include $HERE/shim/fatal.h" \
   -DCMAKE_BUILD_TYPE=Release >/dev/null
