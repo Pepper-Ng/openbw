@@ -161,7 +161,7 @@ This is an experimental engine and sandbox, not a fully certified replacement fo
 
 The [container workflow](.github/workflows/container.yml) builds the base module and both bot modules on pushes to `master`, packages the static site as a container image, and publishes it to GitHub Container Registry. The image is served by Nginx; no game archives are included.
 
-Deploy [compose.yml](compose.yml) as a Git-backed Portainer stack from the `master` branch. Enable stack auto-updates and set the repository's `PORTAINER_WEBHOOK_URL` Actions secret to the stack webhook URL so each completed image build triggers a redeploy. Make the GHCR package public for unauthenticated image pulls. The Compose file publishes port `18082`; configure your reverse proxy to forward to the Docker host on that port. No domain name is required by the repository.
+Deploy [compose.yml](compose.yml) as a Git-backed Portainer stack from the `master` branch. Enable Git auto-updates with image pulling (for example, a five-minute interval and force-pull enabled). After publishing the image, the container workflow updates `.deployment-image`; Portainer detects that commit and redeploys the stack after the image is available. Make the GHCR package public for unauthenticated image pulls. The Compose file publishes port `18082`; configure your reverse proxy to forward to the Docker host on that port. No domain name is required by the repository.
 
 ## Source Layout
 
