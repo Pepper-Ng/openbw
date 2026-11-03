@@ -16832,7 +16832,8 @@ struct state_functions {
 		if (target.unit) {
 			target.position = target.unit->sprite->position;
 		}
-		if (queue && !order_type->can_be_queued) queue = false;
+		if (queue && !order_type->can_be_queued &&
+		    order_type->id != Orders::Sieging && order_type->id != Orders::Unsieging) queue = false;
 		if (queue) {
 			switch (u->order_type->id) {
 			case Orders::Guard:

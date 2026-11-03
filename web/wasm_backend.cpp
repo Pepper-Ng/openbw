@@ -65,6 +65,10 @@ bool window::peek_message(event_t& e) {
 	if (!impl || impl->events.empty()) return false;
 	e = impl->events.front();
 	impl->events.pop_front();
+	if ((e.type == event_t::type_key_down || e.type == event_t::type_key_up) &&
+	    e.scancode >= 0 && e.scancode < (int)impl->keys.size()) {
+		impl->keys[e.scancode] = e.type == event_t::type_key_down;
+	}
 	return true;
 }
 
@@ -134,7 +138,6 @@ OPENBW_EXPORT(openbw_mouse_button) void openbw_mouse_button(int down, int button
 
 OPENBW_EXPORT(openbw_key) void openbw_key(int down, int sym, int scancode) {
 	if (!g_window) return;
-	if (scancode >= 0 && scancode < (int)g_window->keys.size()) g_window->keys[scancode] = down != 0;
 	ev_t e;
 	e.type = down ? ev_t::type_key_down : ev_t::type_key_up;
 	e.sym = sym;
