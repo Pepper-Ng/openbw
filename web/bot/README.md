@@ -118,7 +118,7 @@ stays the single authoritative sim; the bot is a read-VIEW over its state.**
   record to `.rep` too. `openbw.js` loads `openbw-bot.wasm`, sets up two slots, and
   calls `openbw_bot_attach`; the WASI shim gained the 7 extra imports the bot pulls
   in (`environ_*`, `random_get`, `poll_oneoff`, `path_unlink/remove/rename`).
-- **`container.yml`** builds and ships `openbw-bot.wasm` in the site image.
+- The standard container build omits these optional modules; build them locally with `build-web.sh`.
 
 The clean `openbw.wasm` build is untouched (the only shared source is wasm_main's
 compile-guarded `openbw_bot_attach`; verified byte-identical, 0 bot exports).

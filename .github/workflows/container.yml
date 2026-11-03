@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: openbw-container
+  group: openbw-container-core
   cancel-in-progress: true
 
 jobs:
@@ -27,17 +27,10 @@ jobs:
       - name: Build wasm
         run: bash web/build-wasm.sh
 
-      - name: Build vs-Computer wasm
-        run: |
-          bash web/bot/vendor.sh
-          bash web/bot/build-web.sh
-          BOT=mcrave bash web/bot/build-web.sh
-
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp web/index.html web/openbw.js web/net.js web/openbw.wasm \
-             web/openbw-bot.wasm web/openbw-mcrave.wasm _site/
+          cp web/index.html web/openbw.js web/net.js web/openbw.wasm _site/
           mkdir -p _site/vendor
           cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE _site/vendor/
           if compgen -G "web/maps/*.scx" > /dev/null; then
