@@ -258,6 +258,11 @@ struct play_ui : ui_functions {
 	const unit_type_t* pending_addon = nullptr;   // placing an addon: pending_build is the parent
 	bool targeting = false;                       // an order awaiting a target click
 	bool paused = false;                          // frozen: ignore game input (camera still ok)
+	bool touch_controls = false;
+	bool touch_placement_ready = false;
+	xy touch_placement_position;
+	unit_id deselect_tap;
+	xy deselect_from;
 	int mouse_x = -1, mouse_y = -1;   // off-screen until the first move, so edge-scroll stays idle at startup
 	int sound_rotation = 0;                       // rotates through a unit's ack sound range
 	unit_id ack_unit;                             // unit last (re)selected, for annoyed escalation
@@ -287,7 +292,7 @@ struct play_ui : ui_functions {
 	               C_FIGHTER,                 // Carrier interceptor / Reaver scarab
 	               C_ARCHON, C_DARCHON,       // High / Dark Templar merges
 	               C_SPELL,                   // a targeted spellcaster ability
-	               C_CANCEL };                // cancel a morph / addon / nuke (opcode in cmd.unit)
+	               C_CANCEL, C_BACK, C_CONFIRM };                // cancel a morph / addon / nuke (opcode in cmd.unit)
 	struct cmd_t { char key; const char* label; cmd_act act; UnitTypes ut; bool enabled = false;
 	               TechTypes tech = TechTypes::None; UpgradeTypes upg = UpgradeTypes::None;
 	               uint16_t unit = 0;          // target unit id (C_UNLOAD)
@@ -1022,6 +1027,7 @@ struct play_ui : ui_functions {
 			if (buildings_only ? (!tb || addon) : (tb && !addon)) continue;
 			if (cat && tb && bw_build_advanced(id) != (cat == 2)) continue;
 			bool can = unit_can_build(u, t);
+			if (touch_controls && !can) continue;
 			UnitTypes req = UnitTypes::None;
 			if (!can) {
 				// Not buildable yet: keep it, grayed with its missing prereq, for the lists BW
@@ -1224,16 +1230,68 @@ struct play_ui : ui_functions {
 		int active_act = u ? order_active_act(u->order_type->id) : -1;   // highlight the current mode
 
 		const char* title;
-		if (u && menu == 1) { title = "Build"; add_producible(u, true, 1); }
+		if (u && menu == 1) { title = "Build"; add_producible(u, true, touch_controls ? 0 : 1); }
 		else if (u && menu == 2) { title = "Advanced Build"; add_producible(u, true, 2); }
 		else if (u) title = card_for_unit(u, u->unit_type->id);
 		else { title = unit_name(sel->unit_type->id); menu = 0; }   // neutral/enemy: name only, no actions
+
+		if (touch_controls && u && (pending_build || targeting || menu)) {
+			if (pending_build) {
+				card.clear();
+				title = unit_name((pending_addon ? pending_addon : pending_build)->id);
+				int tile_x = 0, tile_y = 0;
+				if (touch_placement_ready) placement_tile(touch_placement_position, tile_x, tile_y);
+				card.push_back({'c', "Confirm", C_CONFIRM, UnitTypes::None,
+				                touch_placement_ready && placement_valid(tile_x, tile_y)});
+			} else if (targeting) card.clear();
+			if (std::none_of(card.begin(), card.end(), [](const cmd_t& command) { return command.key == '\x1b'; }))
+				card.push_back({'\x1b', "Cancel", C_BACK, UnitTypes::None, true});
+		}
+
+		if (touch_controls) {
+			card.erase(std::remove_if(card.begin(), card.end(), [&](const cmd_t& command) {
+				return (command.act == C_PATROL && (!u || ut_worker(u) ||
+				        (!unit_can_attack(u) && !unit_is_carrier(u) && !unit_is_reaver(u)))) ||
+				       command.act == C_GATHER || command.act == C_REPAIR ||
+				       command.act == C_RETURN || command.act == C_ADVMENU ||
+				       (command.act == C_HOLD && u && ut_worker(u));
+			}), card.end());
+			auto slot = [](const cmd_t& command) {
+				switch (command.act) {
+				case C_MOVE: return 0;
+				case C_ATTACK: return 1;
+				case C_BUILDMENU: case C_HOLD: return 2;
+				case C_STOP: return 3;
+				default: return 4;
+				}
+			};
+			std::stable_sort(card.begin(), card.end(), [&](const cmd_t& left, const cmd_t& right) {
+				return slot(left) < slot(right);
+			});
+		}
 
 		// Producibles and spells set their own enabled (build/upgrade/research availability,
 		// or a spell's energy); the plain orders default to enabled; a couple of abilities
 		// need a tech check.
 		for (auto& c : card) {
 			switch (c.act) {
+			case C_CONFIRM: break;
+			case C_STOP:
+				c.enabled = true;
+				if (touch_controls && c.key != '\x1b') {
+					c.enabled = false;
+					for (auto selected_id : current_selection) {
+						unit_t* selected = get_unit(selected_id);
+						if (!selected || selected->owner != my_player) continue;
+						if (!selected->order_queue.empty() ||
+						    (selected->order_type != selected->unit_type->return_to_idle &&
+						     order_active_act(selected->order_type->id) != C_STOP)) {
+							c.enabled = true;
+							break;
+						}
+					}
+				}
+				break;
 			case C_STIM:  c.enabled = player_has_researched(my_player, TechTypes::Stim_Packs); break;
 			case C_SIEGE: c.enabled = player_has_researched(my_player, TechTypes::Tank_Siege_Mode); break;
 			case C_BUILD: case C_TRAIN: case C_MORPH: case C_MORPHBLDG:
@@ -1243,8 +1301,10 @@ struct play_ui : ui_functions {
 		}
 
 		// Title line carries the unit's status: "name \t HP x/y \t <second stat, or empty>".
+		bool placing = touch_controls && pending_build;
 		int hp = sel->hp.ceil().integer_part(), maxhp = sel->unit_type->hitpoints.ceil().integer_part();
 		a_string stat2;
+		if (unit_is_vulture(sel)) stat2 = format("Mines %u", (unsigned)unit_spider_mine_count(sel));
 		if (sel->unit_type->has_shield)
 			stat2 = format("Shields %d/%d", sel->shield_points.integer_part(), sel->unit_type->shield_points);
 		else if (ut_resource(sel))
@@ -1257,8 +1317,8 @@ struct play_ui : ui_functions {
 		}
 		card_text += title;
 		card_text += '\t';
-		if (!ut_resource(sel)) card_text += format("HP %d/%d", hp, maxhp).c_str();
-		card_text += '\t'; card_text += stat2.c_str();
+		if (!ut_resource(sel) && !placing) card_text += format("HP %d/%d", hp, maxhp).c_str();
+		card_text += '\t'; if (!placing) card_text += stat2.c_str();
 		// Status effects (field 4). Blind and parasite have no in-world overlay sprite, so
 		// this panel line is the only place they're visible; the rest also draw on the unit
 		// but listing them keeps the readout complete, as retail's status icons do.
@@ -1279,7 +1339,7 @@ struct play_ui : ui_functions {
 		fx_add(sel->maelstrom_timer,              "Maelstrom");
 		fx_add(sel->blinded_by,                   "Blind");
 		fx_add(sel->parasite_flags,               "Parasited");
-		card_text += '\t'; card_text += fx.c_str();
+		card_text += '\t'; if (!placing) card_text += fx.c_str();
 		for (auto& c : card) {
 			// Command GRP frames share unit IDs; orders and abilities use separate frames.
 			int icon = (c.ut != UnitTypes::None) ? (int)c.ut : -1;
@@ -1292,7 +1352,7 @@ struct play_ui : ui_functions {
 			case C_RETURN: icon = 233; break;
 			case C_BUILDMENU: icon = my_race == race_t::zerg ? 257 : my_race == race_t::protoss ? 272 : 234; break;
 			case C_ADVMENU: icon = my_race == race_t::zerg ? 258 : my_race == race_t::protoss ? 273 : 235; break;
-			case C_CANCEL: icon = 236; break;
+			case C_CANCEL: case C_BACK: icon = 236; break;
 			case C_STIM: icon = 237; break;
 			case C_SIEGE: icon = 245; break;
 			case C_UNSIEGE: icon = 246; break;
@@ -1320,6 +1380,9 @@ struct play_ui : ui_functions {
 			} else if (c.act == C_RESEARCH) {
 				const tech_type_t* te = get_tech_type(c.tech);
 				minc = te->mineral_cost; gasc = te->gas_cost;
+			} else if (c.act == C_CONFIRM && pending_build && !pending_land) {
+				const unit_type_t* type = pending_addon ? pending_addon : pending_build;
+				minc = type->mineral_cost; gasc = type->gas_cost;
 			} else if (c.ut != UnitTypes::None &&
 			           (c.act == C_BUILD || c.act == C_TRAIN || c.act == C_MORPH || c.act == C_MORPHBLDG)) {
 				const unit_type_t* ut = get_unit_type(c.ut);
@@ -1731,7 +1794,17 @@ struct play_ui : ui_functions {
 
 	void start_target(targ_t t) { clear_pending(); targeting = true; pending_targ = t; }
 
-	void clear_pending() { pending_build = nullptr; pending_land = false; pending_addon = nullptr; }
+	void clear_pending() { pending_build = nullptr; pending_land = false; pending_addon = nullptr; touch_placement_ready = false; }
+
+	void preview_placement(int screen_x, int screen_y) {
+		if (!touch_controls || !pending_build || screen_x < 0 || screen_y < 0 ||
+		    screen_x >= screen_width || screen_y >= screen_height) return;
+		xy minimap_position;
+		if (minimap_point(screen_x, screen_y, minimap_position)) return;
+		touch_placement_position = screen_to_map(screen_x, screen_y);
+		touch_placement_ready = true;
+		refresh_card();
+	}
 
 	// Helpers for the flying-building commands, which act on the selected building itself.
 	xy u_pos_of_selected() { unit_t* u = primary_selected(); return u ? u->sprite->position : xy(); }
@@ -1757,6 +1830,9 @@ struct play_ui : ui_functions {
 			default: break;
 			}
 			switch (c.act) {
+			case C_BACK:      clear_pending(); targeting = false; menu = 0; refresh_card(); break;
+			case C_CONFIRM:   if (pending_build && touch_placement_ready) place_pending_at(touch_placement_position);
+			                  refresh_card(); break;
 			case C_MOVE:      start_target(T_MOVE); break;
 			case C_ATTACK:    start_target(T_ATTACK); break;
 			case C_PATROL:    start_target(T_PATROL); break;
@@ -1849,7 +1925,16 @@ struct play_ui : ui_functions {
 		case T_ATTACK: cmd_order(target ? Orders::AttackDefault : Orders::AttackMove, pos, target, q); break;
 		// Move onto a unit follows it (any unit — chasing an enemy without attacking
 		// is the classic use), as in the original.
-		case T_MOVE:   cmd_order(target ? Orders::Follow : Orders::Move, pos, target, q); break;
+		case T_MOVE:
+			if (touch_controls) {
+				unit_t* selected = primary_selected();
+				bool repair = selected && unit_is(selected, UnitTypes::Terran_SCV) && target &&
+				              st.alliances[my_player][target->owner] && unit_race(target) == race_t::terran &&
+				              ut_mechanical(target) && u_completed(target) && target->hp < target->unit_type->hitpoints;
+				if (repair) cmd_order(Orders::Repair, pos, target, q);
+				else cmd_default_order(pos, target, q);
+			} else cmd_order(target ? Orders::Follow : Orders::Move, pos, target, q);
+			break;
 		case T_PATROL: cmd_order(Orders::Patrol, pos, nullptr, q); break;
 		case T_GATHER: cmd_default_order(pos, target, q); break;
 		case T_REPAIR: cmd_order(Orders::Repair, pos, target, q); break;
@@ -1877,9 +1962,22 @@ struct play_ui : ui_functions {
 		if (ty < 0) ty = 0;
 	}
 
-	void place_pending(int mx, int my) {
+	bool placement_valid(int tile_x, int tile_y) {
+		unit_t* builder = primary_selected();
+		auto valid = [&](const unit_type_t* type, int x, int y) {
+			xy center(32 * x + type->placement_size.x / 2, 32 * y + type->placement_size.y / 2);
+			return builder && can_place_building(builder, my_player, type, center, false, false);
+		};
+		return pending_build && valid(pending_build, tile_x, tile_y) &&
+		       (!pending_addon || valid(pending_addon, tile_x + pending_addon->addon_position.x / 32,
+		                                              tile_y + pending_addon->addon_position.y / 32));
+	}
+
+	void place_pending(int mx, int my) { place_pending_at(screen_to_map(mx, my)); }
+
+	void place_pending_at(xy map_position) {
 		int tx, ty;
-		placement_tile(screen_to_map(mx, my), tx, ty);   // tile of pending_build (the parent, for an addon)
+		placement_tile(map_position, tx, ty);
 		if (pending_addon) {
 			if ((int)st.current_minerals[my_player] < pending_addon->mineral_cost) { raise_error(E_MINERALS); return; }
 			if ((int)st.current_gas[my_player] < pending_addon->gas_cost) { raise_error(E_GAS); return; }
@@ -2564,7 +2662,7 @@ struct play_ui : ui_functions {
 		draw_cursor_marker(data, data_pitch);   // the ring is drawn in draw_sprite (occluded by the unit)
 		draw_bw_cursor(data, data_pitch);
 
-		if (!pending_build) return;
+		if (!pending_build || (touch_controls ? !touch_placement_ready : mouse_x < 0 || mouse_y < 0)) return;
 		if (place_ok_color < 0) {
 			place_ok_color = nearest_palette_color(40, 240, 40);
 			place_bad_color = nearest_palette_color(240, 40, 40);
@@ -2572,22 +2670,17 @@ struct play_ui : ui_functions {
 		if (ghost_ok.empty()) build_ghost_luts();
 
 		int tx, ty;
-		placement_tile(screen_to_map(mouse_x, mouse_y), tx, ty);   // snaps refineries to the geyser
-		unit_t* builder = primary_selected();
-		auto ok_at = [&](const unit_type_t* t, int px, int py) {
-			xy c(32 * px + t->placement_size.x / 2, 32 * py + t->placement_size.y / 2);
-			return builder && can_place_building(builder, my_player, t, c, false, false);
-		};
+		placement_tile(touch_controls ? touch_placement_position : screen_to_map(mouse_x, mouse_y), tx, ty);
+		bool valid = placement_valid(tx, ty);
 
 		if (pending_addon) {
 			int ax = tx + pending_addon->addon_position.x / 32, ay = ty + pending_addon->addon_position.y / 32;
 			// One placement: both the parent's new footprint and the addon's must be clear,
 			// so a bad spot for either shows the whole thing red.
-			bool ok = ok_at(pending_build, tx, ty) && ok_at(pending_addon, ax, ay);
-			draw_placement_ghost(pending_build, tx, ty, ok, data, data_pitch);
-			draw_placement_ghost(pending_addon, ax, ay, ok, data, data_pitch);
+			draw_placement_ghost(pending_build, tx, ty, valid, data, data_pitch);
+			draw_placement_ghost(pending_addon, ax, ay, valid, data, data_pitch);
 		} else {
-			draw_placement_ghost(pending_build, tx, ty, ok_at(pending_build, tx, ty), data, data_pitch);
+			draw_placement_ghost(pending_build, tx, ty, valid, data, data_pitch);
 		}
 	}
 
@@ -2637,6 +2730,7 @@ struct play_ui : ui_functions {
 	// parks the cursor off-screen (negative) on mouse-leave so this stops then.
 	void edge_scroll() {
 		edge_dir = 0;
+		if (touch_controls && pending_build) return;
 		const int margin = 6, speed = 16;
 		if (mouse_x < 0 || mouse_y < 0) return;
 		int dx = 0, dy = 0;
@@ -2670,13 +2764,37 @@ struct play_ui : ui_functions {
 		}
 
 		if (e.type == ev::type_mouse_button_down && e.button == 1) {
-			if (pending_build) { place_pending(e.mouse_x, e.mouse_y); refresh_card(); return true; }
+			deselect_tap = unit_id();
+			if (pending_build) {
+				if (touch_controls) preview_placement(e.mouse_x, e.mouse_y);
+				else place_pending(e.mouse_x, e.mouse_y);
+				refresh_card(); return true;
+			}
 			if (targeting) {
 				xy p;
 				if (!minimap_point(e.mouse_x, e.mouse_y, p)) p = screen_to_map(e.mouse_x, e.mouse_y);
 				issue_target(p); targeting = false; return true;
 			}
+			if (!key_shift() && !key_ctrl() && current_selection.size() == 1) {
+				unit_t* target = select_get_unit_at(screen_to_map(e.mouse_x, e.mouse_y));
+				if (target && get_unit_id(target) == current_selection.front()) {
+					deselect_tap = get_unit_id(target);
+					deselect_from = xy(e.mouse_x, e.mouse_y);
+				}
+			}
 			return false;   // base handles drag-selection / minimap camera moves
+		}
+		if (e.type == ev::type_mouse_button_up && e.button == 1) {
+			unit_id selected = deselect_tap;
+			deselect_tap = unit_id();
+			if (selected.raw_value && !key_shift() && !key_ctrl() && e.clicks == 1 &&
+			    std::abs(e.mouse_x - deselect_from.x) <= 4 && std::abs(e.mouse_y - deselect_from.y) <= 4 &&
+			    select_get_unit_at(screen_to_map(e.mouse_x, e.mouse_y)) == get_unit(selected)) {
+				is_drag_selecting = false;
+				current_selection_clear();
+				on_selection(false);
+				return true;
+			}
 		}
 		if (e.type == ev::type_mouse_button_down && e.button == 3) {
 			if (pending_build || targeting || menu) {   // cancel pending mode / submenu
@@ -2692,6 +2810,11 @@ struct play_ui : ui_functions {
 				map_pos = screen_to_map(e.mouse_x, e.mouse_y);
 				target = select_get_unit_at(map_pos);
 				if (target && unit_hidden_by_fog(target)) target = nullptr;   // right-click through fog = move
+			}
+			if (touch_controls) {
+				pending_targ = T_MOVE;
+				issue_target(map_pos);
+				return true;
 			}
 			// On a unit, only the target flash blinks; the ground marker is for moves.
 			if (target) flash_target(target);

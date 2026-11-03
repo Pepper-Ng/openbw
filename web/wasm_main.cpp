@@ -202,6 +202,15 @@ OPENBW_EXPORT(openbw_cursor) int openbw_cursor() {
 	return g_ui ? g_ui->cursor() : 0;
 }
 
+OPENBW_EXPORT(openbw_set_touch_controls) void openbw_set_touch_controls(int enabled) {
+	if (!g_ui || g_ui->touch_controls == (enabled != 0)) return;
+	g_ui->touch_controls = enabled != 0;
+	g_ui->menu = 0;
+	g_ui->targeting = false;
+	g_ui->clear_pending();
+	g_ui->refresh_card();
+}
+
 OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mouse_y) {
 	if (!g_ui || g_ui->pending_build || g_ui->targeting || !g_ui->primary_selected()) return 1;
 	xy minimap_position;
@@ -209,6 +218,10 @@ OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mous
 	unit_t* target = g_ui->select_get_unit_at(g_ui->screen_to_map(mouse_x, mouse_y));
 	if (target && !g_ui->unit_hidden_by_fog(target) && target->owner == g_ui->my_player) return 1;
 	return 3;
+}
+
+OPENBW_EXPORT(openbw_preview_placement) void openbw_preview_placement(int mouse_x, int mouse_y) {
+	if (g_ui) g_ui->preview_placement(mouse_x, mouse_y);
 }
 
 // Render a command-button icon (frame == unit id) to RGBA; returns a pointer into

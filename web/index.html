@@ -276,10 +276,9 @@
       --touch-right: max(8px, env(safe-area-inset-right));
       --touch-bottom: max(8px, env(safe-area-inset-bottom));
       --touch-left: max(8px, env(safe-area-inset-left));
-      --command-columns: 3;
-      --command-width: calc(var(--command-columns) * 64px + (var(--command-columns) - 1) * 2px + 4px);
+      --command-columns: 2;
+      --command-width: calc(var(--command-columns) * 64px + (var(--command-columns) - 1) * 4px + 4px);
     }
-    body:has(#card .cmd:nth-child(7)) { --command-columns: 4; }
     #wrap { inset: env(safe-area-inset-top) auto auto env(safe-area-inset-left);
       width: calc(100dvw - env(safe-area-inset-left) - env(safe-area-inset-right));
       height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
@@ -294,7 +293,7 @@
     #controls select, #mp select, #mp input { min-width: 0; min-height: 44px; font-size: 16px; }
     #controls button, #settings button, #settings select, .go-actions button { min-height: 44px; }
     #spectate-row { min-height: 44px; }
-    #topbar { top: var(--touch-top); left: var(--touch-left); }
+    #topbar { top: var(--touch-top); left: calc(env(safe-area-inset-left) + 12px); }
     #resources { top: var(--touch-top); right: var(--touch-right); gap: 10px; }
     #hud { right: var(--touch-right); bottom: var(--touch-bottom); width: var(--command-width);
       max-width: calc(100vw - var(--touch-left) - var(--touch-right)); gap: 4px;
@@ -304,30 +303,42 @@
     #card .card-heading { display: flex; flex-wrap: wrap; gap: 0 4px;
       font-size: 11px; line-height: 16px; }
     #card .command-grid { display: grid; grid-template-columns: repeat(var(--command-columns), 64px);
-      grid-auto-rows: 94px; gap: 2px; overflow: visible; pointer-events: none; }
+      grid-auto-rows: 64px; gap: 4px; max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom) - 128px);
+      overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; pointer-events: none; }
     #card .cmd { display: grid; grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: 57px 22px 11px; gap: 0; min-width: 0;
-      height: 94px; box-sizing: border-box; padding: 2px; font-size: 11px;
+      grid-template-rows: 34px 12px 12px; gap: 0; min-width: 0;
+      width: 64px; height: 64px; box-sizing: border-box; padding: 3px; font-size: 11px;
       background: #151719; }
     #card .cmd.active { background: #183c4b; }
     #card .cmd.off { opacity: 1; background: #1b1d1f; }
     #card .cmd.off .ico { filter: grayscale(1); opacity: .6; }
     #card .cmd.off .touch-cost { opacity: .7; }
-    #card .cmd .ico { display: block; width: 60px; height: calc(60px * 34 / 36); grid-column: 1; grid-row: 1;
+    #card .cmd.poor .ico { opacity: .55; }
+    #card .cmd.poor .touch-cost b { color: #f87171; }
+    #card .cmd[aria-label="Move"] { display: none; }
+    #card:not(.building-menu) .cmd[aria-label="Stop"].off { display: none; }
+    #card .cmd .ico { display: block; width: 36px; height: 34px; grid-column: 1; grid-row: 1;
       justify-self: center; align-self: center; }
-    #card .cmd[aria-label="Move"], #card .cmd[aria-label="Gather"] { display: none; }
-    #card .cmd .lbl { display: block; grid-column: 1; grid-row: 2; line-height: 11px; text-align: center;
-      font-size: 11px; white-space: normal; overflow-wrap: anywhere;
-      max-height: 22px; overflow: hidden; align-self: start; }
+    #card .cmd .lbl { display: block; grid-column: 1; grid-row: 2 / span 2; line-height: 11px; text-align: center;
+      font-size: 10px; white-space: normal; overflow-wrap: anywhere;
+      min-height: 24px; max-height: 24px; overflow: hidden; align-self: start; }
     #card .cmd .ico + .lbl { display: block; }
     #card .cmd[data-building="true"] .lbl { display: none; }
-    #card.building-menu .command-grid { grid-auto-rows: 72px; }
-    #card.building-menu .cmd { height: 72px; grid-template-rows: 57px 11px; }
-    #card.building-menu .touch-cost { grid-row: 2; }
+    #card .cmd:has(.touch-cost:not(:empty)) .lbl { grid-row: 2; min-height: 12px; max-height: 12px;
+      white-space: nowrap; text-overflow: ellipsis; }
     #card .touch-cost { display: flex; justify-content: center; align-items: center; gap: 1px;
-      grid-column: 1; grid-row: 3; font-size: 11px; line-height: 11px; }
+      grid-column: 1; grid-row: 3; font-size: 10px; line-height: 12px; }
     #card .touch-cost b { display: inline-flex; align-items: center; gap: 1px; color: #cbd5e1; }
     #card .touch-cost .cico { height: 10px; width: auto; }
+    body.touch-building-menu #hud { left: var(--minimap-edge, 144px);
+      right: var(--touch-right); bottom: var(--touch-bottom); width: auto; max-width: none; }
+    #card.building-menu .command-grid { display: flex; width: 100%; min-width: 0; box-sizing: border-box;
+      max-height: none; overflow-x: auto; overflow-y: hidden;
+      padding-bottom: 6px; touch-action: pan-x; scroll-snap-type: x proximity; scrollbar-width: thin;
+      pointer-events: auto; }
+    #card.building-menu .cmd { flex: 0 0 64px; scroll-snap-align: start; }
+    #card.building-menu .cmd[aria-label="Cancel"] { order: -1; position: sticky; left: 0; z-index: 1; }
+    #card.building-menu .touch-cost { grid-row: 2 / span 2; align-self: center; }
     #card .cmd:hover .cost, #card .cmd:hover .req { display: none; }
     #card .cmd.inspect .cost, #card .cmd.inspect .req { display: block; position: fixed;
       top: calc(var(--touch-top) + 52px); bottom: auto; left: var(--touch-left); right: auto;
@@ -348,16 +359,13 @@
       left: var(--touch-left); right: var(--touch-right); box-sizing: border-box;
       max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom) - 60px); overflow-y: auto; }
     #settings label { min-height: 44px; }
+    #settings .settings-tools { display: flex; gap: 8px; margin-bottom: 8px; }
+    #settings .settings-tools button { width: 44px; height: 44px; padding: 0; margin: 0; }
     #settings .desktop-setting, .desktop-help { display: none; }
     .touch-help { display: block; }
     #touch-shortcuts { display: grid; grid-template-columns: repeat(5, 44px); gap: 4px; margin: 8px 0; }
     #touch-shortcuts svg { width: 22px; height: 22px; pointer-events: none; }
-    .playing #touch-controls { display: grid; position: fixed; z-index: 5;
-      left: var(--minimap-edge, calc(var(--touch-left) + 136px));
-      right: calc(var(--touch-right) + var(--command-width) + 8px); bottom: var(--touch-bottom);
-      grid-auto-flow: column; grid-auto-columns: 44px;
-      grid-template-rows: repeat(var(--touch-rows, 1), 44px); justify-content: center;
-      gap: 2px; pointer-events: none; }
+    .playing #touch-controls { display: none; }
     #touch-controls button, #touch-shortcuts button { display: grid; place-items: center; width: 44px; height: 44px;
       padding: 0; margin: 0; background: rgba(0,0,0,.78); color: #e2e8f0;
       border: 1px solid #475569; font-size: 16px; touch-action: manipulation; pointer-events: auto; }
@@ -368,7 +376,7 @@
     #touch-controls button img { width: 36px; height: 34px; image-rendering: pixelated; }
     #touch-shortcuts button:disabled { opacity: .4; }
     #touch-shortcuts button.saved { border-color: #38bdf8; color: #7dd3fc; }
-    body.touch-targeting #hud { display: none; }
+    body.touch-targeting #wires, body.touch-targeting #status { display: none; }
     #gameover { padding: var(--touch-top) var(--touch-right) var(--touch-bottom) var(--touch-left);
       box-sizing: border-box; }
     #gameover .go-card { box-sizing: border-box; min-width: 0; width: min(640px, 100%);
@@ -380,17 +388,18 @@
   @media (pointer: coarse) and (max-width: 600px) {
     #map-row { grid-template-columns: 52px minmax(0, 1fr); }
     #load-wrap { grid-column: 2; }
-    #resources { top: calc(var(--touch-top) + 52px); }
     #card .cmd.inspect .cost, #card .cmd.inspect .req { top: calc(var(--touch-top) + 96px); }
     #mp .lobby { grid-template-columns: minmax(0, 1fr); }
   }
-  @media (pointer: coarse) and (orientation: landscape) {
-    #mobilewarn { display: none !important; }
+  @media (pointer: coarse) and (max-width: 380px) {
+    #resources { font-size: 12px; gap: 6px; padding-inline: 4px; }
+    #resources .r { gap: 3px; }
+    #resources .rico { height: 16px; max-width: 18px; }
+    #resources .min .rico, #resources .gas .rico { height: 12px; }
   }
-  @media (pointer: coarse) and (orientation: portrait) {
-    .playing #touch-controls { left: auto; right: var(--touch-right); width: 44px;
-      grid-template-rows: 44px; justify-content: end; }
-    #hud { bottom: calc(var(--touch-bottom) + 52px); }
+  @media (pointer: coarse) and (orientation: landscape) {
+    body { --command-columns: 3; }
+    #mobilewarn { display: none !important; }
   }
 </style>
 </head>
@@ -399,15 +408,14 @@
 <div id="resources"></div>
 <div id="topbar">
   <button id="pausebtn" title="Pause"></button>
-  <button id="mute" title="Mute sound">🔊</button>
   <button id="settingsbtn" title="Settings">⚙️</button>
-  <button id="helpbtn" title="Controls">?</button>
-</div>
-<div id="touch-controls" role="toolbar" aria-label="Touch controls">
-  <button type="button" id="touch-cancel" aria-label="Cancel" title="Cancel"><i data-lucide="x"></i></button>
 </div>
 <div id="settings">
   <h3>Settings</h3>
+  <div class="settings-tools">
+    <button id="mute" title="Mute sound" aria-label="Mute sound">🔊</button>
+    <button id="helpbtn" title="Controls" aria-label="Controls">?</button>
+  </div>
   <div id="touch-shortcuts" role="group" aria-label="Control groups and zoom">
     <button type="button" id="touch-queue" aria-label="Queue orders" title="Queue orders" aria-pressed="false"><i data-lucide="list-plus"></i></button>
     <button type="button" id="touch-info" aria-label="Command details" title="Command details" aria-pressed="false"><i data-lucide="info"></i></button>

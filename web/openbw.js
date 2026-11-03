@@ -292,6 +292,10 @@ const winSize = () => {
 };
 
 function wireInput(canvas, x) {
+  const touchMedia = window.matchMedia('(pointer: coarse)');
+  const syncTouchControls = () => x.openbw_set_touch_controls?.(touchMedia.matches ? 1 : 0);
+  syncTouchControls();
+  touchMedia.addEventListener('change', syncTouchControls);
   const xy = (e) => {
     const r = canvas.getBoundingClientRect();
     return [Math.round((e.clientX - r.left) * canvas.width / r.width),
@@ -358,7 +362,8 @@ function wireInput(canvas, x) {
     syncMods(e); const [px, py] = pos(e); x.openbw_mouse_button(1, sdlButton(e.button), px, py, e.detail || 1);
   });
   window.addEventListener('mouseup', (e) => {
-    if (e.target.closest?.('#touch-controls, #touch-shortcuts')) return;
+    if (e.target.closest?.('#touch-shortcuts')) return;
+    if (coarsePointer() && e.target.closest?.('#card')) return;
     if (domDownEl) {
       // Complete the DOM click if the release is still over the pressed element.
       const el = domUnderCursor();
@@ -471,14 +476,21 @@ function wireInput(canvas, x) {
     x.openbw_pan(Math.round(e.deltaX * scale), Math.round(e.deltaY * scale));
   }, { passive: false });
 
-  const LONG_MS = 350, DBL_MS = 300, MOVE_PX = 12, MOVE2 = MOVE_PX * MOVE_PX;
+  const LONG_MS = 350, DOUBLE_TAP_MS = 300, MOVE_PX = 12, MOVE2 = MOVE_PX * MOVE_PX;
   const d2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
   let tt = null;
-  let lastTap = { t: -1e9, x: 0, y: 0 };
+  let lastSelectionTap = null;
   wireInput.queue = false;
   wireInput.inspect = false;
   const park = () => x.openbw_mouse_move(-1, -1);
+  const previewPlacement = (touch) => {
+    const [px, py] = xy(touch);
+    const offset = Math.round(40 * canvas.height / canvas.getBoundingClientRect().height);
+    x.openbw_preview_placement?.(px | 0, Math.max(0, py - offset) | 0);
+    x.openbw_render(performance.now());
+  };
   const cancelTouch = () => {
+    lastSelectionTap = null;
     if (!tt) return;
     clearTimeout(tt.timer);
     if (tt.mode === 'box') {
@@ -516,7 +528,6 @@ function wireInput(canvas, x) {
     $('touch-info').setAttribute('aria-pressed', String(wireInput.inspect));
     clearInspect();
   };
-  $('touch-cancel').onclick = () => { cancelTouch(); clearInspect(); pressKey(0, 41); };
   for (const button of document.querySelectorAll('[data-touch-group]')) {
     let holdTimer = 0, assigned = false;
     const save = () => {
@@ -567,6 +578,11 @@ function wireInput(canvas, x) {
     if (tt) return;
     const t = e.changedTouches[0];
     const [px, py] = xy(t);
+    if (x.openbw_cursor() === 2 && x.openbw_preview_placement) {
+      tt = { id: t.identifier, mode: 'placement', x: px, y: py };
+      previewPlacement(t);
+      return;
+    }
     tt = { id: t.identifier, x0: px, y0: py, x: px, y: py, cx: t.clientX, cy: t.clientY,
       mode: 'pending', armed: false };
     const gesture = tt;
@@ -593,6 +609,7 @@ function wireInput(canvas, x) {
     }
     const t = [...e.changedTouches].find((c) => c.identifier === tt.id);
     if (!t) return;
+    if (tt.mode === 'placement') { previewPlacement(t); return; }
     const [px, py] = xy(t);
     const far = d2(t.clientX, t.clientY, tt.cx, tt.cy) > MOVE2;
     if (tt.mode === 'pending' && far) {
@@ -627,20 +644,26 @@ function wireInput(canvas, x) {
     if (!t) return;
     clearTimeout(tt.timer);
     const [px, py] = xy(t);
-    if (tt.mode === 'box') {
+    if (tt.mode === 'placement') {
+      lastSelectionTap = null;
+      previewPlacement(t);
+    } else if (tt.mode === 'box') {
+      lastSelectionTap = null;
       x.openbw_mouse_button(0, 1, px, py, 1);
       x.openbw_render(performance.now());
       x.openbw_key(0, 0, 225);
     } else if (tt.mode === 'pending') {
-      const now = performance.now();
-      const dbl = now - lastTap.t < DBL_MS && d2(px, py, lastTap.x, lastTap.y) < MOVE2 * 4;
       const cursor = x.openbw_cursor();
       const targeting = cursor === 1 || cursor === 2 || cursor === 4;
       const button = targeting ? 1 : tt.armed ? 3
         : x.openbw_touch_button ? x.openbw_touch_button(px | 0, py | 0) : 1;
-      tap(button, px, py, button === 1 && dbl ? 2 : 1);
-      lastTap = { t: now, x: px, y: py };
-    }
+      const now = performance.now();
+      const selectionTap = button === 1 && !targeting && !tt.armed;
+      const doubleTap = selectionTap && lastSelectionTap && now - lastSelectionTap.time <= DOUBLE_TAP_MS
+        && d2(t.clientX, t.clientY, lastSelectionTap.x, lastSelectionTap.y) <= MOVE2;
+      tap(button, px, py, doubleTap ? 2 : 1);
+      lastSelectionTap = selectionTap && !doubleTap ? { time: now, x: t.clientX, y: t.clientY } : null;
+    } else lastSelectionTap = null;
     tt = null;
     park();
   };
@@ -725,6 +748,7 @@ async function boot(session) {
     if (masterGain) masterGain.gain.value = muted ? 0 : 1;
     muteBtn.textContent = muted ? '🔇' : '🔊';
     muteBtn.title = muted ? 'Unmute sound' : 'Mute sound';
+    muteBtn.setAttribute('aria-label', muteBtn.title);
   };
   $('topbar').style.display = 'flex';
   muteBtn.onclick = () => {
@@ -883,19 +907,6 @@ async function boot(session) {
     bot2 = { slot: session.bot2.slot };
   }
   wireInput(canvas, x);
-  const cancelIcon = x.openbw_command_icon ? x.openbw_command_icon(236) : 0;
-  if (cancelIcon) {
-    const width = x.openbw_icon_w(), height = x.openbw_icon_h();
-    const canvas = document.createElement('canvas');
-    canvas.width = width; canvas.height = height;
-    const context = canvas.getContext('2d');
-    const image = context.createImageData(width, height);
-    image.data.set(new Uint8Array(memory.buffer, cancelIcon, width * height * 4));
-    context.putImageData(image, 0, 0);
-    const icon = document.createElement('img');
-    icon.src = canvas.toDataURL(); icon.alt = '';
-    $('touch-cancel').replaceChildren(icon);
-  }
   // View zoom + native cursor overlay (feature-detected: a stale module falls back
   // to the engine-drawn cursor and a zoom-scaled minimap).
   if (x.openbw_set_view_scale) x.openbw_set_view_scale(zoom);
@@ -1400,6 +1411,7 @@ async function boot(session) {
   const cardEl = $('card');
   const dec = new TextDecoder();
   let lastCard = '', lastBtnSig = null, lastTouchCard = '';
+  let touchBuildOrder = [], buildPointerX = 0, buildDragged = false;
   const readCString = (ptr) => {
     const mem = new Uint8Array(memory.buffer);
     let end = ptr; while (mem[end]) end++;
@@ -1430,30 +1442,42 @@ async function boot(session) {
   const updateCard = () => {
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
+    const mobile = coarsePointer();
     const cursor = x.openbw_cursor();
     const targeting = cursor === 1 || cursor === 2 || cursor === 4;
     const touchCard = text + '\n' + cursor;
-    if (coarsePointer() && touchCard !== lastTouchCard) {
+    if (mobile && touchCard !== lastTouchCard) {
       lastTouchCard = touchCard;
       const rows = text.split('\n');
       const title = rows.shift().split('\t')[0];
       const commands = rows.map(row => row.split('\t'));
       const buildMenu = title === 'Build' || title === 'Advanced Build';
+      document.body.classList.toggle('touch-building-menu', buildMenu);
       const canMove = commands.some(command => command[1] === 'Move');
       const hasDetails = commands.some(command => +command[4] || +command[5] || command[7] || command[8]);
       $('touch-queue').hidden = !canMove || buildMenu;
       $('touch-info').hidden = targeting || !hasDetails;
-      $('touch-cancel').hidden = !targeting && !buildMenu && !commands.some(command => command[0] === '\x1b');
       document.body.classList.toggle('touch-targeting', targeting);
       if ($('touch-info').hidden && wireInput.inspect) {
         wireInput.inspect = false;
         $('touch-info').setAttribute('aria-pressed', 'false');
       }
     }
-    if (text === lastCard) return;
-    lastCard = text;
+    if (!mobile) document.body.classList.remove('touch-building-menu', 'touch-targeting');
+    const presentation = mobile + '\n' + text;
+    if (presentation === lastCard) return;
+    lastCard = presentation;
     if (!text) { cardEl.innerHTML = ''; lastBtnSig = null; return; }
     const lines = text.split('\n');
+    const buildMenu = lines[0].split('\t')[0] === 'Build';
+    if (mobile && buildMenu) {
+      const commands = lines.slice(1);
+      const ids = commands.map(command => command.split('\t')[3]);
+      touchBuildOrder = touchBuildOrder.filter(id => ids.includes(id));
+      for (const id of ids) if (!touchBuildOrder.includes(id)) touchBuildOrder.push(id);
+      commands.sort((left, right) => touchBuildOrder.indexOf(left.split('\t')[3]) - touchBuildOrder.indexOf(right.split('\t')[3]));
+      lines.splice(1, lines.length - 1, ...commands);
+    } else touchBuildOrder = [];
     // Title line: name \t "HP x/y" \t <second stat, e.g. Shields / Minerals — may be empty>.
     // It ticks every frame whenever the unit's HP/energy changes — e.g. a building whose HP
     // counts up during construction. Rebuilding the whole card each tick replaces the button
@@ -1467,7 +1491,7 @@ async function boot(session) {
     if (t0[1]) titleHtml += `<span class="stat">${t0[1]}</span>`;
     if (t0[2]) titleHtml += `<span class="stat">${t0[2]}</span>`;
     if (t0[3]) titleHtml += `<span class="fx">${t0[3]}</span>`;   // status effects (blind, parasite, …)
-    const btnSig = lines.slice(1).join('\n');
+    const btnSig = mobile + '\n' + lines.slice(1).join('\n');
     if (btnSig === lastBtnSig) {
       // Buttons unchanged: refresh only the title spans, leaving the .cmd nodes (and any
       // in-flight click on them) intact.
@@ -1484,7 +1508,8 @@ async function boot(session) {
       const id = f.length > 3 ? parseInt(f[3], 10) : -1;
       const building = id >= 106 && id <= 173;
       const url = id >= 0 ? iconURL(id) : '';
-      const ico = url ? `<img class="ico" src="${url}">` : '';
+      const ico = mobile && f[1] === 'Confirm' ? '<i class="ico" data-lucide="check"></i>'
+        : url ? `<img class="ico" src="${url}">` : '';
       // Highlight the hotkey letter inside the label (first match — usually the first
       // letter, else an inner letter like "Medi[c]"). Fall back to a badge if absent.
       // Key 0x1b is Escape (Cancel, as in the original) — show it as an "Esc" badge and
@@ -1521,10 +1546,23 @@ async function boot(session) {
       const active = f.length > 9 && f[9] === '1' ? ' active' : '';
       // Wrap the label in one span so the flex `gap` on .cmd spaces only the icon from
       // the label — not the highlighted <b> from the rest of the word ("B uild").
-      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
+      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${mobile ? esc(label) : labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
     }
+    const scrollLeft = cardEl.querySelector('.command-grid')?.scrollLeft || 0;
     cardEl.innerHTML = `<div class="card-heading">${titleHtml}</div><div class="command-grid">${html}</div>`;
+    if (mobile && window.lucide) window.lucide.createIcons();
+    if (mobile && buildMenu) cardEl.querySelector('.command-grid').scrollLeft = scrollLeft;
   };
+
+  cardEl.addEventListener('pointerdown', event => {
+    buildPointerX = event.clientX;
+    buildDragged = false;
+  });
+  cardEl.addEventListener('pointermove', event => {
+    if (coarsePointer() && cardEl.classList.contains('building-menu') && Math.abs(event.clientX - buildPointerX) > 8)
+      buildDragged = true;
+  });
+  cardEl.addEventListener('pointercancel', () => { buildDragged = true; });
 
   // Clicking a card button does the same as pressing its key (shift-click queues).
   // Grayed buttons still dispatch — the sim decides (a spell blocked on energy raises the
@@ -1532,6 +1570,7 @@ async function boot(session) {
   cardEl.addEventListener('click', (e) => {
     const cmd = e.target.closest('.cmd');
     if (!cmd) return;
+    if (coarsePointer() && cardEl.classList.contains('building-menu') && buildDragged && e.detail > 0) return;
     if (coarsePointer() && wireInput.inspect) {
       const expanded = !cmd.classList.contains('inspect');
       for (const command of cardEl.querySelectorAll('.cmd')) {
