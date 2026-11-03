@@ -938,26 +938,32 @@ async function boot(session) {
     }
   });
   const fsBtn = $('opt-fullscreen');
-  const appMode = navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+  const appMode = navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches
+    || (window.matchMedia('(display-mode: fullscreen)').matches && !fullscreenElement());
   const root = document.documentElement;
-  const canFullscreen = !!((document.fullscreenEnabled && root.requestFullscreen)
-    || (document.webkitFullscreenEnabled && root.webkitRequestFullscreen));
-  fsBtn.disabled = appMode || !canFullscreen;
-  fsBtn.textContent = appMode ? 'App mode' : !canFullscreen ? 'Fullscreen unavailable'
-    : coarsePointer() ? 'Fullscreen' : `Fullscreen (${navigator.platform.startsWith('Mac') ? '\u2325\u21a9' : 'Alt-Enter'})`;
-  fsBtn.title = !canFullscreen && !appMode ? 'Launch from the Home Screen for an app window without Safari bars.' : '';
+  const requestFullscreen = document.fullscreenEnabled !== false && root.requestFullscreen
+    ? () => root.requestFullscreen()
+    : document.webkitFullscreenEnabled !== false && (root.webkitRequestFullscreen || root.webkitRequestFullScreen)
+      ? () => (root.webkitRequestFullscreen || root.webkitRequestFullScreen).call(root) : null;
+  const updateFullscreenButton = () => {
+    fsBtn.disabled = appMode || !requestFullscreen;
+    fsBtn.textContent = appMode ? 'App mode' : !requestFullscreen ? 'Fullscreen unavailable'
+      : fullscreenElement() ? 'Exit fullscreen' : coarsePointer() ? 'Fullscreen'
+        : `Fullscreen (${navigator.platform.startsWith('Mac') ? '\u2325\u21a9' : 'Alt-Enter'})`;
+    fsBtn.title = !requestFullscreen && !appMode
+      ? 'On iPhone, use Safari Share > Add to Home Screen, leave Open as Web App enabled, then launch the Home Screen icon.' : '';
+  };
+  updateFullscreenButton();
   const toggleFullscreen = async () => {
-    if (appMode || !canFullscreen) return;
+    if (appMode || !requestFullscreen) return;
     try {
       if (fullscreenElement()) {
         if (document.exitFullscreen) await document.exitFullscreen();
         else await document.webkitExitFullscreen();
-      } else if (root.requestFullscreen) {
-        await root.requestFullscreen({ navigationUI: 'hide' });
-      } else {
-        await root.webkitRequestFullscreen();
-      }
+      } else await requestFullscreen();
+      updateFullscreenButton();
     } catch {
+      updateFullscreenButton();
       fsBtn.title = 'Fullscreen was not permitted by this browser.';
     }
   };
@@ -979,6 +985,8 @@ async function boot(session) {
   // pointer lock — while HOLDING Esc exits fullscreen (the browser shows the hint).
   // Browsers without the API keep today's behavior (Esc exits; Alt-Esc covers cancel).
   const fullscreenChanged = () => {
+    updateFullscreenButton();
+    requestAnimationFrame(() => wireInput.resize());
     if (fullscreenElement()) {
       if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(['Escape']).catch(() => {});
       // Capture the mouse too: without pointer lock, macOS reveals the menu bar when

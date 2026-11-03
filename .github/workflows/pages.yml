@@ -45,7 +45,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp web/index.html web/openbw.js web/net.js web/openbw.wasm \
+          cp web/index.html web/manifest.webmanifest web/openbw.js web/net.js web/openbw.wasm \
              web/openbw-bot.wasm web/openbw-mcrave.wasm web/CNAME _site/
            mkdir -p _site/vendor && cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE _site/vendor/
           # A committed map (if any) ships too; otherwise the map is fetched at runtime.

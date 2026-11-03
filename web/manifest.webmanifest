@@ -1,0 +1,12 @@
+{
+  "id": "./",
+  "name": "OpenBW",
+  "short_name": "OpenBW",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#151719"
+}
