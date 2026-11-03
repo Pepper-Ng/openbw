@@ -102,6 +102,36 @@ function testCommands() {
   x.openbw_mouse_move(-1, -1);
   x.openbw_render(0);
 
+  x.openbw_set_touch_controls(1);
+  const mobileCard = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  assert.deepEqual(mobileCard.map(command => command[1]), ['Move', 'Attack', 'Build', 'Stop']);
+  assert.equal(mobileCard.find(command => command[1] === 'Stop')[2], '0');
+  press(98);
+  x.openbw_render(0);
+  const mobileBuildings = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  assert.ok(mobileBuildings.length > 0);
+  assert.ok(mobileBuildings.every(command => command[2] === '1'));
+  assert.ok(mobileBuildings.find(command => command[1] === 'Supply Depot'));
+  assert.equal(mobileBuildings.some(command => command[1] === 'Factory'), false);
+  assert.equal(mobileBuildings.find(command => command[1] === 'Supply Depot')[6], '0');
+  press(0, 41);
+  x.openbw_render(0);
+  x.openbw_set_touch_controls(0);
+
+  x.openbw_debug_select(Number(building[0]), 0);
+  assert.match(read(x.openbw_card()), /Comsat Station/);
+  x.openbw_set_touch_controls(1);
+  x.openbw_debug_resources(0, 0);
+  x.openbw_render(0);
+  const mobileProducer = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  assert.equal(mobileProducer.some(command => command[1] === 'Comsat Station'), false);
+  assert.equal(mobileProducer.some(command => command[1] === 'Nuclear Silo'), false);
+  assert.equal(mobileProducer.find(command => command[1] === 'SCV')[2], '1');
+  assert.equal(mobileProducer.find(command => command[1] === 'SCV')[6], '0');
+  x.openbw_debug_resources(50, 0);
+  x.openbw_set_touch_controls(0);
+  x.openbw_debug_select(Number(worker[0]), 0);
+
   for (const shift of [225, 229]) {
     for (const releaseBeforeRender of [false, true]) {
       x.openbw_out_clear();
@@ -268,6 +298,66 @@ function testCommands() {
   apply();
   assert.match(read(x.openbw_debug_dump()), /order=98 /, 'Unmodified O must still interrupt Move');
 
+  send(factory, [31, 2, 0]);
+  advance(1200);
+  const vulture = units().find(unit => unit[1] === 'Vulture');
+  assert.ok(vulture, 'Factory must train a Vulture');
+  x.openbw_set_touch_controls(1);
+  x.openbw_debug_select(Number(vulture[0]), 0);
+  assert.equal(read(x.openbw_card()).includes('Spider Mines'), false, 'Mines require research');
+  assert.match(read(x.openbw_card()), /Patrol/);
+  assert.match(read(x.openbw_card()), /Mines 3/);
+  send(shop, [48, 3]);
+  advance(2400);
+  x.openbw_render(0);
+  x.openbw_key(1, 0, 224);
+  press(56, 37);
+  x.openbw_key(0, 0, 224);
+  x.openbw_render(0);
+  press(56, 37);
+  x.openbw_render(0);
+  press(56, 37);
+  x.openbw_render(0);
+  const vultureScreenX = Number(vulture[3]) - Math.max(0, Math.min(Number(vulture[3]) - 640, x.openbw_map_w() * 32 - 1280));
+  const vultureScreenY = Number(vulture[4]) - Math.max(0, Math.min(Number(vulture[4]) - 400, x.openbw_map_h() * 32 - 800));
+  for (const remaining of [2, 1, 0]) {
+    const mineCommand = read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+      .find(command => command[1] === 'Spider Mines');
+    assert.ok(mineCommand);
+    assert.equal(mineCommand[2], '1');
+    assert.equal(mineCommand[3], '243');
+    x.openbw_out_clear();
+    press(mineCommand[0].charCodeAt(0));
+    x.openbw_mouse_move(vultureScreenX, vultureScreenY);
+    x.openbw_mouse_button(1, 1, vultureScreenX, vultureScreenY, 1);
+    x.openbw_mouse_button(0, 1, vultureScreenX, vultureScreenY, 1);
+    x.openbw_render(0);
+    const mineOrder = records().find(record => record[0] === 21);
+    assert.ok(mineOrder);
+    assert.equal(mineOrder[9], 132);
+    assert.equal(mineOrder[5] | mineOrder[6] << 8, 0, 'Spider Mines must target the ground');
+    apply();
+    advance(96);
+    x.openbw_render(0);
+    assert.match(read(x.openbw_card()), new RegExp(`Mines ${remaining}`));
+    assert.equal(units().filter(unit => unit[1] === 'Vulture Spider Mine').length, 3 - remaining);
+  }
+  assert.equal(read(x.openbw_card()).includes('Spider Mines'), false, 'No mine-laying command remains after ammo is exhausted');
+  x.openbw_out_clear();
+  x.openbw_key(1, 0, 225);
+  press(112);
+  x.openbw_mouse_button(1, 1, vultureScreenX + 32, vultureScreenY, 1);
+  x.openbw_mouse_button(0, 1, vultureScreenX + 32, vultureScreenY, 1);
+  x.openbw_key(0, 0, 225);
+  x.openbw_render(0);
+  assert.equal(records().find(record => record[0] === 21).at(-1), 1, 'Mobile combat Patrol must support queuing');
+  x.openbw_out_clear();
+  x.openbw_debug_select(Number(worker[0]), 0);
+  assert.equal(read(x.openbw_card()).includes('Patrol'), false);
+  x.openbw_set_touch_controls(0);
+  x.openbw_mouse_move(-1, -1);
+  x.openbw_render(0);
+
   x.openbw_debug_resources(20000, 20000);
   buildNearBase(112, 'Academy');
   buildNearBase(114, 'Starport');
@@ -326,5 +416,227 @@ function testCommands() {
   x.openbw_debug_select(Number(ghost[0]), 0);
   x.openbw_render(0);
   assert.match(read(x.openbw_card()), /Nuclear Strike/);
-  console.log('Command checks passed: queued input, groups, Escape cancellation, refunds, tank modes and Ghost/nuke rendering.');
+
+  x.openbw_set_touch_controls(1);
+  const combatCommands = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t')[1]);
+  assert.ok(combatCommands.includes('Hold'));
+  assert.equal(combatCommands.includes('Patrol'), true);
+  x.openbw_debug_select(Number(worker[0]), 0);
+  send(worker, [21, ...word(Number(worker[3]) + 64), ...word(Number(worker[4])), 0, 0, 228, 0, 6, 0]);
+  x.openbw_render(0);
+  assert.equal(read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+    .find(command => command[1] === 'Stop')[2], '1');
+  press(98);
+  x.openbw_render(0);
+  const unlocked = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  assert.ok(unlocked.find(command => command[1] === 'Factory'));
+  assert.ok(unlocked.find(command => command[1] === 'Science Facility'));
+  assert.ok(unlocked.every(command => command[2] === '1'));
+  press(0, 41);
+  x.openbw_render(0);
+
+  x.openbw_debug_select(Number(building[0]), 0);
+  x.openbw_key(1, 0, 224);
+  press(57, 38);
+  x.openbw_key(0, 0, 224);
+  x.openbw_render(0);
+  press(57, 38);
+  x.openbw_render(0);
+  press(57, 38);
+  x.openbw_render(0);
+  x.openbw_debug_set_life(Number(building[0]), 1000, -1);
+  x.openbw_debug_select(Number(worker[0]), 0);
+  const buildingScreenX = Number(building[3]) - Math.max(0, Math.min(Number(building[3]) - 640, x.openbw_map_w() * 32 - 1280));
+  const buildingScreenY = Number(building[4]) - Math.max(0, Math.min(Number(building[4]) - 400, x.openbw_map_h() * 32 - 800));
+  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 1, 'Unarmed friendly tap must remain selection');
+  const targetBuilding = (symbol, shift = false) => {
+    x.openbw_out_clear();
+    x.openbw_key(shift ? 1 : 0, 0, 225);
+    press(symbol);
+    x.openbw_mouse_move(buildingScreenX, buildingScreenY);
+    x.openbw_mouse_button(1, 1, buildingScreenX, buildingScreenY, 1);
+    x.openbw_mouse_button(0, 1, buildingScreenX, buildingScreenY, 1);
+    x.openbw_render(0);
+    x.openbw_key(0, 0, 225);
+    x.openbw_render(0);
+    const order = records().find(record => record[0] === 21);
+    assert.ok(order);
+    assert.equal(order[5] | order[6] << 8, Number(building[0]));
+    return order;
+  };
+  const repair = targetBuilding(109, true);
+  assert.equal(repair[9], 34, 'Mobile Move must repair a damaged friendly mechanical building');
+  assert.equal(repair[10], 1, 'Smart repair must preserve queueing');
+  assert.equal(targetBuilding(97)[9], 8, 'Explicit Attack must not become Repair');
+  x.openbw_out_clear();
+  x.openbw_mouse_button(1, 3, buildingScreenX, buildingScreenY, 1);
+  x.openbw_mouse_button(0, 3, buildingScreenX, buildingScreenY, 1);
+  x.openbw_render(0);
+  assert.equal(records().find(record => record[0] === 21)[9], 34, 'Default mobile orders must retain smart repair without a Move button');
+  x.openbw_debug_set_life(Number(building[0]), 1500, -1);
+  x.openbw_out_clear();
+  press(109);
+  x.openbw_mouse_button(1, 1, buildingScreenX, buildingScreenY, 1);
+  x.openbw_mouse_button(0, 1, buildingScreenX, buildingScreenY, 1);
+  x.openbw_render(0);
+  const contextual = records().find(record => record[0] === 20);
+  assert.ok(contextual, 'Healthy targets must use the normal contextual-order path');
+  assert.equal(contextual[5] | contextual[6] << 8, Number(building[0]));
+  x.openbw_debug_set_life(Number(building[0]), 1000, -1);
+  x.openbw_set_touch_controls(0);
+  assert.notEqual(targetBuilding(109)[9], 34, 'Desktop Move must not become smart repair');
+  assert.match(read(x.openbw_card()), /Patrol/);
+  assert.match(read(x.openbw_card()), /Advanced/);
+
+  x.openbw_set_touch_controls(1);
+  x.openbw_debug_resources(10000, 10000);
+  x.openbw_out_clear();
+  const commandRows = () => read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  const chooseDepot = () => {
+    press(98);
+    x.openbw_render(0);
+    assert.equal(commandRows().filter(command => command[1] === 'Cancel').length, 1);
+    const depot = commandRows().find(command => command[1] === 'Supply Depot');
+    assert.ok(depot);
+    press(depot[0].charCodeAt(0));
+    x.openbw_render(0);
+    assert.equal(x.openbw_cursor(), 2);
+    assert.equal(read(x.openbw_card()).split('\n')[0].split('\t')[1], '', 'Placement must not label worker HP as building HP');
+    assert.deepEqual(commandRows().map(command => command[1]), ['Confirm', 'Cancel']);
+    assert.equal(commandRows()[0][2], '0');
+  };
+  chooseDepot();
+  press(99);
+  x.openbw_render(0);
+  assert.equal(records().length, 0, 'Confirm must not build before choosing a location');
+  x.openbw_preview_placement(0, 0);
+  x.openbw_mouse_move(-1, -1);
+  x.openbw_render(0);
+  assert.equal(x.openbw_edge(), 0, 'Placement preview must not edge-scroll');
+  assert.equal(records().length, 0, 'Preview must not build');
+  press(0, 41);
+  x.openbw_render(0);
+  assert.notEqual(x.openbw_cursor(), 2);
+  assert.equal(records().length, 0, 'Cancel must not build');
+  chooseDepot();
+  let validPreview = false;
+  let previewScreenX = 0, previewScreenY = 0;
+  for (let screenY = 48; screenY < 720 && !validPreview; screenY += 32) {
+    for (let screenX = 48; screenX < 1200; screenX += 32) {
+      x.openbw_preview_placement(screenX, screenY);
+      if (commandRows()[0][2] === '1') {
+        validPreview = true;
+        previewScreenX = screenX;
+        previewScreenY = screenY;
+        break;
+      }
+    }
+  }
+  assert.ok(validPreview, 'Test map must contain a valid Supply Depot location');
+  x.openbw_mouse_move(-1, -1);
+  x.openbw_render(0);
+  assert.equal(commandRows()[0][2], '1', 'A parked cursor must not lose the saved preview');
+  assert.equal(records().length, 0);
+  x.openbw_pan(32, 32);
+  x.openbw_render(0);
+  press(99);
+  x.openbw_render(0);
+  const placed = records().find(record => record[0] === 12);
+  assert.ok(placed, 'Confirm must issue the build command');
+  assert.deepEqual(placed.slice(6, 8), [109, 0]);
+  const expectedTileX = Math.floor((previewScreenX + Number(building[3]) - buildingScreenX - 48 + 16) / 32);
+  const expectedTileY = Math.floor((previewScreenY + Number(building[4]) - buildingScreenY - 32 + 16) / 32);
+  assert.equal(placed[2] | placed[3] << 8, expectedTileX, 'Camera movement must not change the preview map tile');
+  assert.equal(placed[4] | placed[5] << 8, expectedTileY);
+  assert.notEqual(x.openbw_cursor(), 2);
+  x.openbw_out_clear();
+  x.openbw_pan(-32, -32);
+  x.openbw_render(0);
+
+  x.openbw_debug_select(Number(building[0]), 0);
+  const clickSelected = (screenX, screenY, clicks = 1) => {
+    x.openbw_mouse_button(1, 1, screenX, screenY, clicks);
+    x.openbw_mouse_button(0, 1, screenX, screenY, clicks);
+    x.openbw_render(0);
+  };
+  clickSelected(buildingScreenX, buildingScreenY);
+  assert.equal(read(x.openbw_card()), '', 'Clicking a selected building must deselect it');
+  clickSelected(buildingScreenX, buildingScreenY);
+  assert.match(read(x.openbw_card()), /^Command Center/);
+  clickSelected(buildingScreenX, buildingScreenY);
+  assert.equal(read(x.openbw_card()), '');
+  x.openbw_set_touch_controls(0);
+  x.openbw_debug_select(Number(building[0]), 0);
+  clickSelected(buildingScreenX, buildingScreenY);
+  assert.equal(read(x.openbw_card()), '', 'Desktop single click must also deselect');
+  const currentWorker = units().find(unit => Number(unit[0]) === Number(worker[0]));
+  const workerScreenX = Number(currentWorker[3]) - Number(building[3]) + buildingScreenX;
+  const workerScreenY = Number(currentWorker[4]) - Number(building[4]) + buildingScreenY;
+  x.openbw_debug_select(Number(worker[0]), 0);
+  clickSelected(workerScreenX, workerScreenY);
+  assert.equal(read(x.openbw_card()), '', 'Clicking a selected mobile unit must deselect it');
+  x.openbw_set_touch_controls(1);
+  x.openbw_debug_select(Number(worker[0]), 0);
+  clickSelected(workerScreenX, workerScreenY, 2);
+  const visibleWorkers = units().filter(unit => unit[1] === 'SCV' && unit[2] === worker[2])
+    .filter(unit => Number(unit[3]) >= Number(building[3]) - buildingScreenX
+      && Number(unit[3]) < Number(building[3]) - buildingScreenX + 1280
+      && Number(unit[4]) >= Number(building[4]) - buildingScreenY
+      && Number(unit[4]) < Number(building[4]) - buildingScreenY + 800);
+  const doubleTapSelection = read(x.openbw_wires()).trim().split('\n').filter(Boolean);
+  assert.equal(doubleTapSelection.length, visibleWorkers.length, 'Double-tap must select matching units only within the view');
+  assert.ok(doubleTapSelection.some(line => Number(line.split('\t')[0]) === Number(worker[0])));
+  x.openbw_debug_select(Number(worker[0]), 0);
+  clickSelected(workerScreenX, workerScreenY);
+  assert.equal(read(x.openbw_card()), '', 'An ordinary later tap must still deselect');
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  x.openbw_key(1, 0, 224);
+  press(55, 36);
+  x.openbw_key(0, 0, 224);
+  x.openbw_render(0);
+  press(55, 36);
+  x.openbw_render(0);
+  press(55, 36);
+  x.openbw_render(0);
+  const ghostPosition = units().find(unit => Number(unit[0]) === Number(ghost[0]));
+  const ghostMapLeft = Math.max(0, Math.min(Number(ghostPosition[3]) - 640, x.openbw_map_w() * 32 - 1280));
+  const ghostMapTop = Math.max(0, Math.min(Number(ghostPosition[4]) - 400, x.openbw_map_h() * 32 - 800));
+  const strikeGroundX = Number(ghostPosition[3]) + (Number(ghostPosition[3]) < 1024 ? 320 : -320);
+  const strikeGroundY = Number(ghostPosition[4]) + (Number(ghostPosition[4]) < 1024 ? 160 : -160);
+  for (const mobile of [false, true]) {
+    x.openbw_set_touch_controls(mobile ? 1 : 0);
+    for (const [mapX, mapY] of [[Number(building[3]), Number(building[4])], [strikeGroundX, strikeGroundY]]) {
+      x.openbw_debug_select(Number(ghost[0]), 0);
+      x.openbw_out_clear();
+      press(110, 17);
+      x.openbw_render(0);
+      assert.ok([1, 4].includes(x.openbw_cursor()));
+      x.openbw_mouse_move(mapX - ghostMapLeft, mapY - ghostMapTop);
+      x.openbw_mouse_button(1, 1, mapX - ghostMapLeft, mapY - ghostMapTop, 1);
+      x.openbw_mouse_button(0, 1, mapX - ghostMapLeft, mapY - ghostMapTop, 1);
+      x.openbw_render(0);
+      const nuclearOrder = records().find(record => record[0] === 21);
+      assert.ok(nuclearOrder, 'A Nuclear Strike target click must issue an order');
+      assert.equal(nuclearOrder[9], 126, 'Ghost must receive NukePaint, not the internal CastNuclearStrike order');
+      assert.equal(nuclearOrder[5] | nuclearOrder[6] << 8, 0, 'Nuclear Strike targets the clicked position, including over buildings');
+      assert.equal(nuclearOrder[1] | nuclearOrder[2] << 8, mapX);
+      assert.equal(nuclearOrder[3] | nuclearOrder[4] << 8, mapY);
+      assert.equal(Number(read(x.openbw_wires()).split('\t')[0]), Number(ghost[0]), 'Targeting a building must not select it');
+      apply();
+      assert.match(read(x.openbw_debug_dump()), /order=126 /, 'Engine must accept the Ghost nuclear-paint order');
+    }
+  }
+  let nuclearLaunchSeen = false;
+  let ghostMovedForStrike = false;
+  for (let frame = 0; frame < 900 && !nuclearLaunchSeen; frame++) {
+    x.openbw_step();
+    const currentUnits = units();
+    const currentGhost = currentUnits.find(unit => Number(unit[0]) === Number(ghost[0]));
+    if (Number(currentGhost[3]) !== Number(ghostPosition[3]) || Number(currentGhost[4]) !== Number(ghostPosition[4]))
+      ghostMovedForStrike = true;
+    nuclearLaunchSeen = currentUnits.some(unit => unit[1] === 'Nuclear Missile' && unit[5] === '125');
+  }
+  assert.ok(ghostMovedForStrike, 'Ghost must approach an out-of-range strike location');
+  assert.ok(nuclearLaunchSeen, 'A ready missile must launch after the Ghost paints the target');
+  console.log('Command checks passed: actual nuclear targeting/launch, placement, selection, smart orders, queues, tank modes and Vulture mines.');
 }

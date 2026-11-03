@@ -668,6 +668,7 @@ struct play_ui : ui_functions {
 	static const spell_t* spells(size_t& n) {
 		using U = UnitTypes; using T = TechTypes; using O = Orders;
 		static const spell_t s[] = {
+			{U::Terran_Vulture, T::Spider_Mines, O::PlaceMine, false, "Spider Mines", 'i'},
 			{U::Terran_Ghost, T::Lockdown, O::CastLockdown, true, "Lockdown", 'l'},
 			{U::Terran_Science_Vessel, T::Defensive_Matrix, O::CastDefensiveMatrix, true, "Defensive Matrix", 'd'},
 			{U::Terran_Science_Vessel, T::Irradiate, O::CastIrradiate, true, "Irradiate", 'i'},
@@ -693,7 +694,7 @@ struct play_ui : ui_functions {
 			// like the rest; Nuclear Strike is special-cased below (no energy, needs a missile).
 			{U::Terran_Comsat_Station, T::Scanner_Sweep, O::CastScannerSweep, false, "Scanner Sweep", 's'},
 			{U::Zerg_Queen, T::Infestation, O::CastInfestation, true, "Infest CC", 'i'},
-			{U::Terran_Ghost, T::None, O::CastNuclearStrike, false, "Nuclear Strike", 'n'},   // None = the nuke special-case
+			{U::Terran_Ghost, T::None, O::NukePaint, false, "Nuclear Strike", 'n'},   // None = the nuke special-case
 		};
 		n = sizeof(s) / sizeof(s[0]);
 		return s;
