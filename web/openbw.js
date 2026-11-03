@@ -175,6 +175,7 @@ async function loadAssets(mapFile = MAP_LOCAL) {
       // files, so this 404s and the archive.org URL is used.
       let mirror = null;
       try { const r = await fetch(local); if (r.ok) mirror = await r.arrayBuffer(); } catch {}
+      if (!mirror && DEV) throw new Error('Missing local game data: ' + local);
       buf = mirror || await fetchWithProgress(url, size, (frac) => { got[i] = frac * size; renderBar(); });
       await idbPut(db, key, buf);
     }
@@ -540,6 +541,23 @@ function wireInput(canvas, x) {
 
 // ---------------------------------------------------------------------------
 // Boot
+async function instantiateWasm(moduleName, imports) {
+  const url = './' + moduleName + (DEV ? '?t=' + Date.now() : '?v=' + BUILD);
+  const response = await fetch(url, DEV ? { cache: 'no-store' } : {});
+  if (!response.ok) {
+    if (response.status === 404 && moduleName !== 'openbw.wasm')
+      throw new Error('Computer-opponent module ' + moduleName + ' is not built locally. Set all opponent slots to None.');
+    throw new Error('Could not load ' + moduleName + ': HTTP ' + response.status + '.');
+  }
+  if ((response.headers.get('content-type') || '').toLowerCase().includes('text/html'))
+    throw new Error('Received an HTML page instead of ' + moduleName + '. Check the server URL and reload the page.');
+  try {
+    return await WebAssembly.instantiateStreaming(response.clone(), imports);
+  } catch {
+    return await WebAssembly.instantiate(await response.arrayBuffer(), imports);
+  }
+}
+
 // A headless bot replica: its own memory + WASI over the shared assets, silent (the
 // rendered replica handles sound). Seats the full melee and attaches its bot. Used as the
 // shadow sim for the second bot in a spectated bot-vs-bot — the Lockstep keeps it in sync.
@@ -551,10 +569,7 @@ async function makeBotReplica(assets, moduleName, slots, botSlot, w, h) {
     js_bot_log: (ptr, len) => { if (BOT_LOG) console.log('%c[bot ' + botSlot + ']', 'color:#c90', new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len))); },
     js_sound_load: () => -1, js_sound_play: () => {}, js_sound_is_playing: () => 0, js_sound_stop: () => {}, js_sound_set_volume: () => {},
   };
-  const req = () => DEV ? fetch('./' + moduleName + '?t=' + Date.now(), { cache: 'no-store' }) : fetch('./' + moduleName + '?v=' + BUILD);
-  let instance;
-  try { ({ instance } = await WebAssembly.instantiateStreaming(req(), { wasi_snapshot_preview1: makeWasi(() => memory), env })); }
-  catch { ({ instance } = await WebAssembly.instantiate(await (await req()).arrayBuffer(), { wasi_snapshot_preview1: makeWasi(() => memory), env })); }
+  const { instance } = await instantiateWasm(moduleName, { wasi_snapshot_preview1: makeWasi(() => memory), env });
   const x = instance.exports;
   memory = x.memory;
   x._initialize();
@@ -723,17 +738,8 @@ async function boot(session) {
   // vs-Computer loads a bot-enabled module (sandbox + BWAPI server + the chosen bot);
   // each exports the same surface plus openbw_bot_*, so everything else is identical.
   const wasmName = session.bot ? session.bot.module : 'openbw.wasm';
-  const wasmReq = () => DEV ? fetch('./' + wasmName + '?t=' + Date.now(), { cache: 'no-store' })
-                            : fetch('./' + wasmName + '?v=' + BUILD);
   hb('boot:wasm-fetch');
-  let instance;
-  try {
-    ({ instance } = await WebAssembly.instantiateStreaming(wasmReq(), imports));
-  } catch (e) {
-    // dev servers may not send application/wasm — fall back to plain instantiate
-    const bytes = await (await wasmReq()).arrayBuffer();
-    ({ instance } = await WebAssembly.instantiate(bytes, imports));
-  }
+  const { instance } = await instantiateWasm(wasmName, imports);
   const x = instance.exports;
   memory = x.memory;
 
@@ -1632,7 +1638,7 @@ const OPPONENTS = {
 // ZZZKBot as the default: McRave is the stronger bot but its code has latent
 // unbounded-loop bugs (see mcrave.patch's "wasm port" guards) — one rare mid-game
 // spin is still unlocated, so the default opponent is the one with a clean record.
-const DEFAULT_OPP = 'zzzk';
+const DEFAULT_OPP = DEV ? 'none' : 'zzzk';
 const slotsBox = $('slots');
 const curMap = () => MAPS.find((m) => m.file === mapSelect.value) || MAPS[0];
 
