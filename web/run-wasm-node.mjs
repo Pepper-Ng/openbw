@@ -183,7 +183,9 @@ function testCommands() {
   };
   const buildNearBase = (type, name) => {
     for (const [offsetX, offsetY] of [[160, 96], [-160, 96], [160, -96], [-160, -96],
-                                    [256, 0], [-256, 0], [0, 192], [0, -192]]) {
+                                    [256, 0], [-256, 0], [0, 192], [0, -192],
+                                    [320, 96], [-320, 96], [320, -96], [-320, -96],
+                                    [160, 256], [-160, 256], [160, -256], [-160, -256]]) {
       const tileX = Math.round((Number(building[3]) + offsetX - 64) / 32);
       const tileY = Math.round((Number(building[4]) + offsetY - 48) / 32);
       if (tileX < 0 || tileY < 0 || tileX + 4 > x.openbw_map_w() || tileY + 3 > x.openbw_map_h()) continue;
@@ -192,7 +194,8 @@ function testCommands() {
       const placed = units().find(unit => unit[1] === name);
       if (placed) return placed;
     }
-    assert.fail(`Could not construct ${name} for the command test`);
+    x.openbw_debug_select(Number(worker[0]), 0);
+    assert.fail(`Could not construct ${name}: ${read(x.openbw_resources())}\n${read(x.openbw_debug_dump())}\n${read(x.openbw_debug_units())}`);
   };
 
   x.openbw_debug_resources(10000, 10000);
@@ -264,5 +267,64 @@ function testCommands() {
   assert.deepEqual(records().find(record => record[0] === 38), [38, 0]);
   apply();
   assert.match(read(x.openbw_debug_dump()), /order=98 /, 'Unmodified O must still interrupt Move');
-  console.log('Command checks passed: queued hotkeys/clicks, Ctrl groups, submenu Escape, SCV/Marine cancellation, refunds and queued/immediate/idle tank modes.');
+
+  x.openbw_debug_resources(20000, 20000);
+  buildNearBase(112, 'Academy');
+  buildNearBase(114, 'Starport');
+  const science = buildNearBase(116, 'Science Facility');
+  const covertX = (Number(science[3]) + 48) / 32;
+  const covertY = (Number(science[4]) - 32) / 32;
+  send(science, [12, 36, ...word(covertX), ...word(covertY), ...word(117)]);
+  advance(1200);
+  assert.ok(units().find(unit => unit[1] === 'Covert Ops'), 'Covert Ops must complete before training a Ghost');
+  const siloX = (Number(building[3]) + 64) / 32;
+  const siloY = (Number(building[4]) - 16) / 32;
+  send(building, [12, 36, ...word(siloX), ...word(siloY), ...word(108)]);
+  advance(1200);
+  const silo = units().find(unit => unit[1] === 'Nuclear Silo');
+  assert.ok(silo, 'Command Center must construct a Nuclear Silo');
+  send(barracks, [31, 1, 0]);
+  advance(1200);
+  const ghost = units().find(unit => unit[1] === 'Ghost');
+  assert.ok(ghost, 'Barracks must train a Ghost');
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  x.openbw_render(0);
+  assert.equal(read(x.openbw_card()).includes('Nuclear Strike'), false);
+
+  buildNearBase(109, 'Supply Depot');
+  send(silo, [31, 14, 0]);
+  advance(2400);
+  assert.ok(units().find(unit => unit[1] === 'Nuclear Missile'), 'Silo must complete a nuclear missile');
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  x.openbw_render(0);
+  const strike = read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+    .find(command => command[1] === 'Nuclear Strike');
+  assert.ok(strike, 'A completed missile must enable Nuclear Strike');
+  assert.equal(strike[2], '1');
+  assert.equal(strike[3], '311');
+  const icon = x.openbw_command_icon(Number(strike[3]));
+  assert.ok(icon);
+  assert.equal(x.openbw_icon_w(), 36);
+  assert.equal(x.openbw_icon_h(), 34);
+  const pixels = new Uint8Array(memory.buffer, icon, 36 * 34 * 4);
+  assert.ok(pixels.some((value, index) => index % 4 === 3 ? value > 0 : false), 'Nuclear Strike icon must not be blank');
+  const beforeRender = x.openbw_frame();
+  for (let frame = 0; frame < 8; frame++) {
+    x.openbw_step();
+    x.openbw_render(frame);
+  }
+  assert.equal(x.openbw_frame(), beforeRender + 8);
+  x.openbw_out_clear();
+  press(110, 17);
+  x.openbw_render(0);
+  assert.equal(x.openbw_cursor(), 1, 'Nuclear Strike must enter targeting mode');
+  press(0, 41);
+  x.openbw_render(0);
+  assert.equal(x.openbw_cursor(), 0);
+  assert.equal(records().length, 0);
+  x.openbw_debug_select(Number(worker[0]), 0);
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  x.openbw_render(0);
+  assert.match(read(x.openbw_card()), /Nuclear Strike/);
+  console.log('Command checks passed: queued input, groups, Escape cancellation, refunds, tank modes and Ghost/nuke rendering.');
 }

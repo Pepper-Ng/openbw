@@ -1309,7 +1309,8 @@ struct play_ui : ui_functions {
 			case C_ARCHON: icon = (int)UnitTypes::Protoss_Archon; break;
 			case C_DARCHON: icon = (int)UnitTypes::Protoss_Dark_Archon; break;
 			case C_UPGRADE: icon = get_upgrade_type(c.upg)->icon; break;
-			case C_RESEARCH: case C_SPELL: icon = get_tech_type(c.tech)->icon; break;
+			case C_RESEARCH: icon = get_tech_type(c.tech)->icon; break;
+			case C_SPELL: icon = c.tech == TechTypes::None ? 311 : get_tech_type(c.tech)->icon; break;
 			default: break;
 			}
 			int minc = 0, gasc = 0;   // resource cost of the thing this button makes
