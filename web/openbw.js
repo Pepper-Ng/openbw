@@ -841,7 +841,7 @@ async function boot(session) {
   // Any build whose SHA wasn't stamped in by CI is a local/dev build — including one served
   // to a phone over a LAN IP. Treat it as dev so the wasm is fetched fresh (the ?v=__BUILD__
   // cache-buster is a constant locally, so a plain fetch would serve a stale, skewed wasm).
-  // BUILD is replaced by CI with the commit SHA (see .github/workflows/pages.yml), so a
+  // BUILD is replaced by CI with the commit SHA (see .github/workflows/container.yml), so a
   // new deploy fetches a fresh wasm URL instead of a stale cached one. Locally it stays
   // the '__BUILD__' placeholder and we cache-bust per load instead.
   // vs-Computer loads a bot-enabled module (sandbox + BWAPI server + the chosen bot);

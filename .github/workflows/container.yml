@@ -1,0 +1,70 @@
+name: Publish OpenBW container
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: openbw-container
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch WASI SDK
+        run: |
+          curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz | tar xz
+          echo "WASI_SDK=$PWD/wasi-sdk-33.0-x86_64-linux" >> "$GITHUB_ENV"
+
+      - name: Build wasm
+        run: bash web/build-wasm.sh
+
+      - name: Build vs-Computer wasm
+        run: |
+          bash web/bot/vendor.sh
+          bash web/bot/build-web.sh
+          BOT=mcrave bash web/bot/build-web.sh
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp web/index.html web/openbw.js web/net.js web/openbw.wasm \
+             web/openbw-bot.wasm web/openbw-mcrave.wasm _site/
+          mkdir -p _site/vendor
+          cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE _site/vendor/
+          if compgen -G "web/maps/*.scx" > /dev/null; then
+            mkdir -p _site/maps
+            cp web/maps/*.scx _site/maps/
+          fi
+          sed -i "s/__BUILD__/${GITHUB_SHA::12}/g" _site/index.html _site/openbw.js
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: |
+            ghcr.io/pepper-ng/openbw:master
+            ghcr.io/pepper-ng/openbw:sha-${{ github.sha }}
+
+      - name: Redeploy Portainer stack
+        if: env.PORTAINER_WEBHOOK_URL != ''
+        run: curl --fail --silent --show-error --request POST "$PORTAINER_WEBHOOK_URL"

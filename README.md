@@ -159,9 +159,9 @@ This is an experimental engine and sandbox, not a fully certified replacement fo
 
 ## Deployment
 
-[The GitHub Pages workflow](.github/workflows/pages.yml) builds the base module and both bot modules, packages the static site, and stamps a build ID for cache invalidation. It deploys `master`; `dev` is not an automatic deployment branch.
+The [container workflow](.github/workflows/container.yml) builds the base module and both bot modules on pushes to `master`, packages the static site as a container image, and publishes it to GitHub Container Registry. The image is served by Nginx; no game archives are included.
 
-Before enabling Pages on a fork, review the inherited custom domain in [web/CNAME](web/CNAME). Use your own domain, or remove that file from the deployed site and update the workflow's copy step. Do not deploy the local game archives.
+Deploy [compose.yml](compose.yml) as a Git-backed Portainer stack from the `master` branch. Enable stack auto-updates and set the repository's `PORTAINER_WEBHOOK_URL` Actions secret to the stack webhook URL so each completed image build triggers a redeploy. Make the GHCR package public for unauthenticated image pulls. The Compose file publishes port `18082`; configure your reverse proxy to forward to the Docker host on that port. No domain name is required by the repository.
 
 ## Source Layout
 
