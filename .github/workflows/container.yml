@@ -56,6 +56,14 @@ jobs:
             ghcr.io/pepper-ng/openbw:master
             ghcr.io/pepper-ng/openbw:sha-${{ github.sha }}
 
+      - name: Make GHCR package public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          package_id="$(gh api graphql -f query='query { user(login: "Pepper-Ng") { packages(first: 100, packageType: CONTAINER) { nodes { id name } } } }' --jq '.data.user.packages.nodes[] | select(.name == "openbw") | .id')"
+          test -n "$package_id"
+          gh api graphql -f query='mutation($packageId: ID!) { updatePackageVisibility(input: { packageId: $packageId, visibility: PUBLIC }) { package { visibility } } }' -F packageId="$package_id" --jq '.data.updatePackageVisibility.package.visibility' | grep -qx PUBLIC
+
       - name: Mark published image for Portainer polling
         run: |
           printf '%s\n' "$GITHUB_SHA" > .deployment-image
