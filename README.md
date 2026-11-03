@@ -41,7 +41,7 @@ Local builds require the files above and report an error if they are missing. Th
 
 ### 3. Build WebAssembly
 
-**Windows / PowerShell**
+#### Windows / PowerShell
 
 Set `WASI_SDK` to your extracted SDK directory, then run:
 
@@ -52,7 +52,7 @@ $env:WASI_SDK = 'C:\tools\wasi-sdk-33.0-x86_64-windows'
 
 Alternatively, pass `-WasiSdk <directory>` to the script. Its default lookup is `%LOCALAPPDATA%\OpenBW\tools\wasi-sdk-33.0-x86_64-windows`.
 
-**Linux / macOS**
+#### Linux / macOS
 
 Set `WASI_SDK` to the SDK directory for your platform:
 
@@ -69,7 +69,7 @@ Both scripts produce `web/openbw.wasm`. The generated module is ignored by Git. 
 python -m http.server 8000 --bind 127.0.0.1 --directory web
 ```
 
-Use `python3` if that is your Python 3 command. Open **http://127.0.0.1:8000/**. Do not open the HTML directly using `file://`.
+Use `python3` if that is your Python 3 command. Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/). Do not open the HTML directly using `file://`.
 
 For the first run, select **Weave** and leave every opponent set to **None**, then select **Start Game**. This only needs the base module built above. Other listed maps are fetched from external sources; you can also load a local `.scm` or `.scx` file.
 
