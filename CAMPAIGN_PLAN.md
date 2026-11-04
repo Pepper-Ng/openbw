@@ -311,7 +311,7 @@ Verified locally on 2026-11-04 for the Wasteland milestone:
 
 The briefing uses unit icons and speaker-name fallbacks rather than animated portraits. Briefing and gameplay share the stored base-duration/adjustment calculation. The action's `time` is the base; `group2` supplies Set/Add/Subtract adjustment, not the WAV length. Waits round up to 42 ms ticks; 0/42/43/84/85 ms boundaries pass. Camera changes are immediate rather than eased. Only Fastest is offered in campaign mode. Later missions remain unavailable.
 
-Acceptance used the integrated Chromium browser on Windows. The normal-control victory occurred at world frame 22,817 on an intermediate build. The subsequent transmission-field and wait-boundary corrections passed the full original-predicate and browser-module suites; the long normal-control playthrough was not repeated after those timing corrections. The final ignored browser module has SHA-256 `a78f2dc6fd637c5974671c786afc0c42fa9fc0a02548b3279fff0692efe62a73`. The milestone is based on `132f96b165cc051e8d9623f9e65150461a923784` on `campaign`. The user subsequently confirmed successful testing. No merge, push, public deployment, or proprietary-asset publication was performed.
+Acceptance used the integrated Chromium browser on Windows. The normal-control victory occurred at world frame 22,817 on an intermediate build. The subsequent transmission-field and wait-boundary corrections passed the full original-predicate and browser-module suites; the long normal-control playthrough was not repeated after those timing corrections. The final ignored browser module has SHA-256 `a78f2dc6fd637c5974671c786afc0c42fa9fc0a02548b3279fff0692efe62a73`. Implementation milestone `5e33390f6808a3fb9612fe91467c12aa6a3e5ee8` is committed on `campaign`, based on `132f96b165cc051e8d9623f9e65150461a923784`. The user subsequently confirmed successful testing. No merge, push, public deployment, or proprietary-asset publication was performed.
 
 Commands:
 
@@ -322,6 +322,33 @@ node web/run-sim.mjs --test-campaign
 node web/run-wasm-node.mjs --test-campaign
 node web/run-wasm-node.mjs --test-commands
 ```
+
+## Reusable Lessons From Wasteland
+
+Apply these lessons to later missions. The evidence above records what was tested; it does not establish support for untested scenarios or operations. Update this section when another mission changes a reusable rule.
+
+### Asset Preparation
+
+- Cross-check decoded scenario bytes independently before accepting a new hash. A pack round-trip can repeat the same decoder error. The Python partial-word decryption bug changed hashes and could make unused bytes look like required operations; regenerate affected audits after decoder changes.
+- Reuse the production C++ MPQ/audio codecs and the existing offline pack tool. Preserve the original CHK, resolve mission-relative dependencies, and verify every output entry. Measure the generated pack; compressed source sizes do not predict the first plain-pack download size.
+- Parameterize the existing preparation and manifest-validation paths for each audited mission. They currently contain `terran01`, slot, race, source-hash, and pack-path assumptions. Derive and validate those values per mission; do not copy the whole tool or weaken path/hash validation.
+
+### Engine Contracts
+
+- Normalize scenario conventions at the loader boundary. CHK forces are zero-based, while the existing runtime uses one-based force numbers. Validate each mission's OWNR/SIDE/FORC and placed actors; slot zero, melee starts, shared vision, and melee elimination announcements are not campaign defaults.
+- Test raw trigger encodings, including termination and disabled records. Raw Exactly is 10. Type zero ends an action or condition list even if unused flags are set. For multiple TRIG sections, add a native-loader test for append order, stable running-trigger references, and absence of duplicate instances; the authoring-parser test alone does not prove this.
+- Keep clocks separate. At the verified Fastest setting, game seconds use 16 world ticks, normal trigger scans are 31 ticks apart, and the first UMS scan is tick 2. Waits round up to 42 ms steps: 0/42 ms resume after two service ticks, 43/84 after three, and 85 after four. Script pause must not stop the clock servicing its waits.
+- Interpret Transmission fields by their operation, not by an audio-duration guess. `time` is the stored base and `group2` is the Set/Add/Subtract adjustment. Briefing and gameplay share the native formula; browser playback completion must not decide when a trigger resumes.
+- Preserve a waiting trigger's action index. Do not replay its earlier mutations or dialogue. Keep this distinct from the original scheduler's recheck of earlier triggers when a wait starts. Add interleaving tests when a later mission introduces new simultaneous waits.
+- Audit placed-unit orders separately from AI-script actions. Wasteland exercises working guard/combat behavior without an AI VM; this does not implement ComputerAI, town management, or scripted attacks. Rescue must remain a proximity-based ownership transfer, including whole-player transfer through an active grounded depot, not a mission-specific grant.
+
+### Validation And Delivery
+
+- Combine small authored semantics tests with the original mission and a normal-control playthrough. Test missing victory requirements and loss boundaries, not only a positive outcome. A rendered map, debug-created victory state, or successful previous mission is not sufficient acceptance.
+- Distinguish input timing from engine defects during browser automation. Wait for queued selection/menu input to be consumed before panning or clicking placement. Convert map coordinates using the current camera and canvas scaling. Restore touch emulation and remove test frames afterward.
+- Keep transient events ordered and acknowledged, while objectives remain persistent. Use the existing native sound bridge, separate narration from mission beeps, and test muted/rejected audio. Cancel pending playback and close audio on session exit; retry uses a fresh engine rather than stacked listeners.
+- Keep download state, session outcome, and saved completion independent. Verify the complete pack before caching or starting; failed replacements must preserve the good cache. Defeat, cancellation, and runtime failure must not save victory. Storage failure must not prevent local play.
+- Add only the next mission's required capabilities and retain Wasteland plus melee regressions. UI/mobile optimization, onboarding, animated presentation, and linked mission flow remain deferred. Physical-device testing and authorized public asset delivery remain separate release checks.
 
 ## Implementation Milestones
 
