@@ -316,7 +316,7 @@ struct play_ui : ui_functions {
 	static const int ALERT_TTL = 126;             // full ping: 1.2 s sweep + 0.8 s box, 60 fps ticks
 	struct alert_t { unit_id unit; xy pos; int ttl; int kind; };   // kind: 0 ready, 1 under attack
 	a_vector<alert_t> alerts;                     // units whose minimap dot is blinking
-	int ping_col[4] = { -1, -1, -1, -1 };         // lazy: green bright/dark, red bright/dark
+	int ping_col[6] = { -1, -1, -1, -1, -1, -1 };
 	xy last_event_pos; bool have_last_event = false;   // Space recenters here
 	a_unordered_map<uint16_t, int> last_life;     // per own unit: last hp+shields, to spot damage
 	a_unordered_map<uint16_t, uint8_t> last_stim; // per own unit: stim active last frame (its self-damage is no attack)
@@ -425,6 +425,11 @@ struct play_ui : ui_functions {
 		if (action.type == 10) {
 			const auto& area = st.locations.at(action.location - 1).area;
 			center_on((area.from + area.to) / 2);
+		}
+		if (action.type == 28) {
+			const auto& area = st.locations.at(action.location - 1).area;
+			if (alerts.size() >= 32) alerts.erase(alerts.begin());
+			alerts.push_back({{}, (area.from + area.to) / 2, ALERT_TTL, 2});
 		}
 		if (mission_events.size() >= 256) error("mission presentation queue overflow");
 		mission_events.push_back({++mission_sequence, owner, action});
@@ -2584,6 +2589,8 @@ struct play_ui : ui_functions {
 			ping_col[1] = nearest_palette_color(24, 100, 32);
 			ping_col[2] = nearest_palette_color(228, 32, 32);
 			ping_col[3] = nearest_palette_color(120, 16, 16);
+			ping_col[4] = nearest_palette_color(244, 224, 32);
+			ping_col[5] = nearest_palette_color(122, 112, 16);
 		}
 		auto fill = [&](rect r, uint8_t c) {
 			if (r.from.x < area.from.x) r.from.x = area.from.x;
@@ -2621,8 +2628,8 @@ struct play_ui : ui_functions {
 				if (crow >= 19) crow = 0;   // tblink.pcx has 19 rows
 				fill(dot, img.blink_colors[8 * crow + (t / 8) % 8]);
 			}
-			uint8_t bright = (uint8_t)ping_col[a.kind ? 2 : 0];
-			uint8_t dark = (uint8_t)ping_col[a.kind ? 3 : 1];
+			uint8_t bright = (uint8_t)ping_col[a.kind * 2];
+			uint8_t dark = (uint8_t)ping_col[a.kind * 2 + 1];
 			xy c = mini(a.pos);
 			rect box = {c - xy(PING_HALF, PING_HALF), c + xy(PING_HALF + 1, PING_HALF + 1)};
 			if (t < PING_CONV) {

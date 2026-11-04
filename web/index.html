@@ -435,6 +435,7 @@
   #mission-objectives summary { cursor: pointer; min-height: 24px; }
   #mission-objectives-text { white-space: pre-line; overflow-wrap: anywhere; max-height: 28svh; overflow-y: auto; line-height: 1.4; padding-top: 8px; }
   #mission-leaderboard { margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); }
+  #mission-countdown { margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); font-variant-numeric: tabular-nums; }
   #mission-caption { position: fixed; z-index: 5; top: calc(var(--touch-top, 0px) + 108px); left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 28px)); box-sizing: border-box; background: rgba(4, 12, 15, .94); border-left: 3px solid #7bb79a; padding: 10px 12px; pointer-events: none; }
   #mission-caption-speaker { font-size: 13px; color: #b6d8c8; margin-bottom: 4px; }
   #mission-caption-text { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; max-height: 24svh; overflow-y: auto; }
@@ -512,6 +513,7 @@
 <aside id="mission-hud" hidden>
   <details id="mission-objectives"><summary>Objectives</summary><div id="mission-objectives-text"></div></details>
   <div id="mission-leaderboard" hidden></div>
+  <div id="mission-countdown" role="timer" aria-label="Time remaining" hidden></div>
 </aside>
 <div id="mission-caption" role="status" aria-live="polite" hidden>
   <div id="mission-caption-speaker"></div><div id="mission-caption-text"></div>
@@ -571,7 +573,7 @@
       <select id="mission-select">
         <option value="terran01">1. Wasteland</option>
         <option value="terran02">2. Backwater Station</option>
-        <option value="terran03" disabled>3. Desperate Alliance - unavailable</option>
+        <option value="terran03">3. Desperate Alliance</option>
       </select>
       <div id="mission-size" role="status" aria-live="polite"></div>
       <button id="campaign-start" type="button"><i data-lucide="play"></i>Start Mission</button>

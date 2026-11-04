@@ -9,8 +9,103 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const missions = {
   terran01: { title: 'Wasteland', order: 1, scenarioHash: '4b0e5009c4ae80cfb4cb13ede30842db0aa05bb3be2eedad695fb093fa5786f6', units: 49, triggers: 9, sounds: 8 },
   terran02: { title: 'Backwater Station', order: 2, scenarioHash: 'd8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce', units: 98, triggers: 15, sounds: 21 },
+  terran03: { title: 'Desperate Alliance', order: 3, scenarioHash: '9d83a8bde18c38ee12f54f4c5253bed5466027fc612141e9a7415c94d3346737', units: 199, triggers: 10, sounds: 16 },
 };
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+export function auditAiScript(bytes, scriptIds = ['Ter3', 'Suic']) {
+  assert.ok(bytes.length >= 8 && bytes.length <= 1048576, 'Invalid AI binary size');
+  const table = bytes.readUInt32LE(0);
+  assert.ok(table >= 4 && table <= bytes.length - 4, 'Invalid AI header offset');
+  const entries = new Map();
+  let cursor = table;
+  while (true) {
+    assert.ok(cursor <= bytes.length - 4, 'Unterminated AI header table');
+    if (bytes.readUInt32LE(cursor) === 0) break;
+    assert.ok(cursor <= bytes.length - 16, 'Truncated AI header');
+    const id = bytes.toString('ascii', cursor, cursor + 4);
+    assert.ok(!entries.has(id), 'Duplicate AI script ID');
+    entries.set(id, { id, offset: bytes.readUInt32LE(cursor + 4), flags: bytes.readUInt32LE(cursor + 12) });
+    assert.ok(entries.size <= 4096, 'Too many AI scripts');
+    cursor += 16;
+  }
+  const commands = {
+    0: ['goto', 'w'], 1: ['notowns_jump', 'ww'], 2: ['wait', 'w'], 3: ['start_town', ''],
+    4: ['start_areatown', ''], 5: ['expand', 'bw'],
+    6: ['build', 'bwb'], 7: ['upgrade', 'bwb'], 8: ['tech', 'wb'],
+    9: ['wait_build', 'bw'], 10: ['wait_buildstart', 'bw'], 11: ['attack_clear', ''],
+    12: ['attack_add', 'bw'], 13: ['attack_prepare', ''], 14: ['attack_do', ''], 15: ['wait_secure', ''],
+    16: ['capt_expand', ''], 17: ['build_bunkers', ''], 18: ['wait_bunkers', ''],
+    19: ['defensebuild_gg', 'bw'], 20: ['defensebuild_ag', 'bw'], 21: ['defensebuild_ga', 'bw'], 22: ['defensebuild_aa', 'bw'],
+    23: ['defenseuse_gg', 'bw'], 24: ['defenseuse_ag', 'bw'], 25: ['defenseuse_ga', 'bw'], 26: ['defenseuse_aa', 'bw'],
+    27: ['defenseclear_gg', ''], 28: ['defenseclear_ag', ''], 29: ['defenseclear_ga', ''], 30: ['defenseclear_aa', ''],
+    31: ['send_suicide', 'b'], 32: ['player_enemy', ''], 33: ['player_ally', ''],
+    34: ['default_min', 'b'], 35: ['defaultbuild_off', ''], 36: ['stop', ''], 37: ['switch_rescue', ''],
+    38: ['move_dt', ''], 39: ['debug', 'ws'], 40: ['fatal_error', ''], 41: ['enter_bunker', ''], 42: ['value_area', ''],
+    43: ['transports_off', ''], 44: ['check_transports', ''], 45: ['nuke_rate', 'b'], 46: ['max_force', 'w'],
+    47: ['clear_combatdata', ''], 48: ['random_jump', 'bw'], 49: ['time_jump', 'bw'],
+    50: ['farms_notiming', ''], 51: ['farms_timing', ''], 52: ['build_turrets', ''], 53: ['wait_turrets', ''],
+    54: ['default_build', ''], 55: ['harass_factor', 'w'], 56: ['start_campaign', ''], 57: ['race_jump', 'www'],
+    58: ['region_size', 'bw'], 59: ['get_oldpeons', 'b'], 60: ['groundmap_jump', 'w'], 61: ['place_guard', 'wb'],
+    62: ['wait_force', 'bw'], 63: ['guard_resources', 'w'], 64: ['call', 'w'], 65: ['return', ''],
+    66: ['eval_harass', 'w'], 67: ['creep', 'b'], 68: ['panic', 'w'], 69: ['player_need', 'bw'],
+    70: ['do_morph', 'bw'], 71: ['wait_upgrades', ''], 72: ['multirun', 'w'], 73: ['rush', 'bw'], 74: ['scout_with', 'w'],
+    75: ['define_max', 'bw'], 76: ['train', 'bw'], 77: ['target_expansion', ''], 78: ['wait_train', 'bw'],
+    79: ['set_attacks', 'b'], 80: ['set_gencmd', ''], 81: ['make_patrol', ''], 82: ['give_money', ''],
+    83: ['prep_down', 'bbw'], 84: ['resources_jump', 'www'], 85: ['enter_transport', ''], 86: ['exit_transport', ''],
+    87: ['sharedvision_on', 'b'], 88: ['sharedvision_off', 'b'], 89: ['nuke_location', ''], 90: ['harass_location', ''],
+    91: ['implode', ''], 92: ['guard_all', ''], 93: ['enemyowns_jump', 'ww'], 94: ['enemyresources_jump', 'www'],
+    95: ['if_dif', 'bbw'], 96: ['easy_attack', 'bw'], 97: ['kill_thread', ''], 98: ['killable', ''],
+    99: ['wait_finishattack', ''], 100: ['quick_attack', ''], 101: ['junkyard_dog', ''], 102: ['fake_nuke', ''],
+    103: ['disruption_web', ''], 104: ['recall_location', ''], 105: ['set_randomseed', 'd'], 106: ['if_owned', 'ww'],
+    107: ['create_nuke', ''], 108: ['create_unit', 'www'], 109: ['nuke_pos', 'ww'], 110: ['help_iftrouble', ''],
+    111: ['allies_watch', 'bw'], 112: ['try_townpoint', 'bw'],
+  };
+  const scripts = scriptIds.map(id => {
+    const entry = entries.get(id);
+    assert.ok(entry, `Missing AI script ${id}`);
+    const pending = [entry.offset];
+    const instructions = new Map();
+    const occupied = new Map();
+    while (pending.length) {
+      const offset = pending.pop();
+      if (instructions.has(offset)) continue;
+      assert.ok(offset >= 4 && offset < table, `AI ${id} address out of bounds: ${offset}`);
+      assert.ok(!occupied.has(offset), `Overlapping AI instructions at ${offset}`);
+      const opcode = bytes[offset];
+      const command = commands[opcode];
+      assert.ok(command, `Unknown AI opcode ${opcode} at ${offset} in ${id}`);
+      const [name, types] = command;
+      let next = offset + 1;
+      const operands = [...types].map(type => {
+        if (type === 's') {
+          const end = bytes.indexOf(0, next);
+          assert.ok(end >= next && end < table, `Unterminated AI string at ${offset}`);
+          const value = bytes.toString('latin1', next, end);
+          next = end + 1;
+          return value;
+        }
+        const width = type === 'b' ? 1 : type === 'd' ? 4 : 2;
+        assert.ok(next + width <= table, `Truncated AI operand at ${offset}`);
+        const value = bytes.readUIntLE(next, width);
+        next += width;
+        return value;
+      });
+      for (let position = offset; position < next; position++) {
+        assert.ok(!occupied.has(position), `Overlapping AI instructions at ${offset}`);
+        occupied.set(position, offset);
+      }
+      instructions.set(offset, { offset, opcode, name, operands });
+      assert.ok(instructions.size <= 4096, 'AI instruction limit exceeded');
+      if ([0, 39, 64, 72].includes(opcode)) pending.push(operands[0]);
+      if ([1, 5, 48, 49, 58, 60, 66, 68, 73, 84, 93, 94, 95, 106, 111, 112].includes(opcode)) pending.push(operands.at(-1));
+      if (opcode === 57) pending.push(...operands);
+      if (![0, 36, 39, 40, 57, 65, 97].includes(opcode)) pending.push(next);
+    }
+    return { ...entry, instructions: [...instructions.values()].sort((left, right) => left.offset - right.offset) };
+  });
+  return { bytes: bytes.length, sha256: sha256(bytes), tableOffset: table, entryCount: entries.size, scripts };
+}
 
 export function normalizeMissionPath(value) {
   assert.ok(value.length > 0 && value.length <= 240, 'Invalid mission path length');
@@ -253,7 +348,44 @@ function testAudit() {
   trigger.writeUInt32LE(5, 324);
   assert.throws(() => triggerProfile(trigger, ['']), /string index/);
   assert.throws(() => waveMetadata(Buffer.alloc(12)), /RIFF/);
+  const ai = Buffer.alloc(34);
+  ai.writeUInt32LE(14, 0);
+  ai.set([2, 16, 0, 72, 11, 0, 36, 31, 0, 36], 4);
+  ai.write('Test', 14, 'ascii');
+  ai.writeUInt32LE(4, 18);
+  assert.deepEqual(auditAiScript(ai, ['Test']).scripts[0].instructions.map(instruction => instruction.name), ['wait', 'multirun', 'stop', 'send_suicide', 'stop']);
+  const invalidAi = Buffer.from(ai);
+  invalidAi.writeUInt16LE(5, 8);
+  assert.throws(() => auditAiScript(invalidAi, ['Test']), /Overlapping/);
+  invalidAi.writeUInt16LE(1000, 8);
+  assert.throws(() => auditAiScript(invalidAi, ['Test']), /out of bounds/);
+  assert.throws(() => auditAiScript(ai.subarray(0, 20), ['Test']), /Truncated AI header/);
+  assert.throws(() => auditAiScript(ai, ['None']), /Missing AI script/);
   console.log('Campaign audit synthetic checks passed.');
+}
+
+async function extractSource(source, request, directory, output) {
+  const wasi = new WASI({ version: 'preview1', args: ['campaign-pack', `/input/${basename(source)}`, request, `/output/${output}`], preopens: { '/input': dirname(source), '/output': directory }, returnOnExit: true });
+  const module = await WebAssembly.compile(readFileSync(resolve(root, 'web/campaign-pack.wasm')));
+  const instance = await WebAssembly.instantiate(module, wasi.getImportObject());
+  assert.equal(wasi.start(instance), 0, 'Campaign extraction failed');
+}
+
+async function prepareAi() {
+  const directory = resolve(root, 'web/data/campaign');
+  mkdirSync(directory, { recursive: true });
+  const temporary = resolve(directory, 'aiscript.bin.tmp');
+  try {
+    await extractSource(resolve(root, 'web/data/patch_rt.mpq'), '--ai-script', directory, basename(temporary));
+    const bytes = readFileSync(temporary);
+    assert.equal(sha256(bytes), '635433e546998e05529a9d6acc806c06b528c7ce5075a206f6f2c8de44ffed6e', 'Patched AI binary changed');
+    const audit = auditAiScript(bytes);
+    writeFileSync(resolve(directory, 'terran03.ai.audit.json'), `${JSON.stringify(audit, null, 2)}\n`);
+    renameSync(temporary, resolve(directory, 'aiscript.bin'));
+    console.log(JSON.stringify({ bytes: audit.bytes, sha256: audit.sha256, entryCount: audit.entryCount, scripts: audit.scripts.map(script => ({ id: script.id, offset: script.offset, instructionCount: script.instructions.length, commands: [...new Set(script.instructions.map(instruction => instruction.name))].sort() })) }, null, 2));
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 async function prepare(missionId = 'terran01') {
@@ -269,10 +401,7 @@ async function prepare(missionId = 'terran01') {
   const temporary = resolve(directory, `${missionId}.mpq.tmp`);
   const manifestTemporary = resolve(directory, `${missionId}.json.tmp`);
   try {
-    const wasi = new WASI({ version: 'preview1', args: ['campaign-pack', `/input/${basename(source)}`, missionId, `/output/${missionId}.mpq.tmp`], preopens: { '/input': dirname(source), '/output': directory }, returnOnExit: true });
-    const module = await WebAssembly.compile(readFileSync(resolve(root, 'web/campaign-pack.wasm')));
-    const instance = await WebAssembly.instantiate(module, wasi.getImportObject());
-    assert.equal(wasi.start(instance), 0, 'Campaign extraction failed');
+    await extractSource(source, missionId, directory, basename(temporary));
     const bytes = readFileSync(temporary);
     const read = readPlainMissionPack(bytes);
     const scenario = read('staredit/scenario.chk');
@@ -306,5 +435,6 @@ async function prepare(missionId = 'terran01') {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv[2] === '--test') testAudit();
+  else if (process.argv[2] === '--audit-ai') await prepareAi();
   else await prepare(process.argv[2]);
 }

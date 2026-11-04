@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -94,6 +94,15 @@ function testCampaign() {
     assert.equal(units.filter(unit => Number(unit[2]) === 3).length, 7, 'Preserve the rescuable station');
     assert.equal(units.filter(unit => Number(unit[2]) === 4).length, 61, 'Preserve original enemy units and buildings');
     console.log('Backwater initialization checks passed.');
+  } else if (missionId === 'terran03') {
+    assert.equal(human.length, 34, 'Preserve the original human base and army');
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 16);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 3);
+    const enemy = units.filter(unit => Number(unit[2]) === 4);
+    assert.ok(enemy.length >= 135 && enemy.length <= 138, 'Original enemy force plus native Hatchery larva');
+    assert.equal(enemy.filter(unit => unit[1] === 'Drone').length, 6);
+    assert.equal(x.openbw_mission_countdown(), -1, 'No countdown before the original initialization action');
+    console.log('Desperate Alliance initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -115,7 +124,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), missionId === 'terran02' ? 200 : 40, 'Original trigger grants mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100}[missionId], 'Original trigger grants mission minerals');
+  if (missionId === 'terran03') assert.equal(x.openbw_mission_countdown(), 1800, 'Original thirty-minute countdown');
   if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   const events = [];
   const consume = () => {
@@ -142,6 +152,10 @@ function testCampaign() {
     }
   }
   consume();
+  if (missionId === 'terran03') {
+    assert.ok(events.some(event => event[3] === 28), 'Original minimap pings are ordered presentation events');
+    assert.ok(x.openbw_mission_countdown() < 1800 && x.openbw_mission_countdown() > 1700, 'Countdown follows native world ticks');
+  }
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);

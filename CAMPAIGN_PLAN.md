@@ -12,8 +12,9 @@
 - Do not commit proprietary archives, mission data, dialogue, videos, or generated packs. Local development assets remain under ignored `web/data/`.
 - Implementation was approved on 2026-11-04. Work remains on `campaign`; no merge, public deployment, or asset redistribution is authorized.
 - The user confirmed successful testing and approved the Wasteland milestone commit on 2026-11-04. The test device was not specified.
-- Next priority: Desperate Alliance's corrected content/AI audit and mission/runtime compatibility. Defer UI and mobile optimization, onboarding, and linked mission progression until later. Existing functional controls and regressions must remain intact.
+- Desperate Alliance is available as a source-backed campaign milestone. Its original scripts drive production and ground/air attacks; native regions govern defense and military coordination. Normal-control victory and exact classic balance remain unverified. Defer UI/mobile optimization, onboarding, and linked mission progression.
 - On 2026-11-04 the user completed Backwater Station and accepted it as the next playable milestone. The user authorized its commit and continuation to Desperate Alliance; exact classic behavior remains subject to comparison.
+- Backwater's accepted milestone is personal signed commit `928ef119265bde9632626ecb3fdda127bb343ac0`. Its history remains intact. On 2026-11-04 the user authorized committing and pushing the improved Desperate Alliance milestone on `campaign`; this does not authorize merging or deploying to `dev`/`master` or publishing proprietary assets.
 - On 2026-11-04 the user authorized web-informed, narrowly reasoned behavior assumptions, followed by a classic StarCraft comparison and revision pass. Record inferences explicitly rather than blocking all implementation on an original-game trace.
 
 No blocking product questions are needed to follow this plan. The defaults are English assets, browser single-player, desktop plus the existing mobile interface, local development delivery first, and persistent completed-mission progress. Animated portraits, cinematics, mid-mission saves, and public asset hosting are not first-milestone requirements.
@@ -77,9 +78,9 @@ Mission-specific audio is stored below the corresponding mission root. The archi
 | ---------------------- | -------- | -----------: | -----------: | -----------: | --------------: |
 | T1: Wasteland          | 64 x 64  |           49 |            9 |            1 |               8 |
 | T2: Backwater Station  | 64 x 64  |           98 |           15 |            1 |              21 |
-| T3: Desperate Alliance | 96 x 96  |          199 |           10 |            1 |              14 |
+| T3: Desperate Alliance | 96 x 96  |          199 |           10 |            1 |              16 |
 
-All 43 referenced WAV paths resolved against the local archives. Resolution is not proof of completed browser playback. One inspected sample uses MPQ compression mask `0x41`: Huffman plus mono ADPCM. The Python helper cannot decode that combination, but the main C++ loader already implements both stages in [data_loading.h](data_loading.h#L1113).
+All mission-referenced WAV paths resolved against the local archives. Resolution is not proof of completed browser playback. One inspected sample uses MPQ compression mask `0x41`: Huffman plus mono ADPCM. The Python helper cannot decode that combination, but the main C++ loader already implements both stages in [data_loading.h](data_loading.h#L1113).
 
 UNIT record counts include start-location markers. They are not expected live-unit counts after initialization.
 
@@ -93,7 +94,7 @@ UNIT record counts include start-location markers. They are not expected live-un
 
 These hashes supersede the planning audit's hashes. The Python helper previously padded encrypted sector tails before decryption. StormLib decrypts only complete 32-bit words and leaves remaining bytes unchanged. The corrected helper and the production C++ decoder agree byte-for-byte on Wasteland. No source archive or scenario was edited.
 
-Wasteland's and Backwater Station's scenario audits were regenerated after that correction. Regenerate T3 and the AI-script audits before their implementation; earlier T3 findings, including MBRF type 29, remain provisional.
+All three scenario audits have now been regenerated after that correction. T3 has 16 referenced WAVs and standard briefing actions 1/3/4/5/6/8. The earlier MBRF type 29 was a decoder artifact, not a required briefing operation. The patched AI binary has also been re-extracted and audited with the production decoder.
 
 The downloaded original campaign/CD wrapper has SHA-256 `ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d`. Retain the source archives unchanged. Generated mission packs need their own hashes; neither source CRC32 nor source CHK hashes are substitutes for pack validation.
 
@@ -150,13 +151,13 @@ Numeric IDs below are the raw CHK IDs, not newly invented internal enums.
 
 Backwater Station additionally uses conditions 1 Countdown Timer, 3 Bring, and 11 Switch; actions 11 Create Unit With Properties, 13 Set Switch, 23 Kill Unit At Location, and 43 Set Invincibility are among its added requirements. Desperate Alliance adds condition 5 Kills and actions 14 Set Countdown Timer, 15/16 AI scripts, and 28 Minimap Ping.
 
-The Desperate Alliance briefing also contains an observed type 29 before the terminator, outside the standard MBRF 1-9 list. Its meaning must be verified before supporting that mission; do not silently reinterpret it as a normal TRIG action.
+Desperate Alliance's corrected briefing uses the existing standard MBRF operations. No type-29 compatibility rule is needed.
 
 ### AI Data
 
 - Patched `scripts\aiscript.bin`: 62,050 bytes and 293 inspected entries.
 - BrooDat `scripts\bwscript.bin`: 26,458 bytes and 78 inspected entries.
-- Desperate Alliance references `Ter3` and `Suic`; both have in-bounds code entries in the patched original AI table.
+- Desperate Alliance references `Ter3` at byte 6,874 and `Suic` at 28,794. The corrected patched binary has SHA-256 `635433e546998e05529a9d6acc806c06b528c7ce5075a206f6f2c8de44ffed6e`; its header table starts at 57,358. The bounded reachable-instruction audit finds 127 instructions/22 command types for `Ter3` and two instructions for `Suic`.
 - Wasteland and Backwater Station have no explicit AI-script actions in the inspected active trigger streams. This is not a blanket claim that their enemy behavior requires no compatibility work.
 - StarDat also has a legacy AI binary whose header differs from the later format. Do not label it corrupt because a later-format table parser rejects its first word.
 
@@ -168,7 +169,7 @@ The desired first-run sequence is application/engine, shared data if uncached, t
 | ------------------ | --------: | ---------------------------------------: | ------------: |
 | Wasteland          |    88,628 |                                1,145,976 |     3,581,936 |
 | Backwater Station  |   105,877 |                                1,928,875 |     5,913,701 |
-| Desperate Alliance |   143,911 |                                2,002,685 |     6,216,575 |
+| Desperate Alliance |   143,911 |                           Not remeasured |     6,590,469 |
 
 These are measured source representations, not tested deployable pack sizes. They exclude cinematics, music, and unreferenced mission media. Encryption offsets, repackaging, compression, and HTTP transfer encoding can change the eventual download size.
 
@@ -327,7 +328,7 @@ node web/run-wasm-node.mjs --test-commands
 
 ### Implementation Evidence: Backwater Prototype
 
-Verified locally on 2026-11-04, as the Backwater milestone following `34d8402d5be7bdf771d0fbb5e166b2f97bb93736`:
+Verified locally on 2026-11-04, committed as `928ef119265bde9632626ecb3fdda127bb343ac0` following `34d8402d5be7bdf771d0fbb5e166b2f97bb93736`:
 
 - The existing preparation script now accepts `terran01` or `terran02`, derives the single human slot/race from OWNR/SIDE, and retains pinned source hashes and path validation. No duplicate preparation tool or new UI flow was added.
 - Backwater's corrected CHK hash is `d8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce`. The pack round-trips 22 files, including 21 PCM WAVs. It totals 5,915,109 bytes; decoded content totals 5,913,701 bytes. Pack SHA-256 is `0a702bea4d1a96cc9268f29fe6ab11bbd81752312c394c134450fac3e41e408e`.
@@ -370,6 +371,50 @@ node web/run-wasm-node.mjs --test-campaign terran02
 
 All four commands now pass. Proprietary packs, manifests, and detailed audits remain ignored under `web/data/campaign/`.
 
+### Implementation Evidence: Desperate Alliance Prototype
+
+Implemented on 2026-11-04 after the accepted Backwater commit. The user authorized publication after further source-backed AI improvements and validation. This is a tested implementation milestone, not evidence of an unassisted victory or exact classic-game difficulty.
+
+- The corrected original CHK round-trips with 16 PCM WAVs: 17 files, 6,591,797 pack bytes and 6,590,469 decoded bytes. Pack SHA-256 is `ff008ea7ab5466784e85066924d0f1b8deca1153496103d092ab0c7800cb75ed`. The old 14-WAV profile and briefing anomaly are superseded.
+- Human slot is 1/Terran and computer slot 4/Zerg. The 199 UNIT records include three start markers, leaving 196 placed actors: 34 human, 135 enemy and 27 neutral resource records. Normal initialization now passes. Native Hatchery processing also creates Larva; do not remove them to force raw source counts.
+- The original gameplay uses conditions 1/2/5/11 and actions 1/2/4/5/7/10/11/12/13/14/15/16/26/28/30/31. Its opening countdown is 1,800 game seconds. Countdown thresholds include 600, 300, 120, 60 and zero; victory/defeat must still come from the original triggers.
+- Set Countdown Timer action 14 supports Set/Add/Subtract with zero-clamped subtraction and overflow rejection. Set-to-1,800, addition and subtraction checks pass. The HUD reads native countdown state and hides the timer in missions that never activate it. JavaScript does not maintain a second countdown.
+- Kills condition 5 now reads per-player/per-type credits from ordinary lethal damage. Checks cover Force 1 building kills, exact unit types, Men/Any Unit groups, nonlethal hits, repeated damage, captured projectile ownership after its source unit disappears, friendly fire and staged scripted deaths. Counters reset with scenario state. Instant-death spell scoring and complete end-game score/HUD statistics are not claimed.
+- The existing preparation utility now supports `--audit-ai`, extracting the local patched binary, validating its hash, and recording only ignored local output. Its auditor checks header bounds, duplicate IDs, command operand bounds, overlapping instruction targets and reachable control flow, including parallel threads. Synthetic checks include a multirun fixture and malformed branch/header cases.
+- `Ter3` reaches town/campaign setup, `build`, `tech`, eight defense request/use commands, attack clearing/addition/preparation/execution, `capt_expand`, default/max-force controls, frame waits and goto. It does not use a `train` command; production requests cannot be inferred only from that opcode. `Suic` executes `send_suicide` and stops. Command encodings were cross-checked against the [PyMS classic command definitions](https://github.com/poiuyqwert/PyMS/blob/master/PyMS/FileFormats/AIBIN/CodeHandlers/CodeCommands.py) and operand types; no external implementation was copied.
+- The [StarCraft Wiki mission guide](https://starcraft.fandom.com/wiki/Desperate_Alliance) and [StrategyWiki guide](https://strategywiki.org/wiki/StarCraft/Desperate_Alliance) describe a thirty-minute defense, two approaches, increasing ground/air attacks and a final assault near two minutes remaining. These constrain the provisional target, not exact AI scheduling or wave sizes. Use the actual script and normal production; do not replace them with hand-timed unit grants.
+- A native bytecode interpreter reads the shared patched AI binary through the existing data loader. It resolves actual script entries, preserves frame waits and goto, and executes the required town, production, defense and attack commands. Unknown entries, unsupported opcodes, invalid operands and excessive per-frame execution fail explicitly. No network reads occur inside the simulation.
+- Town requests use native worker orders, build validation, resource costs, supply, tech requirements, placement and timed morph/construction. A fixture removes one Drone and observes its normal egg replacement. Another destroys the original Hydralisk Den and observes incomplete construction followed by a completed replacement. The 5,000 mineral/gas AI budget comes from the original trigger, not a new grant.
+- Attack preparation recruits actual available units and rallies them to a native pathing region. Readiness uses region membership, not the former fixed 128-pixel radius. `attack_prepare` can launch the party; `attack_do` waits without launching it again. Compositions and waits come from `Ter3`. Active defenders and units with live combat targets are excluded from recruitment. The shared target supports mixed ground/air parties, including attacks on lifted buildings. Idle survivors continue toward live targets rather than parking at a cleared destination.
+- Defense now follows native pathing regions rather than one building's sight rectangle. Primary buildings and workers establish defended regions; static colonies/turrets do not create primary town regions. `capt_expand` extends coverage to neighboring regions. GG/AG/GA/AA distinguish terrain walkability and enemy flight. Regional demand aggregates native base strengths, with independent ground/air `max_force` caps. Unique defender assignments prevent double allocation and protect active defense from attack recruitment. Only remaining shortfalls request production; cleared regions release defenders toward their previous positions.
+- Computer Larva retain their AI order while using native Larva movement and queued morph commands. Overlords use their native transport-idle handling while retaining AIPatrol. This is not autonomous Overlord scouting. Other unsupported ComputerAI/AIPatrol roles still error.
+- Minimap action 28 emits an ordered mission event and uses the existing native position-only alert renderer. It creates no dummy unit and changes no fog. Countdown and expanded objectives fit with narration at 1280 x 800 desktop and 390 x 640 touch-emulated viewports. Both canvases were nonblank; no overlap, horizontal overflow or page errors were observed.
+- Native checks cover original startup and town requests, actual resource gathering, timed worker replacement, tech rebuilding and the first ground attack. Thirteen fresh-map cases cover original outcomes, the full unshortened timer, shared destinations, all four defense categories, independent regional budgets and defender allocation/release, mixed-party air capability, engaged-guard exclusion, region-boundary grouping, military retargeting and unprotected combat. Survival fixtures protect human actors to isolate the ending; this is not normal-control victory evidence.
+- The unprotected no-player-orders diagnostic confirms weapon fire from deployed waves at frame 3,530. It reaches defeat at frame 17,073 with no human actors left. These are observed results, not required classic timings or a target used to increase difficulty. No resource grants, invincibility or replacement waves are used in that diagnostic.
+- The T3 browser-module check passes original actors, 100 starting minerals, pre-Begin freeze, briefing/audio, 1,200 logical steps, countdown progression and ordered pings. Actual browser Begin, paused resign and fresh Retry pass. Defeat does not save completion; Retry reuses the cached T3 pack and returns to its own briefing. Touch emulation and test frames were removed afterward.
+- Both earlier missions' native and browser-module checks pass, as do the existing command/melee regressions. Backwater's unscripted defender-assistance behavior remains unchanged. Proprietary content, generated audits/packs and WASM binaries remain ignored. Publish only source/plan changes to the existing `campaign` branch with the personal signing identity.
+
+#### Source-Backed AI Scope
+
+The regional and coordination changes use three complementary references. The [PyMS command definitions](https://github.com/poiuyqwert/PyMS/blob/master/PyMS/FileFormats/AIBIN/CodeHandlers/CodeCommands.py) specify category contracts, attack waits and force limits. Teippi at `05c006c2f74ad11285c39d37135aed03d1fb8806` documents [region/military structures](https://github.com/neivv/teippi/blob/05c006c2f74ad11285c39d37135aed03d1fb8806/src/ai.h), [shared attack regions and available-unit constraints](https://github.com/neivv/teippi/blob/05c006c2f74ad11285c39d37135aed03d1fb8806/src/ai.cpp), and [guard return behavior](https://github.com/neivv/teippi/blob/05c006c2f74ad11285c39d37135aed03d1fb8806/src/unit_ai.cpp). AISE at `b3fc7c47f7c12c6b4900df281f6539e3a4263d1c` supplies [reverse-engineered campaign regional-demand calculations and town-region rules](https://github.com/neivv/aise/blob/b3fc7c47f7c12c6b4900df281f6539e3a4263d1c/src/ai.rs). Only behavior contracts are reused; external implementation was not copied.
+
+This remains a mission-scoped implementation, not StarCraft's complete regional state machine. Placement retains a bounded town-center search. Exact enemy-region ranking, update cadence, spending queues, detailed guard replacement and campaign micro are not verified byte-for-byte. Autonomous Overlord scouting, transport strategy, general expansion logic and unrelated script commands are not implemented. The tests establish the documented contracts and working mission pressure; they do not prove identical difficulty.
+
+For the later classic comparison, record attack launch/arrival times and compositions, air attacks, the final assault, tech destruction/rebuilding, defender assistance and Overlord movement. Normal-control victory and physical-device acceptance remain open. Publication of this source-backed milestone does not close those comparison items.
+
+Reproduce the content/AI audit after building the existing preparation utility:
+
+```powershell
+& .\web\build-wasm.ps1 -CampaignPack
+node web/prepare-campaign.mjs --test
+node web/prepare-campaign.mjs terran03
+node web/prepare-campaign.mjs --audit-ai
+& .\web\build-wasm.ps1 -SimulationTest
+node web/run-sim.mjs --test-campaign terran03
+& .\web\build-wasm.ps1
+node web/run-wasm-node.mjs --test-campaign terran03
+```
+
 ## Reusable Implementation Lessons
 
 Apply these lessons to later missions. The evidence above records what was tested; it does not establish support for untested scenarios or operations. Update this section when another mission changes a reusable rule.
@@ -389,6 +434,13 @@ Apply these lessons to later missions. The evidence above records what was teste
 - Preserve a waiting trigger's action index. Do not replay its earlier mutations or dialogue. Keep this distinct from the original scheduler's recheck of earlier triggers when a wait starts. Add interleaving tests when a later mission introduces new simultaneous waits.
 - Audit placed-unit orders separately from AI-script actions. Wasteland exercises working guard/combat behavior without an AI VM; this does not implement ComputerAI, town management, or scripted attacks. Rescue must remain a proximity-based ownership transfer, including whole-player transfer through an active grounded depot, not a mission-specific grant.
 - Backwater confirms that an empty AI-script action set can still activate ComputerAI through a placed building's DAT idle order. Include building idle orders in the next mission's readiness audit. Verify numeric IDs against the repository enums: mistaking the Infested Command Center for a Hatchery falsely suggested a broader AI requirement.
+- Inventory reachable AI instructions, including branches and child threads, before choosing runtime scope. Desperate Alliance requests production through `build`, defense and attack operations without using `train`. Keep AI frame waits separate from trigger millisecond waits; audit the scheduler before assigning wall-clock timing.
+- Match stable native idle states, not only DAT entry orders. `Guard` transitions to `PlayerGuard`; missing that transition stalled both resource reassignment and abandoned building recovery. Count active construction and pending eggs, and retry failed unstarted building requests without charging twice.
+- Use generation-safe unit IDs for AI parties and destruction/rebuilding fixtures. A dead unit's storage can be reused; pointer equality does not prove that a later actor is the original unit.
+- Distinguish strategic movement goals from direct combat eligibility. A party can move toward an enemy position before it can see or attack that unit. Keep actual attack acquisition in the native combat engine.
+- Coordinate military by native pathing regions and a shared destination. Check mixed weapon capabilities before rejecting a target, exclude active defenders and engaged guards, and service surviving attackers after their destination clears.
+- Treat defense batch sizes as request/use instructions, not permanent global reserves. Account for demand and assigned base strength per region; cap ground and air need independently. Test simultaneous incursions and defender release, not only one nearby enemy.
+- Track Kills at credited lethal damage, not by counting Die orders or decrementing live actors. Preserve captured projectile ownership when its source unit has gone, and test friendly fire and scripted deaths separately. Audit instant-kill spell paths when a later mission activates them.
 - Web walkthroughs can justify a narrow provisional target when the user accepts later comparison. Label inferred compatibility rules and test them against original trigger totals; do not present those tests as proof of the original engine's internals.
 - Unit death is staged. `kill_unit` assigns the Die order; completed-unit counters update during later processing. Isolated action tests should check the immediate death-order contract rather than assuming counters change synchronously.
 
@@ -536,11 +588,11 @@ Definition of done: Wasteland is genuinely playable from selection through brief
 
 Wasteland and Backwater Station are accepted local playable milestones. Desperate Alliance is the next implementation slice; deferred mobile/presentation polish does not block its runtime work. Physical-device and public-delivery checks remain release gates.
 
-First regenerate Desperate Alliance's audit with the corrected MPQ reader. Confirm its required operations, controllers, original outcomes, and reachable AI-script instructions before relying on earlier findings. Then prepare its own mission pack and extend the missing runtime capabilities while retaining both earlier missions' regressions. Use the existing mission-selection surface; do not broaden this slice into onboarding or automatic mission-to-mission flow.
+Desperate Alliance's corrected pack, script-driven runtime and original outcome checks now pass locally. Use the existing selection surface for its normal-control playtest and classic comparison. Retain both earlier missions' regressions; do not broaden this slice into onboarding or automatic mission-to-mission flow.
 
 - Backwater Station: implement/test countdown and switch conditions, additional rescue behavior, unit-property creation, kill-at-location, and invincibility, together with its actual unit availability and objective flow. Reuse the same manifest, briefing, event, and outcome infrastructure.
 - Desperate Alliance: add kills/countdown behavior and computer-owned trigger execution, then interpret the `Ter3`/`Suic` programs from the real AI binaries. Inventory reachable instructions and add unsupported-op diagnostics before promising complete AI coverage. Campaign base building/attack waves must come from the script runtime, not hand-timed substitutes or McRave/ZZZKBot.
-- Investigate the observed MBRF type 29 and any newly activated unit orders before enabling T3. Do not edit the source scenario to fit the engine.
+- Verify newly activated unit orders and actual AI production/attacks before enabling T3. The old MBRF type 29 was a corrected-decoder artifact; do not add a bogus opcode or edit the source scenario to fit the engine.
 - Brood War and other campaigns follow only after their own content/operation audits. The current counts and a working first mission are not a compatibility guarantee.
 
 ## Implementation Ownership And Efficiency Rules
@@ -580,9 +632,9 @@ There is no reliable calendar estimate for all campaigns yet. P1-P3 runtime evid
 
 1. Open this file; confirm `campaign` and inspect the actual worktree before editing.
 2. Reconfirm the three core archives and the original CD archive locally; do not redownload or commit them unnecessarily.
-3. Regenerate Backwater Station's audit and prepare its mission pack using the corrected reader. Do not assume the provisional T2/T3 profiles are final.
+3. Use the corrected Desperate Alliance pack and `--audit-ai` inventory; read its groundwork evidence above. Do not revive the superseded 14-WAV/MBRF-29 findings.
 4. Add a failing check for each newly required operation, then extend the existing runtime. Keep milestone evidence and open questions here.
-5. Verify Backwater Station through original-trigger success/failure and retain Wasteland regressions. Keep UI/mobile polish, onboarding, and linked mission flow deferred.
+5. Play Desperate Alliance through normal defensive victory/defeat and compare its provisional town/defense policies with classic StarCraft. Retain both earlier missions' regressions and the deferred Backwater defender-assistance comparison. Keep UI/mobile polish, onboarding, and linked mission flow deferred.
 6. Commit related milestones on `campaign` with the established personal author/signing setup when requested. Do not merge or deploy to `dev`/`master` without instruction.
 
 ## Validation Baseline

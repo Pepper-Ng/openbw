@@ -246,6 +246,70 @@ static void campaign_checks(state& st) {
 		st.running_triggers = {};
 	}
 	printf("Campaign wait quantization checks passed.\n");
+	trigger::action countdown{};
+	countdown.type = 14;
+	countdown.time_n = 1800;
+	countdown.num_n = 7;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], countdown);
+	require(st.countdown_timer == 1800, "Desperate Alliance sets an actual thirty-minute countdown");
+	countdown.time_n = 5;
+	countdown.num_n = 8;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], countdown);
+	require(st.countdown_timer == 1805, "countdown add modifier");
+	countdown.time_n = 2000;
+	countdown.num_n = 9;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], countdown);
+	require(st.countdown_timer == 0, "countdown subtraction clamps at zero");
+	printf("Campaign countdown action checks passed.\n");
+	unit_t* killed_building = nullptr;
+	for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Supply_Depot) killed_building = unit;
+	require(killed_building != nullptr, "building-kill fixture");
+	functions.set_unit_owner(killed_building, 4, true);
+	condition = {};
+	condition.type = 5;
+	condition.group = 18;
+	condition.unit_id = 231;
+	condition.num_n = 10;
+	require(functions.test_trigger_condition(condition, 1), "building kills initially zero");
+	functions.unit_deal_damage(killed_building, 1_fp8, marine, 1, false);
+	require(functions.test_trigger_condition(condition, 1), "nonlethal damage does not count as a kill");
+	functions.unit_deal_damage(killed_building, killed_building->hp, marine, 1, false);
+	condition.count_n = 1;
+	require(functions.test_trigger_condition(condition, 1), "Force 1 receives a lethal building kill");
+	condition.unit_id = int(UnitTypes::Terran_Supply_Depot);
+	require(functions.test_trigger_condition(condition, 1), "specific killed type is retained");
+	functions.unit_deal_damage(killed_building, 1_fp8, marine, 1, false);
+	require(functions.test_trigger_condition(condition, 1), "dead target does not award a second kill");
+	condition.unit_id = 230;
+	condition.count_n = 0;
+	require(functions.test_trigger_condition(condition, 1), "building kill is not a Men kill");
+	a_vector<unit_t*> killed_units;
+	for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Zergling) killed_units.push_back(unit);
+	require(killed_units.size() >= 3, "kill-credit isolation fixtures");
+	functions.unit_deal_damage(killed_units[0], killed_units[0]->hp, nullptr, 1, false);
+	condition.count_n = 1;
+	require(functions.test_trigger_condition(condition, 1), "projectile owner receives credit after its source unit is gone");
+	condition.unit_id = 229;
+	condition.count_n = 2;
+	require(functions.test_trigger_condition(condition, 1), "Any Unit combines building and Men kills");
+	functions.set_unit_owner(killed_units[1], 1, true);
+	functions.unit_deal_damage(killed_units[1], killed_units[1]->hp, marine, 1, false);
+	require(functions.test_trigger_condition(condition, 1), "friendly fire awards no enemy kill");
+	functions.kill_unit(killed_units[2]);
+	functions.unit_deal_damage(killed_units[2], 1_fp8, marine, 1, false);
+	require(functions.test_trigger_condition(condition, 1), "scripted death awards no later weapon kill");
+	condition.group = 4;
+	condition.count_n = 0;
+	require(functions.test_trigger_condition(condition, 1), "victim player does not receive kill credit");
+	printf("Campaign credited-kill checks passed.\n");
+	trigger::action vision{};
+	vision.type = 15;
+	for (int player = 0; player != 8; ++player) {
+		vision.group2_n = 0x3069562b + (player << 24);
+		functions.execute_trigger_action(effects, 1, running, running.actions[0], vision);
+		require((st.shared_vision[player] & (1 << 1)) != 0, "legacy shared-vision AI script remains supported");
+	}
+	printf("Campaign shared-vision script checks passed.\n");
 }
 
 static void campaign_outcomes(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
@@ -550,6 +614,256 @@ static void backwater_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void desperate_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 13; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 650; ++tick) player.next_frame();
+		require(st.trigger_switches[0] && !st.trigger_switches[1] && !st.players[1].victory_state, "original timer switch initialization and no early outcome");
+		if (scenario == 5) {
+			a_vector<unit_t*> marines;
+			a_vector<unit_t*> zerglings;
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marines.push_back(unit);
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Zergling) zerglings.push_back(unit);
+			require(marines.size() >= 2 && zerglings.size() >= 2, "attack coordination fixture actors");
+			functions.move_unit(zerglings[0], marines.front()->sprite->position + xy(16, 0));
+			functions.move_unit(zerglings[1], marines.back()->sprite->position + xy(16, 0));
+			st.campaign_ai[4].attack_party = {functions.get_unit_id(zerglings[0]), functions.get_unit_id(zerglings[1])};
+			functions.launch_campaign_ai_attack(4);
+			require(zerglings[0]->order_type->id == Orders::AttackMove && zerglings[1]->order_type->id == Orders::AttackMove, "party uses native attack-move orders");
+			require(zerglings[0]->order_target.pos == zerglings[1]->order_target.pos, "one military party shares its strategic attack destination");
+			printf("Desperate Alliance shared attack destination passed.\n");
+			continue;
+		}
+		if (scenario == 6) {
+			unit_t* ground = nullptr;
+			unit_t* air = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine) ground = unit;
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Overlord) air = unit;
+			require(ground && air, "regional defense classification actors");
+			functions.move_unit(air, ground->sprite->position);
+			require(functions.campaign_ai_defense_category(ground) == 0 && functions.campaign_ai_defense_category(air) == 1, "GG and AG apply to pathable regions");
+			bool found = false;
+			for (int vertical = 80; vertical < int(st.game->map_height) - 64 && !found; vertical += 32) {
+				for (int horizontal = 80; horizontal < int(st.game->map_width) - 64 && !found; horizontal += 32) {
+					xy pos(horizontal, vertical);
+					if (functions.get_region_at(pos)->walkable()) continue;
+					functions.move_unit(ground, pos);
+					functions.move_unit(air, pos);
+					require(ground->sprite->position == pos && air->sprite->position == pos, "classification fixture is not displaced by unit map bounds");
+					require(functions.campaign_ai_defense_category(ground) == 2 && functions.campaign_ai_defense_category(air) == 3, "GA and AA apply to unpathable regions");
+					found = true;
+				}
+			}
+			require(found, "original map supplies an unpathable region fixture");
+			printf("Desperate Alliance regional defense categories passed.\n");
+			continue;
+		}
+		if (scenario == 7) {
+			unit_t* hatchery = nullptr;
+			unit_t* den = nullptr;
+			a_vector<unit_t*> marines;
+			for (unit_t* unit : ptr(st.player_units[4])) {
+				if (unit->unit_type->id == UnitTypes::Zerg_Hatchery) hatchery = unit;
+				if (unit->unit_type->id == UnitTypes::Zerg_Hydralisk_Den) den = unit;
+			}
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marines.push_back(unit);
+			require(hatchery && den && marines.size() >= 3, "regional strength fixture actors");
+			xy remote = marines.back()->sprite->position;
+			functions.move_unit(den, remote);
+			functions.move_unit(marines[0], hatchery->sprite->position);
+			functions.move_unit(marines[1], hatchery->sprite->position);
+			functions.move_unit(marines[2], remote);
+			auto& ai = st.campaign_ai[4];
+			ai.maximum_force = 1;
+			functions.update_campaign_ai_regions(4);
+			size_t home_region = functions.get_region_at(hatchery->sprite->position)->index;
+			size_t remote_region = functions.get_region_at(remote)->index;
+			require(home_region != remote_region, "independent regional incursion fixtures");
+			for (size_t region : {home_region, remote_region}) {
+				require(ai.regions[region].owned && ai.regions[region].defended, "primary buildings establish regional defense");
+				require(ai.regions[region].needed[0] == 1 && ai.regions[region].needed[1] == 1, "max_force caps ground and air demand independently per region");
+			}
+			ai.maximum_force = 0;
+			functions.update_campaign_ai_regions(4);
+			require(ai.regions[home_region].needed[0] >= 2 * st.game->unit_ground_strength[UnitTypes::Terran_Marine], "regional demand aggregates enemy base strengths");
+			ai.maximum_force = 1;
+			ai.attack_preparing = true;
+			ai.attack_deadline = st.current_frame + 2700;
+			ai.attack_requests[UnitTypes::Zerg_Hydralisk] = 15;
+			st.current_frame = (st.current_frame + 7) / 8 * 8;
+			functions.progress_campaign_ai_town(4);
+			bool home_defended = false;
+			bool remote_defended = false;
+			a_vector<unit_id> assigned;
+			for (const auto& defender : ai.defending) {
+				require(std::find(assigned.begin(), assigned.end(), defender.unit) == assigned.end(), "one defender cannot be allocated to two regions");
+				require(std::find(ai.attack_party.begin(), ai.attack_party.end(), defender.unit) == ai.attack_party.end(), "active regional defenders are not stolen by attack recruitment");
+				assigned.push_back(defender.unit);
+				if (defender.region == home_region) home_defended = true;
+				if (defender.region == remote_region) remote_defended = true;
+			}
+			require(home_defended && remote_defended, "simultaneous incursions get independent actual defenders");
+			auto defenders = ai.defending;
+			ai.attack_preparing = false;
+			ai.attack_party.clear();
+			ai.attack_requests = {};
+			for (unit_t* unit : ptr(st.player_units[1])) functions.kill_unit(unit);
+			functions.progress_campaign_ai_town(4);
+			require(ai.defending.empty(), "cleared regions release their defender assignments");
+			for (const auto& defender : defenders) {
+				unit_t* unit = functions.get_unit(defender.unit);
+				require(unit && unit->order_type->id == Orders::AttackMove && unit->order_target.pos == defender.home, "released defenders return toward their prior positions");
+			}
+			printf("Desperate Alliance independent regional strength budgets passed.\n");
+			continue;
+		}
+		if (scenario == 8) {
+			unit_t* command_center = nullptr;
+			unit_t* zergling = nullptr;
+			unit_t* mutalisk = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center) command_center = unit;
+			for (unit_t* unit : ptr(st.player_units[4])) {
+				if (unit->unit_type->id == UnitTypes::Zerg_Zergling) zergling = unit;
+				if (unit->unit_type->id == UnitTypes::Zerg_Mutalisk) mutalisk = unit;
+			}
+			require(command_center && zergling && mutalisk, "mixed military party fixture actors");
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit != command_center) functions.kill_unit(unit);
+			functions.order_BuildingLiftoff(command_center);
+			require(functions.u_flying(command_center), "original Command Center lifts through native order logic");
+			st.campaign_ai[4].attack_party = {functions.get_unit_id(zergling), functions.get_unit_id(mutalisk)};
+			functions.launch_campaign_ai_attack(4);
+			require(mutalisk->order_type->id == Orders::AttackMove && mutalisk->order_target.pos == command_center->sprite->position, "ground leader cannot prevent an air-capable party member attacking a lifted building");
+			printf("Desperate Alliance mixed-party air capability passed.\n");
+			continue;
+		}
+		if (scenario == 9) {
+			unit_t* marine = nullptr;
+			unit_t* zergling = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Zergling) zergling = unit;
+			require(marine && zergling, "engaged guard recruitment fixture actors");
+			functions.move_unit(zergling, marine->sprite->position + xy(16, 0));
+			functions.issue_order(zergling, false, zergling->unit_type->attack_unit, {marine->sprite->position, marine});
+			auto& ai = st.campaign_ai[4];
+			ai.home = zergling->sprite->position;
+			ai.attack_requests[UnitTypes::Zerg_Zergling] = 1;
+			ai.attack_preparing = true;
+			ai.attack_deadline = st.current_frame + 2700;
+			st.current_frame = (st.current_frame + 7) / 8 * 8;
+			functions.progress_campaign_ai_town(4);
+			require(std::find(ai.attack_party.begin(), ai.attack_party.end(), functions.get_unit_id(zergling)) == ai.attack_party.end(), "attack recruitment does not interrupt an engaged guard");
+			require(zergling->order_target.unit == marine, "engaged guard keeps its combat target");
+			printf("Desperate Alliance engaged-guard recruitment exclusion passed.\n");
+			continue;
+		}
+		if (scenario == 10) {
+			a_vector<unit_t*> zerglings;
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Zergling) zerglings.push_back(unit);
+			require(zerglings.size() >= 2, "regional grouping fixture actors");
+			bool found = false;
+			for (int vertical = 80; vertical < int(st.game->map_height) - 80 && !found; vertical += 16) {
+				for (int horizontal = 80; horizontal < int(st.game->map_width) - 80 && !found; horizontal += 16) {
+					xy home(horizontal, vertical);
+					xy nearby = home + xy(16, 0);
+					const auto* first = functions.get_region_at(home);
+					const auto* second = functions.get_region_at(nearby);
+					if (first == second || !first->walkable() || !second->walkable()) continue;
+					st.campaign_ai[4].home = home;
+					st.campaign_ai[4].attack_party = {functions.get_unit_id(zerglings[0]), functions.get_unit_id(zerglings[1])};
+					functions.move_unit(zerglings[0], home);
+					functions.move_unit(zerglings[1], nearby);
+					if (functions.get_region_at(zerglings[0]->sprite->position) != first || functions.get_region_at(zerglings[1]->sprite->position) != second) continue;
+					require(!functions.campaign_ai_party_grouped(4), "nearby units in different pathing regions have not finished grouping");
+					functions.move_unit(zerglings[1], home);
+					require(functions.campaign_ai_party_grouped(4), "party is ready when both members reach the grouping region");
+					found = true;
+				}
+			}
+			require(found, "original map supplies a walkable region boundary");
+			printf("Desperate Alliance pathing-region attack grouping passed.\n");
+			continue;
+		}
+		if (scenario == 11) {
+			a_vector<unit_t*> zerglings;
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Zergling) zerglings.push_back(unit);
+			require(zerglings.size() >= 2, "continuing military fixture actors");
+			auto& ai = st.campaign_ai[4];
+			ai.attack_party = {functions.get_unit_id(zerglings[0]), functions.get_unit_id(zerglings[1])};
+			functions.launch_campaign_ai_attack(4);
+			unit_t* old_target = functions.get_unit(ai.military_target);
+			require(old_target && ai.attacking.size() == 2, "military party has an initial shared target");
+			functions.kill_unit(old_target);
+			for (int member = 0; member != 2; ++member) {
+				functions.move_unit(zerglings[member], old_target->sprite->position);
+				functions.set_unit_order(zerglings[member], functions.get_order_type(Orders::PlayerGuard));
+				zerglings[member]->auto_target_unit = nullptr;
+			}
+			st.current_frame = (st.current_frame + 7) / 8 * 8;
+			functions.progress_campaign_ai_town(4);
+			unit_t* target = functions.get_unit(ai.military_target);
+			require(target && target != old_target && !functions.unit_dying(target), "military chooses a new live target after a cleared destination");
+			for (int member = 0; member != 2; ++member) require(zerglings[member]->order_type->id == Orders::AttackMove && zerglings[member]->order_target.pos == target->sprite->position, "surviving idle attackers continue together rather than parking at the old destination");
+			printf("Desperate Alliance continuing military retargeting passed.\n");
+			continue;
+		}
+		if (scenario == 12) {
+			bool combat = false;
+			int first_combat = 0;
+			for (int tick = 0; tick != 32000 && !st.players[1].victory_state; ++tick) {
+				player.next_frame();
+				for (unit_id id : st.campaign_ai[4].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || !unit->order_target.unit || unit->order_target.unit->owner != 1) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (!combat) first_combat = st.current_frame;
+						combat = true;
+					}
+				}
+			}
+			require(combat, "unprotected original mission receives real weapon fire from deployed scripted attacks");
+			printf("Desperate Alliance unassisted diagnostic: first combat frame=%d, outcome=%d, frame=%d, human actors=%d.\n", first_combat, st.players[1].victory_state, st.current_frame, count_units(st, 1));
+			continue;
+		}
+		if (scenario == 0) st.countdown_timer = 10;
+		if (scenario == 1) { st.trigger_switches[0] = false; st.countdown_timer = 0; }
+		if (scenario == 2) {
+			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->group_flags & GroupFlags::Building) functions.kill_unit(unit);
+		}
+		if (scenario == 3) st.countdown_timer = 120;
+		if (scenario != 2) for (unit_t* unit : ptr(st.player_units[1])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+		bool paused = false;
+		bool final_assault = false;
+		bool air_attack = false;
+		for (int tick = 0; tick != (scenario == 4 ? 32000 : 3500) && !st.players[1].victory_state; ++tick) {
+			player.next_frame();
+			paused = paused || st.scripted_pause;
+			if (st.campaign_ai[4].attacking.size() >= 20) final_assault = true;
+			for (unit_id id : st.campaign_ai[4].attacking) {
+				unit_t* unit = functions.get_unit(id);
+				if (unit && unit->unit_type->id == UnitTypes::Zerg_Mutalisk) air_attack = true;
+			}
+		}
+		if (scenario == 0 || scenario == 3 || scenario == 4) require(st.players[1].victory_state >= 3 && paused, "original survival ending reaches paused victory");
+		if (scenario == 1) require(!st.players[1].victory_state, "zero countdown without initialization switch does not win");
+		if (scenario == 2) require(st.players[1].victory_state == 2, "original all-buildings-lost defeat");
+		if (scenario == 3) require(final_assault, "original two-minute trigger sends real remaining military units");
+		if (scenario == 4) require(air_attack && st.current_frame >= 1800 * 16, "full original countdown and later script-driven Mutalisk attacks");
+		printf("Desperate Alliance original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -557,6 +871,7 @@ int main(int argc, char** argv) {
 	race_t my_race = race_t::terran;
 	bool campaign = argc > 3 && !strcmp(argv[3], "--test-campaign");
 	bool backwater = campaign && argc > 4 && !strcmp(argv[4], "terran02");
+	bool desperate = campaign && argc > 4 && !strcmp(argv[4], "terran03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -571,6 +886,65 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (desperate) {
+			player.st().strict_triggers = true;
+			player.next_frame();
+			player.next_frame();
+			require(player.st().countdown_timer == 1800, "Desperate Alliance original countdown initialization");
+			require(player.st().campaign_ai_scripts.size() == 1, "original computer-owned trigger starts Ter3");
+			player.next_frame();
+			player.next_frame();
+			require(player.st().campaign_ai[4].campaign && !player.st().campaign_ai[4].town_active, "Ter3 campaign flag and initial frame wait");
+			require(player.st().campaign_ai_scripts[0].position == 6878, "Ter3 wait resumes at audited start_town instruction");
+			for (int tick = 0; tick != 20; ++tick) player.next_frame();
+			const auto& ai = player.st().campaign_ai[4];
+			require(ai.town_active && !ai.default_build && ai.maximum_force == 600, "original Ter3 town policies");
+			require(ai.build_requests[UnitTypes::Zerg_Drone].first == 6 && ai.defenses.size() == 9, "original build target and defense request entries");
+			int gathering = 0;
+			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Drone && unit->order_type != unit->unit_type->human_ai_idle) ++gathering;
+			require(gathering > 0, "campaign town assigns actual resource-gathering orders");
+			state_functions functions(player.st());
+			unit_t* worker = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Drone) worker = unit;
+			require(worker != nullptr, "original Drone replacement fixture");
+			functions.kill_unit(worker);
+			bool saw_drone_egg = false;
+			for (int tick = 0; tick != 600; ++tick) {
+				player.next_frame();
+				for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Egg && !unit->build_queue.empty() && unit->build_queue.front()->id == UnitTypes::Zerg_Drone) saw_drone_egg = true;
+			}
+			require(saw_drone_egg && player.st().completed_unit_counts[4][UnitTypes::Zerg_Drone] == 6, "script build target replaces a Drone through a normal timed egg");
+			require(player.st().total_minerals_gathered[4] > 0, "computer economy gathers real minerals");
+			bool launched = false;
+			for (int tick = 0; tick != 4000 && !launched; ++tick) {
+				player.next_frame();
+				launched = !player.st().campaign_ai[4].attacking.empty();
+			}
+			require(launched, "original Ter3 first attack launches actual units");
+			for (unit_id id : player.st().campaign_ai[4].attacking) require(functions.get_unit(id)->unit_type->id == UnitTypes::Zerg_Zergling, "original first wave contains Zerglings");
+			unit_t* den = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Hydralisk_Den) den = unit;
+			require(den != nullptr, "original Hydralisk Den rebuilding fixture");
+			unit_id den_id = functions.get_unit_id(den);
+			functions.kill_unit(den);
+			bool construction = false;
+			bool rebuilt = false;
+			for (int tick = 0; tick != functions.get_unit_type(UnitTypes::Zerg_Hydralisk_Den)->build_time + 2000 && !rebuilt; ++tick) {
+				player.next_frame();
+				for (unit_t* unit : ptr(player.st().player_units[4])) {
+					if (functions.get_unit_id(unit) == den_id || unit->unit_type->id != UnitTypes::Zerg_Hydralisk_Den || functions.unit_dying(unit)) continue;
+					if (functions.u_completed(unit)) rebuilt = true;
+					else construction = true;
+				}
+			}
+			if (!construction || !rebuilt) {
+				for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Drone) printf("Drone order=%d state=%d queued=%d\n", int(unit->order_type->id), unit->order_state, unit->build_queue.empty() ? -1 : int(unit->build_queue.front()->id));
+				error("Den rebuild: construction=%d complete=%d allowed=%d minerals=%d gas=%d", int(construction), int(rebuilt), int(player.st().game->unit_type_allowed[4][UnitTypes::Zerg_Hydralisk_Den]), player.st().current_minerals[4], player.st().current_gas[4]);
+			}
+			printf("Desperate Alliance normal initialization passed.\n");
+			desperate_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (backwater) {
 			backwater_checks(player.st());
 			backwater_mission_cases(load_data_file, map_file);

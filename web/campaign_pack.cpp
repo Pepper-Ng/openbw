@@ -131,10 +131,17 @@ static a_vector<uint8_t> make_pack(const a_vector<mission_file>& files) {
 	return result;
 }
 
+static void write_output(const char* path, const a_vector<uint8_t>& bytes) {
+	FILE* output = fopen(path, "wb");
+	if (!output) error("cannot open preparation output");
+	bool written = fwrite(bytes.data(), 1, bytes.size(), output) == bytes.size();
+	if (fclose(output) || !written) error("cannot write preparation output");
+}
+
 int main(int argc, char** argv) {
 	if (argc != 4) error("usage: campaign-pack SOURCE terran01 OUTPUT");
 	a_string mission = argv[2];
-	if (mission != "terran01" && mission != "terran02" && mission != "terran03") error("unsupported mission");
+	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "--ai-script") error("unsupported preparation request");
 	embedded_mpq_reader source(argv[1]);
 	paged_reader<embedded_mpq_reader> reader(source);
 	auto archive = make_mpq_archive_reader(reader);
@@ -151,6 +158,12 @@ int main(int argc, char** argv) {
 		if (!bytes.empty()) entry.get_bytes(bytes.data(), bytes.size());
 		return bytes;
 	};
+	if (mission == "--ai-script") {
+		auto bytes = extract("scripts\\aiscript.bin");
+		write_output(argv[3], bytes);
+		printf("Extracted %zu AI-script bytes\n", bytes.size());
+		return 0;
+	}
 	auto scenario = extract("campaign\\terran\\" + mission + "\\staredit\\scenario.chk");
 	a_vector<mission_file> files;
 	files.push_back({"staredit\\scenario.chk", scenario});
@@ -188,10 +201,7 @@ int main(int argc, char** argv) {
 		files.push_back({path, std::move(sound)});
 	}
 	auto pack = make_pack(files);
-	FILE* output = fopen(argv[3], "wb");
-	if (!output) error("cannot open mission pack output");
-	bool written = fwrite(pack.data(), 1, pack.size(), output) == pack.size();
-	if (fclose(output) || !written) error("cannot write mission pack");
+	write_output(argv[3], pack);
 	printf("Round-trip verified %zu files; pack size %zu bytes\n", files.size(), pack.size());
 	return 0;
 }

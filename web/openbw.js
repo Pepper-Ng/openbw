@@ -1206,6 +1206,7 @@ async function boot(session) {
     resignArmed = false; resignBtn.textContent = 'Resign game';
     settingsPop.style.display = 'none';
     x.openbw_resign();
+    if (session.mission && paused) pauseBtn.click();
   };
   document.addEventListener('click', (e) => {
     if (settingsPop.style.display === 'block' && e.target !== settingsBtn && !settingsPop.contains(e.target))
@@ -1569,6 +1570,9 @@ async function boot(session) {
   function updateMissionHud() {
     if (!session.mission || briefingActive) return;
     $('mission-objectives-text').textContent = missionText(x.openbw_mission_objectives());
+    const remaining = x.openbw_mission_countdown();
+    $('mission-countdown').hidden = remaining < 0;
+    if (remaining >= 0) $('mission-countdown').textContent = `Time Left: ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
     const leaderboard = readCString(x.openbw_mission_leaderboard()).trim();
     $('mission-leaderboard').hidden = !leaderboard;
     if (leaderboard) {
@@ -2134,7 +2138,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {

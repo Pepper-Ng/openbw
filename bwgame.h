@@ -124,6 +124,7 @@ struct global_state {
 	a_vector<uint8_t> techdata_dat;
 
 	a_vector<uint8_t> melee_trg;
+	a_vector<uint8_t> ai_script;
 
 	std::array<a_vector<uint8_t>, 8> tileset_vf4;
 	std::array<a_vector<uint8_t>, 8> tileset_cv5;
@@ -214,6 +215,7 @@ struct state_base_copyable {
 
 	std::array<type_indexed_array<int, UnitTypes>, 12> unit_counts;
 	std::array<type_indexed_array<int, UnitTypes>, 12> completed_unit_counts;
+	std::array<type_indexed_array<int, UnitTypes>, 12> killed_unit_counts;
 
 	std::array<int, 12> factory_counts;
 	std::array<int, 12> building_counts;
@@ -244,7 +246,49 @@ struct state_base_copyable {
 	int last_error;
 
 	int trigger_timer;
+	struct campaign_ai_script {
+		int owner;
+		size_t position;
+		int wait = 0;
+		rect area;
+	};
+	struct campaign_ai_player {
+		bool campaign = false;
+		bool town_active = false;
+		bool default_build = true;
+		bool expand_defense = false;
+		bool attack_preparing = false;
+		bool attack_ready = false;
+		bool attack_launched = false;
+		bool suicide = false;
+		int minimum_force = 0;
+		int maximum_force = 0;
+		int attack_deadline = 0;
+		xy home{};
+		size_t military_region = ~(size_t)0;
+		unit_id military_target{};
+		type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
+		type_indexed_array<int, TechTypes> tech_requests{};
+		type_indexed_array<int, UnitTypes> attack_requests{};
+		struct defense_request { int category; int amount; UnitTypes type; };
+		struct defense_region {
+			bool owned = false;
+			bool defended = false;
+			std::array<int, 2> needed{};
+			std::array<int, 2> assigned{};
+			std::array<unit_id, 4> targets{};
+		};
+		a_vector<defense_request> defenses;
+		a_vector<defense_region> regions;
+		struct defender { unit_id unit; size_t region; xy home; };
+		a_vector<defender> defending;
+		a_vector<unit_id> attack_party;
+		a_vector<unit_id> attacking;
+	};
+	a_vector<campaign_ai_script> campaign_ai_scripts;
+	std::array<campaign_ai_player, 12> campaign_ai;
 	int countdown_timer = 0;
+	bool countdown_active = false;
 	std::array<bool, 256> trigger_switches{};
 	bool scripted_pause = false;
 	bool strict_triggers = false;
@@ -4278,6 +4322,11 @@ struct state_functions {
 	}
 
 	void order_ComputerAI(unit_t* u) {
+		if (unit_is(u, UnitTypes::Zerg_Larva)) {
+			if (!u->order_queue.empty()) activate_next_order(u);
+			else order_Larva(u);
+			return;
+		}
 		if (!ut_building(u) || u->unit_type->human_ai_idle->id != Orders::Nothing) error("unsupported ComputerAI behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
 		if (!u->order_queue.empty()) activate_next_order(u);
 	}
@@ -8116,7 +8165,8 @@ struct state_functions {
 			error("HarassMove");
 			break;
 		case Orders::AIPatrol:
-			error("AIPatrol");
+			if (!unit_is(u, UnitTypes::Zerg_Overlord)) error("unsupported AIPatrol behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
+			order_PickupIdle(u);
 			break;
 		case Orders::GuardPost:
 			error("GuardPost");
@@ -13117,6 +13167,7 @@ struct state_functions {
 
 	void process_frame() {
 		recede_creep();
+		progress_campaign_ai_scripts();
 
 		if (st.update_tiles_countdown == 0) st.update_tiles_countdown = 100;
 		--st.update_tiles_countdown;
@@ -13660,8 +13711,7 @@ struct state_functions {
 	}
 
 	void unit_deal_damage(unit_t* u, fp8 damage, unit_t* source_unit, int source_owner, bool reveal_source = true) {
-		(void)source_owner;
-		if (u->hp == 0_fp8) return;
+		if (u->hp == 0_fp8 || u->order_type->id == Orders::Die) return;
 		on_unit_damage(u, source_unit, reveal_source);
 		if (damage < u->hp) {
 			u->hp -= damage;
@@ -13683,8 +13733,9 @@ struct state_functions {
 			u->hp = 0_fp8;
 			kill_unit(u);
 			// todo: units lost scores
-			if (source_unit && unit_target_is_enemy(source_unit, u)) {
-				// todo: kill scores
+			int target_owner = u->owner == 11 ? u->sprite->owner : u->owner;
+			if (source_owner >= 0 && source_owner < 12 && source_owner != target_owner && !st.alliances[source_owner][target_owner] && !u_hallucination(u) && !ut_turret(u)) {
+				++st.killed_unit_counts[source_owner][u->unit_type->id];
 			}
 		}
 	}
@@ -18926,6 +18977,404 @@ struct state_functions {
 		return r;
 	}
 
+	void start_campaign_ai_script(int owner, uint32_t id, rect area = {}) {
+		const auto& bytes = st.global->ai_script;
+		if (bytes.size() < 8) error("missing campaign AI binary");
+		size_t table = data_loading::value_at<uint32_t, true>(bytes.data());
+		if (table < 4 || table > bytes.size() - 4) error("unsupported campaign AI binary format");
+		for (size_t cursor = table, count = 0; count != 4096; cursor += 16, ++count) {
+			if (cursor > bytes.size() - 4) error("unterminated campaign AI table");
+			uint32_t entry = data_loading::value_at<uint32_t, true>(bytes.data() + cursor);
+			if (!entry) break;
+			if (cursor > bytes.size() - 16) error("truncated campaign AI entry");
+			if (entry != id) continue;
+			size_t position = data_loading::value_at<uint32_t, true>(bytes.data() + cursor + 4);
+			if (position < 4 || position >= table) error("unsupported campaign AI entry %d", id);
+			if (st.campaign_ai_scripts.size() >= 64) error("campaign AI script limit exceeded");
+			state_base_copyable::campaign_ai_script script;
+			script.owner = owner;
+			script.position = position;
+			script.area = area;
+			st.campaign_ai_scripts.push_back(script);
+			return;
+		}
+		error("unknown campaign AI script %d", id);
+	}
+
+	void progress_campaign_ai_scripts() {
+		const auto& bytes = st.global->ai_script;
+		if (st.campaign_ai_scripts.empty()) return;
+		size_t table = data_loading::value_at<uint32_t, true>(bytes.data());
+		for (auto& script : st.campaign_ai_scripts) {
+			if (script.wait) { --script.wait; continue; }
+			auto& ai = st.campaign_ai.at(script.owner);
+			auto read = [&](size_t width) {
+				if (script.position < 4 || script.position >= table || width > table - script.position) error("campaign AI operand out of bounds");
+				int value = width == 1 ? bytes[script.position] : data_loading::value_at<uint16_t, true>(bytes.data() + script.position);
+				script.position += width;
+				return value;
+			};
+			for (int instructions = 0; script.position; ++instructions) {
+				if (instructions == 256) error("campaign AI instruction budget exceeded");
+				size_t position = script.position;
+				int opcode = read(1);
+				if (opcode == 0) {
+					size_t target = read(2);
+					if (target < 4 || target >= table) error("campaign AI jump out of bounds");
+					script.position = target;
+				} else if (opcode == 2) {
+					script.wait = read(2);
+					break;
+				} else if (opcode == 3) {
+					if (st.players.at(script.owner).controller != player_t::controller_computer_game) error("campaign town requires computer owner");
+					ai.home = (script.area.from + script.area.to) / 2;
+					ai.town_active = true;
+				} else if (opcode == 6) {
+					int amount = read(1);
+					const auto* type = get_unit_type((UnitTypes)read(2));
+					int priority = read(1);
+					ai.build_requests[type->id] = {amount, priority};
+				} else if (opcode == 8) {
+					const auto* tech = get_tech_type((TechTypes)read(2));
+					ai.tech_requests[tech->id] = read(1);
+				} else if (opcode == 11) {
+					ai.attack_requests = {};
+					ai.attack_party.clear();
+					ai.attack_preparing = false;
+					ai.attack_ready = false;
+					ai.attack_launched = false;
+				} else if (opcode == 12) {
+					int amount = read(1);
+					const auto* type = get_unit_type((UnitTypes)read(2));
+					ai.attack_requests[type->id] += amount;
+					int total = 0;
+					for (size_t type = 0; type != 228; ++type) total += ai.attack_requests[(UnitTypes)type];
+					if (total > 64) error("campaign attack party exceeds 64 units");
+				} else if (opcode == 13 || opcode == 14) {
+					if (!ai.attack_preparing) {
+						ai.attack_preparing = true;
+						ai.attack_launched = false;
+						ai.attack_deadline = st.current_frame + (ai.campaign ? 180 : 120) * 15;
+					}
+					if (opcode == 14) {
+						if (!ai.attack_launched) { script.position = position; script.wait = 15; break; }
+					}
+				} else if (opcode >= 19 && opcode <= 26) {
+					int amount = read(1);
+					const auto* type = get_unit_type((UnitTypes)read(2));
+					ai.defenses.push_back({opcode - 19, amount, type->id});
+				} else if (opcode == 16) ai.expand_defense = true;
+				else if (opcode == 31) {
+					if (read(1) != 0) error("unsupported random suicide AI");
+					ai.suicide = true;
+				} else if (opcode == 34) ai.minimum_force = read(1);
+				else if (opcode == 35) ai.default_build = false;
+				else if (opcode == 36) script.position = 0;
+				else if (opcode == 46) ai.maximum_force = read(2);
+				else if (opcode == 56) ai.campaign = true;
+				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
+			}
+		}
+		st.campaign_ai_scripts.erase(std::remove_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return !script.position; }), st.campaign_ai_scripts.end());
+		for (int owner = 0; owner != 8; ++owner) if (st.campaign_ai[owner].town_active) progress_campaign_ai_town(owner);
+	}
+
+	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0) {
+		return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), [&](const unit_t* enemy) {
+			if (enemy->owner >= 8 || enemy->owner == owner || st.alliances[owner][enemy->owner] || unit_dying(enemy) || ut_turret(enemy)) return false;
+			if (region != ~(size_t)0 && get_region_at(enemy->sprite->position)->index != region) return false;
+			for (unit_id id : party) {
+				unit_t* unit = get_unit(id);
+				if (unit && !unit_dying(unit) && unit->owner == owner && unit_target_weapon(unit, enemy) && (u_flying(unit) || is_reachable(unit, enemy))) return true;
+			}
+			return false;
+		});
+	}
+
+	void launch_campaign_ai_attack(int owner) {
+		auto& ai = st.campaign_ai.at(owner);
+		ai.attack_launched = true;
+		unit_t* target = campaign_ai_attack_target(owner, ai.attack_party);
+		if (!target) return;
+		ai.military_region = get_region_at(target->sprite->position)->index;
+		ai.military_target = get_unit_id(target);
+		for (unit_id id : ai.attack_party) {
+			unit_t* unit = get_unit(id);
+			if (!unit || unit_dying(unit) || unit->owner != owner) continue;
+			if (!u_flying(unit) && !is_reachable(unit, target)) continue;
+			issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
+			if (std::find(ai.attacking.begin(), ai.attacking.end(), id) == ai.attacking.end()) ai.attacking.push_back(id);
+		}
+	}
+
+	int campaign_ai_defense_category(const unit_t* threat) const {
+		return (get_region_at(threat->sprite->position)->walkable() ? 0 : 2) + (u_flying(threat) ? 1 : 0);
+	}
+
+	bool campaign_ai_party_grouped(int owner) const {
+		const auto& ai = st.campaign_ai.at(owner);
+		const auto* grouping = get_region_at_prefer_walkable(ai.home);
+		for (unit_id id : ai.attack_party) {
+			const unit_t* unit = get_unit(id);
+			if (!unit || unit_dying(unit) || unit->owner != owner || get_region_at(unit->sprite->position) != grouping) return false;
+		}
+		return true;
+	}
+
+	void update_campaign_ai_regions(int owner) {
+		auto& ai = st.campaign_ai.at(owner);
+		ai.regions.assign(game_st.regions.regions.size(), {});
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit_dying(unit) || ut_turret(unit)) continue;
+			bool primary = ut_worker(unit);
+			if (u_grounded_building(unit)) {
+				switch (unit->unit_type->id) {
+				case UnitTypes::Terran_Missile_Turret: case UnitTypes::Terran_Bunker:
+				case UnitTypes::Zerg_Creep_Colony: case UnitTypes::Zerg_Sunken_Colony: case UnitTypes::Zerg_Spore_Colony:
+				case UnitTypes::Protoss_Pylon: case UnitTypes::Protoss_Photon_Cannon:
+					break;
+				default: primary = true; break;
+				}
+			}
+			if (primary) ai.regions.at(get_region_at(unit->sprite->position)->index).owned = true;
+		}
+		for (const auto& region : game_st.regions.regions) {
+			if (!ai.regions[region.index].owned) continue;
+			ai.regions[region.index].defended = true;
+			if (ai.expand_defense) {
+				for (const auto* neighbor : region.walkable_neighbors) ai.regions[neighbor->index].defended = true;
+				for (const auto* neighbor : region.non_walkable_neighbors) ai.regions[neighbor->index].defended = true;
+			}
+		}
+		for (int enemy_owner = 0; enemy_owner != 8; ++enemy_owner) {
+			if (enemy_owner == owner || st.alliances[owner][enemy_owner]) continue;
+			for (unit_t* enemy : ptr(st.player_units[enemy_owner])) {
+				if (unit_dying(enemy) || ut_turret(enemy) || us_hidden(enemy)) continue;
+				const auto* region = get_region_at(enemy->sprite->position);
+				auto& defense = ai.regions.at(region->index);
+				defense.needed[0] += game_st.unit_ground_strength[enemy->unit_type->id];
+				defense.needed[1] += game_st.unit_air_strength[enemy->unit_type->id];
+				int category = campaign_ai_defense_category(enemy);
+				unit_t* previous = get_unit(defense.targets[category]);
+				xy center(region->center.x.integer_part(), region->center.y.integer_part());
+				auto distance = [&](const unit_t* unit) { xy delta = unit->sprite->position - center; return delta.x * delta.x + delta.y * delta.y; };
+				if (!previous || distance(enemy) < distance(previous)) defense.targets[category] = get_unit_id(enemy);
+			}
+		}
+		if (ai.maximum_force) for (auto& region : ai.regions) for (int& needed : region.needed) needed = std::min(needed, ai.maximum_force);
+	}
+
+	void progress_campaign_ai_town(int owner) {
+		if (st.current_frame % 8) return;
+		auto& ai = st.campaign_ai.at(owner);
+		if (!ai.campaign || ai.default_build || ai.minimum_force) error("unsupported non-campaign town policy");
+		update_campaign_ai_regions(owner);
+		type_indexed_array<int, UnitTypes> counts{};
+		type_indexed_array<int, UnitTypes> pending{};
+		auto worker_idle = [](const unit_t* unit) {
+			return unit->order_type == unit->unit_type->human_ai_idle || unit->order_type->id == Orders::Guard || unit->order_type->id == Orders::PlayerGuard || unit->order_type->id == Orders::ComputerAI || unit->order_type->id == Orders::Nothing;
+		};
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit_dying(unit) || ut_turret(unit)) continue;
+			if (ut_worker(unit) && worker_idle(unit) && !unit->build_queue.empty() && ut_building(unit->build_queue.front())) build_queue_clear_single(unit);
+			++counts[unit->unit_type->id];
+			for (const auto* type : unit->build_queue) {
+				int amount = ut_two_units_in_one_egg(type) ? 2 : 1;
+				counts[type->id] += amount;
+				pending[type->id] += amount;
+			}
+			if (unit->order_type->id == Orders::DroneStartBuild && unit->order_unit_type) ++counts[unit->order_unit_type->id];
+		}
+		auto unavailable = [&](const unit_t* unit) {
+			unit_id id = get_unit_id(unit);
+			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end();
+		};
+		auto remove_dead = [&](a_vector<unit_id>& units) {
+			units.erase(std::remove_if(units.begin(), units.end(), [&](unit_id id) {
+				unit_t* unit = get_unit(id);
+				return !unit || unit_dying(unit) || unit->owner != owner;
+			}), units.end());
+		};
+		remove_dead(ai.attacking);
+		remove_dead(ai.attack_party);
+		if (!ai.attacking.empty()) {
+			unit_t* target = campaign_ai_attack_target(owner, ai.attacking, ai.military_region);
+			if (!target) target = campaign_ai_attack_target(owner, ai.attacking);
+			if (target) {
+				ai.military_region = get_region_at(target->sprite->position)->index;
+				ai.military_target = get_unit_id(target);
+				for (unit_id id : ai.attacking) {
+					unit_t* unit = get_unit(id);
+					if (unit->order_type->id != Orders::Guard && unit->order_type->id != Orders::PlayerGuard && unit->order_type->id != Orders::ComputerAI && unit->order_type->id != Orders::Nothing) continue;
+					if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit)) continue;
+					if (!u_flying(unit) && !is_reachable(unit, target)) continue;
+					issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
+				}
+			}
+		}
+		type_indexed_array<int, UnitTypes> reserves{};
+		type_indexed_array<int, UnitTypes> deployed{};
+		for (unit_id id : ai.attacking) ++deployed[get_unit(id)->unit_type->id];
+		auto is_defending = [&](const unit_t* unit) {
+			unit_id id = get_unit_id(unit);
+			return std::any_of(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.unit == id; });
+		};
+		auto defense_target = [&](const unit_t* unit, size_t region) {
+			for (unit_id id : ai.regions[region].targets) {
+				unit_t* target = get_unit(id);
+				if (target && unit_can_attack_target(unit, target) && (u_flying(unit) || is_reachable(unit, target))) return target;
+			}
+			return (unit_t*)nullptr;
+		};
+		ai.defending.erase(std::remove_if(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) {
+			unit_t* unit = get_unit(defender.unit);
+			if (!unit || unit_dying(unit) || unit->owner != owner) return true;
+			unit_t* target = ai.regions[defender.region].defended ? defense_target(unit, defender.region) : nullptr;
+			if (!target) {
+				if (unit->order_type->id == Orders::AttackUnit || unit->order_type->id == Orders::AttackMove) issue_order(unit, false, get_order_type(Orders::AttackMove), {defender.home, nullptr});
+				return true;
+			}
+			if (unit->order_target.unit != target) issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
+			for (int domain = 0; domain != 2; ++domain) ai.regions[defender.region].assigned[domain] += domain ? game_st.unit_air_strength[unit->unit_type->id] : game_st.unit_ground_strength[unit->unit_type->id];
+			++reserves[unit->unit_type->id];
+			return false;
+		}), ai.defending.end());
+		type_indexed_array<int, UnitTypes> defense_build{};
+		for (const auto& path_region : game_st.regions.regions) {
+			auto& region = ai.regions[path_region.index];
+			if (!region.defended) continue;
+			for (int category = 0; category != 4; ++category) {
+				unit_t* target = get_unit(region.targets[category]);
+				int domain = category % 2;
+				if (!target || region.assigned[domain] >= region.needed[domain]) continue;
+				bool recruited;
+				do {
+					recruited = false;
+					for (const auto& defense : ai.defenses) {
+						if (defense.category != category + 4) continue;
+						for (int amount = 0; amount < defense.amount && region.assigned[domain] < region.needed[domain]; ++amount) {
+							unit_t* unit = find_nearest_unit(target->sprite->position, map_bounds(), [&](const unit_t* unit) {
+								return unit->owner == owner && unit_is(unit, defense.type) && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && unit_can_attack_target(unit, target) && (u_flying(unit) || is_reachable(unit, target));
+							});
+							if (!unit) break;
+							ai.defending.push_back({get_unit_id(unit), path_region.index, unit->sprite->position});
+							issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
+							for (int target_domain = 0; target_domain != 2; ++target_domain) region.assigned[target_domain] += target_domain ? game_st.unit_air_strength[defense.type] : game_st.unit_ground_strength[defense.type];
+							++reserves[defense.type];
+							recruited = true;
+						}
+					}
+				} while (recruited && region.assigned[domain] < region.needed[domain]);
+				if (region.assigned[domain] < region.needed[domain]) for (const auto& defense : ai.defenses) if (defense.category == category) defense_build[defense.type] += defense.amount;
+			}
+		}
+		if (ai.suicide) {
+			ai.attack_party.clear();
+			for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (!ut_building(unit) && !ut_worker(unit) && u_completed(unit) && !unit_dying(unit) && !ut_turret(unit) && unit_can_attack(unit)) ai.attack_party.push_back(get_unit_id(unit));
+			}
+			launch_campaign_ai_attack(owner);
+			ai.attack_party.clear();
+			ai.suicide = false;
+		}
+		if (ai.attack_preparing && !ai.attack_launched) {
+			bool ready = true;
+			const auto* grouping = get_region_at_prefer_walkable(ai.home);
+			xy rally(grouping->center.x.integer_part(), grouping->center.y.integer_part());
+			for (size_t type_id = 0; type_id != 228; ++type_id) {
+				UnitTypes type = (UnitTypes)type_id;
+				if (!ai.attack_requests[type]) continue;
+				int selected = 0;
+				for (unit_id id : ai.attack_party) if (unit_is(get_unit(id), type)) ++selected;
+				while (selected < ai.attack_requests[type] && counts[type] - deployed[type] - selected > reserves[type]) {
+					unit_t* unit = find_nearest_unit(ai.home, map_bounds(), [&](const unit_t* unit) {
+						if (unit->order_target.unit && !unit_dying(unit->order_target.unit) && unit_target_is_enemy(unit, unit->order_target.unit)) return false;
+						if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit)) return false;
+						if (!u_flying(unit) && !is_reachable(unit->sprite->position, rally)) return false;
+						return unit->owner == owner && unit_is(unit, type) && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && !ut_turret(unit);
+					});
+					if (!unit) break;
+					ai.attack_party.push_back(get_unit_id(unit));
+					issue_order(unit, false, get_order_type(Orders::AttackMove), {rally, nullptr});
+					++selected;
+				}
+				if (selected < ai.attack_requests[type]) ready = false;
+			}
+			if (!campaign_ai_party_grouped(owner)) ready = false;
+			ai.attack_ready = ready || st.current_frame >= ai.attack_deadline;
+			if (ai.attack_ready) launch_campaign_ai_attack(owner);
+		}
+		for (unit_t* worker : ptr(st.player_units[owner])) {
+			if (!ut_worker(worker) || !u_completed(worker) || unit_dying(worker)) continue;
+			if (!worker_idle(worker)) continue;
+			unit_t* gas = find_nearest_unit(worker->sprite->position, map_bounds(), [&](const unit_t* resource) {
+				return resource->owner == owner && unit_is_refinery(resource) && u_completed(resource) && !unit_dying(resource);
+			});
+			int gas_workers = 0;
+			if (gas) for (unit_t* other : ptr(st.player_units[owner])) if (ut_worker(other) && other->order_target.unit == gas) ++gas_workers;
+			unit_t* resource = gas && gas_workers < 3 ? gas : find_nearest_unit(worker->sprite->position, map_bounds(), [&](const unit_t* resource) { return unit_is_mineral_field(resource) && !unit_dying(resource); });
+			if (resource) issue_order(worker, false, get_order_type(unit_is_refinery(resource) ? Orders::MoveToGas : Orders::MoveToMinerals), {resource->sprite->position, resource});
+		}
+		for (size_t tech_id = 0; tech_id != ai.tech_requests.size(); ++tech_id) {
+			TechTypes id = (TechTypes)tech_id;
+			if (!ai.tech_requests[id] || st.tech_researched[owner][id] || st.tech_researching[owner][id]) continue;
+			const auto* tech = get_tech_type(id);
+			for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (!unit_can_research(unit, tech, owner) || !has_available_resources_for(owner, tech, false)) continue;
+				st.current_minerals[owner] -= tech->mineral_cost;
+				st.current_gas[owner] -= tech->gas_cost;
+				unit->building.researching_type = tech;
+				unit->building.upgrade_research_time = tech->research_time;
+				st.tech_researching[owner][id] = true;
+				sprite_run_anim(unit->sprite, iscript_anims::IsWorking);
+				set_unit_order(unit, get_order_type(Orders::ResearchTech));
+				break;
+			}
+		}
+		a_vector<std::pair<int, UnitTypes>> requests;
+		for (size_t type_id = 0; type_id != 228; ++type_id) {
+			UnitTypes id = (UnitTypes)type_id;
+			int desired = ai.build_requests[id].first;
+			int priority = ai.build_requests[id].second;
+			if (ai.attack_preparing && !ai.attack_launched && ai.attack_requests[id] + reserves[id] + deployed[id] > desired) {
+				desired = ai.attack_requests[id] + reserves[id] + deployed[id];
+				priority = std::max(priority, 80);
+			}
+			if (defense_build[id] > pending[id]) { desired = std::max(desired, counts[id] + defense_build[id] - pending[id]); priority = std::max(priority, 60); }
+			if (desired > counts[id]) requests.push_back({priority, id});
+		}
+		if (!has_available_supply_for(owner, get_unit_type(UnitTypes::Zerg_Drone), false) && counts[UnitTypes::Zerg_Overlord] == st.unit_counts[owner][UnitTypes::Zerg_Overlord]) requests.push_back({200, UnitTypes::Zerg_Overlord});
+		std::stable_sort(requests.begin(), requests.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
+		for (const auto& request : requests) campaign_ai_produce(owner, get_unit_type(request.second));
+	}
+
+	bool campaign_ai_produce(int owner, const unit_type_t* type) {
+		if (!has_available_resources_for(owner, type, false)) return false;
+		for (unit_t* producer : ptr(st.player_units[owner])) {
+			if (unit_dying(producer) || !u_completed(producer) || !producer->build_queue.empty()) continue;
+			if (ut_building(type)) {
+				if (!unit_is(producer, UnitTypes::Zerg_Drone)) continue;
+				const auto* order = get_order_type(Orders::DroneStartBuild);
+				if (!unit_build_order_valid(producer, order, type, owner)) continue;
+				xy home = st.campaign_ai[owner].home / 32 * 32;
+				for (int radius = 0; radius <= 12; ++radius) {
+					for (int vertical = -radius; vertical <= radius; ++vertical) for (int horizontal = -radius; horizontal <= radius; ++horizontal) {
+						if (std::abs(horizontal) != radius && std::abs(vertical) != radius) continue;
+						xy pos = home + xy(horizontal * 32, vertical * 32) + type->placement_size / 2;
+						if (!is_in_map_bounds(pos) || !is_reachable(producer->sprite->position, pos - xy(0, 7)) || !can_place_building(producer, owner, type, pos, true, true)) continue;
+						place_building(producer, order, type, pos);
+						return true;
+					}
+				}
+			} else if (unit_is(producer, UnitTypes::Zerg_Larva)) {
+				if (!unit_can_build(producer, type) || !build_queue_push(producer, type)) continue;
+				set_unit_order(producer, get_order_type(Orders::ZergUnitMorph));
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool test_trigger_condition(const trigger::condition& c, int owner) const {
 		switch (c.type) {
 		case 1:
@@ -18942,6 +19391,23 @@ struct state_functions {
 					if (c.extra_n == 1 || c.extra_n == 2) amount += st.current_gas[player];
 				}
 				return trigger_count_comparison(c, amount);
+			}
+		case 5:
+			{
+				int count = 0;
+				for (int player : trigger_players(owner, c.group)) {
+					if (c.unit_id < 228) count += st.killed_unit_counts[player].at((UnitTypes)c.unit_id);
+					else {
+						if (c.unit_id < 229 || c.unit_id > 232) error("invalid Kills unit group %d", c.unit_id);
+						for (size_t type = 0; type != 228; ++type) {
+							auto flags = get_unit_type((UnitTypes)type)->group_flags;
+							if (c.unit_id == 229 || (c.unit_id == 230 && (flags & GroupFlags::Men)) || (c.unit_id == 231 && (flags & GroupFlags::Building)) || (c.unit_id == 232 && (flags & GroupFlags::Factory))) {
+								count += st.killed_unit_counts[player][(UnitTypes)type];
+							}
+						}
+					}
+				}
+				return trigger_count_comparison(c, count);
 			}
 		case 12: // elapsed time
 			return trigger_count_comparison(c, st.current_frame / 16);
@@ -19111,13 +19577,13 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 11 || type == 12 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 11 || type == 12 || type == 22;
 	}
 
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 11: case 12: case 13: case 17: case 23: case 26: case 30: case 31:
+		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 23: case 26: case 28: case 30: case 31:
 		case 32: case 38: case 43: case 47:
 			return true;
 		default:
@@ -19181,7 +19647,7 @@ struct state_functions {
 				wait.time_n = trigger_transmission_duration(a);
 				return execute_trigger_action(ets, owner, rt, ra, wait);
 			}
-		case 8: case 9: case 10: case 12: case 17: case 30: case 31: case 32:
+		case 8: case 9: case 10: case 12: case 17: case 28: case 30: case 31: case 32:
 			on_trigger_action(owner, a);
 			return true;
 		case 47:
@@ -19193,6 +19659,18 @@ struct state_functions {
 				else if (a.num_n == 5) value = false;
 				else if (a.num_n == 6) value = !value;
 				else error("unsupported switch modifier %d", a.num_n);
+				return true;
+			}
+		case 14:
+			{
+				int64_t value = st.countdown_timer;
+				if (a.num_n == 7) value = a.time_n;
+				else if (a.num_n == 8) value += a.time_n;
+				else if (a.num_n == 9) value -= a.time_n;
+				else error("unsupported countdown modifier %d", a.num_n);
+				if (value > std::numeric_limits<int>::max()) error("countdown value out of range");
+				st.countdown_timer = int(std::max<int64_t>(0, value));
+				st.countdown_active = true;
 				return true;
 			}
 		case 15: // ai script
@@ -19222,8 +19700,12 @@ struct state_functions {
 				st.shared_vision[7] |= 1 << owner;
 				break;
 			default:
+				if (st.strict_triggers) start_campaign_ai_script(owner, uint32_t(a.group2_n));
 				break;   // unknown/newer AI script id — ignore (irrelevant to melee)
 			}
+			return true;
+		case 16:
+			start_campaign_ai_script(owner, uint32_t(a.group2_n), st.locations.at(a.location - 1).area);
 			return true;
 		case 22: // kill unit
 			for (int p : trigger_players(owner, a.group_n)) {
@@ -20060,6 +20542,11 @@ struct game_load_functions : state_functions {
 
 		st.unit_counts = {};
 		st.completed_unit_counts = {};
+		st.killed_unit_counts = {};
+		st.campaign_ai_scripts.clear();
+		st.campaign_ai = {};
+		st.countdown_timer = 0;
+		st.countdown_active = false;
 
 		st.factory_counts = {};
 		st.building_counts = {};
@@ -22519,6 +23006,7 @@ void global_init(global_state& st, load_data_file_F&& load_data_file) {
 
 	load_iscript_bin();
 	load_images();
+	load_data_file(st.ai_script, "scripts/aiscript.bin");
 
 	std::array<const char*, 8> tileset_names = {
 		"badlands", "platform", "install", "AshWorld", "Jungle", "Desert", "Ice", "Twilight"

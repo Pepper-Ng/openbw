@@ -257,6 +257,9 @@ OPENBW_EXPORT(openbw_mission_string) const char* openbw_mission_string(int index
 OPENBW_EXPORT(openbw_mission_paused) int openbw_mission_paused() {
 	return g_ui && g_ui->st.scripted_pause;
 }
+OPENBW_EXPORT(openbw_mission_countdown) int openbw_mission_countdown() {
+	return g_ui && g_ui->mission_mode && g_ui->st.countdown_active ? g_ui->st.countdown_timer : -1;
+}
 OPENBW_EXPORT(openbw_mission_objectives) const char* openbw_mission_objectives() {
 	return g_ui && g_ui->mission_objective_string ? g_ui->mission_string(g_ui->mission_objective_string).c_str() : "";
 }
