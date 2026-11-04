@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -26,6 +26,8 @@ const wasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
 
 let memory;
 const missionSoundLoads = [];
+const soundPlays = [];
+let soundClockOffset = 0n;
 const env = {
   js_file_size: (index) => files[index].length,
   js_read_data: (index, dst, offset, n) => {
@@ -37,13 +39,23 @@ const env = {
     if (!campaign) return -1;
     missionSoundLoads.push({ pointer, size });
     return missionSoundLoads.length - 1;
-  }, js_sound_play: () => {}, js_sound_is_playing: () => 0,
+  }, js_sound_play: (...args) => { soundPlays.push(args); }, js_sound_is_playing: () => 0,
   js_sound_stop: () => {}, js_sound_set_volume: () => {},
 };
 
 const module = await WebAssembly.compile(readFileSync('web/openbw.wasm'));
+const wasiImports = wasi.getImportObject();
+const readClock = wasiImports.wasi_snapshot_preview1.clock_time_get;
+wasiImports.wasi_snapshot_preview1.clock_time_get = (clock, precision, output) => {
+  const result = readClock(clock, precision, output);
+  if (!result && soundClockOffset) {
+    const data = new DataView(memory.buffer);
+    data.setBigUint64(output, data.getBigUint64(output, true) + soundClockOffset, true);
+  }
+  return result;
+};
 const instance = await WebAssembly.instantiate(module, {
-  ...wasi.getImportObject(),
+  ...wasiImports,
   env,
 });
 memory = instance.exports.memory;
@@ -103,6 +115,14 @@ function testCampaign() {
     assert.equal(enemy.filter(unit => unit[1] === 'Drone').length, 6);
     assert.equal(x.openbw_mission_countdown(), -1, 'No countdown before the original initialization action');
     console.log('Desperate Alliance initialization checks passed.');
+  } else if (missionId === 'terran04') {
+    assert.equal(mission.humanSlot, 0, 'Keep the original installation human slot');
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 7);
+    assert.equal(human.filter(unit => unit[1] === 'Firebat').length, 4);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 0, 'Installation starts without a buildable economy');
+    assert.ok(human.some(unit => unit[1] === 'Jim Raynor'), 'Marine Raynor is naturally rescued at startup');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Installation has no survival countdown');
+    console.log('Jacobs Installation initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -124,7 +144,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100}[missionId], 'Original trigger grants mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'terran03') assert.equal(x.openbw_mission_countdown(), 1800, 'Original thirty-minute countdown');
   if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   const events = [];
@@ -159,17 +179,22 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
+  if (missionId === 'terran04') assert.equal(dialogue.length, 0, 'Installation dialogue is location-triggered, not invented at idle startup');
+  else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
     assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), transmissionTime(event[7], event[10], event[8]), 'Original gameplay transmission uses its stored duration and modifier');
-    const path = read(x.openbw_mission_string(event[6])).replaceAll('\\', '/').toLowerCase();
+  }
+  const soundIndices = missionId === 'terran04' ? briefing.filter(action => action[0] === 8).map(action => action[2]) : dialogue.map(event => event[6]);
+  assert.ok(soundIndices.length > 0, 'Original mission supplies narration audio');
+  for (const soundIndex of soundIndices) {
+    const path = read(x.openbw_mission_string(soundIndex)).replaceAll('\\', '/').toLowerCase();
     const expected = mission.files.find(file => file.path === path);
     assert.ok(expected?.audio, 'Transmission audio must be in the validated pack');
-    assert.equal(x.openbw_mission_sound_duration(event[6]), expected.audio.durationMs);
-    x.openbw_mission_play_sound(event[6], 63);
+    assert.equal(x.openbw_mission_sound_duration(soundIndex), expected.audio.durationMs);
+    x.openbw_mission_play_sound(soundIndex, 63);
     assert.equal(missionSoundLoads.at(-1).size, expected.bytes, 'Actual mission WAV must reach native_sound::load_wav');
     const loads = missionSoundLoads.length;
-    x.openbw_mission_play_sound(event[6], 63);
+    x.openbw_mission_play_sound(soundIndex, 63);
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
@@ -178,6 +203,60 @@ function testCampaign() {
     const buildChecks = [[1056, 1584], [864, 1744], [1120, 1584], [1216, 1584], [1056, 1904]].map(([mapX, mapY]) => ({mapX, mapY, flags: x.openbw_debug_build_check(111, mapX, mapY)}));
     assert.ok(buildChecks.every(check => check.flags & 1), 'Original mission permits SCVs to build Barracks');
     console.log('Campaign Barracks placement checks:', JSON.stringify(buildChecks));
+  }
+  if (missionId === 'terran02') {
+    const raynor = human.find(unit => unit[1] === 'Jim Raynor');
+    const marine = human.find(unit => unit[1] === 'Marine');
+    assert.ok(raynor && marine, 'Original owned hero and Marine voice fixture');
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    assert.ok(camera);
+    x.openbw_pan(Number(raynor[3]) - 320 - Number(camera[1]), Number(raynor[4]) - 240 - Number(camera[2]));
+    x.openbw_debug_select(Number(raynor[0]), 0);
+    const move = () => {
+      soundClockOffset += 100000000n;
+      const start = soundPlays.length;
+      x.openbw_key(1, 109, 0);
+      x.openbw_key(0, 109, 0);
+      x.openbw_render(0);
+      x.openbw_mouse_button(1, 1, 400, 300, 1);
+      x.openbw_mouse_button(0, 1, 400, 300, 1);
+      x.openbw_render(0);
+      return soundPlays.slice(start).map(play => play[0]);
+    };
+    const heroSounds = new Set();
+    for (let count = 0; count != 16; ++count) for (const sound of move()) heroSounds.add(sound);
+    assert.ok(heroSounds.size > 0, 'Raynor movement reaches native sound playback');
+    x.openbw_debug_select(Number(marine[0]), 0);
+    x.openbw_debug_select(Number(raynor[0]), 1);
+    const mixedSounds = move();
+    assert.ok(mixedSounds.length > 0, 'Mixed selection acknowledges movement');
+    assert.ok(mixedSounds.every(sound => heroSounds.has(sound)), 'Raynor speaks when mixed with ordinary Marines');
+    console.log('Campaign hero acknowledgement checks passed.');
+    const commandCenter = human.find(unit => unit[1] === 'Command Center');
+    assert.ok(commandCenter);
+    let offScreen = false;
+    for (const [horizontal, vertical] of [[0, 0], [2048, 0], [0, 2048], [2048, 2048]]) {
+      const current = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      x.openbw_pan(horizontal - Number(current[1]), vertical - Number(current[2]));
+      const moved = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      const outside = unit => Number(unit[3]) < Number(moved[1]) || Number(unit[3]) >= Number(moved[1]) + 1280 || Number(unit[4]) < Number(moved[2]) || Number(unit[4]) >= Number(moved[2]) + 800;
+      if (outside(marine) && outside(commandCenter)) { offScreen = true; break; }
+    }
+    assert.ok(offScreen, 'Advisor fixture has off-screen unit and building');
+    const damageAlert = (unit, life) => {
+      for (let tick = 0; tick != 1801; ++tick) x.openbw_render(0);
+      soundClockOffset += 100000000n;
+      const start = soundPlays.length;
+      x.openbw_debug_set_life(Number(unit[0]), life, -1);
+      x.openbw_render(0);
+      const played = soundPlays.slice(start).map(play => play[0]);
+      assert.equal(played.length, 1, 'Off-screen damage emits one advisor clip');
+      return played[0];
+    };
+    const forcesAlert = damageAlert(marine, 39);
+    const baseAlert = damageAlert(commandCenter, 1499);
+    assert.notEqual(forcesAlert, baseAlert, 'Field-unit and building attacks use different advisor clips');
+    console.log('Campaign base/forces advisor checks passed.');
   }
   console.log(`Campaign original-trigger checks passed: ${events.length} events, ${dialogue.length} transmissions.`);
 }
@@ -248,6 +327,34 @@ function testCommands() {
   x.openbw_debug_resources(50, 0);
   x.openbw_set_touch_controls(0);
   x.openbw_debug_select(Number(worker[0]), 0);
+
+  for (const releaseBeforeClick of [false, true]) {
+    x.openbw_out_clear();
+    x.openbw_key(1, 97, 4);
+    if (releaseBeforeClick) x.openbw_key(0, 97, 4);
+    x.openbw_mouse_button(1, 1, 500, 350, 1);
+    x.openbw_mouse_button(0, 1, 500, 350, 1);
+    if (!releaseBeforeClick) x.openbw_key(0, 97, 4);
+    x.openbw_render(0);
+    assert.ok(records().some(record => record[0] === 21), 'Immediate A and left click must issue Attack without an intervening render');
+  }
+
+  for (const [before, after] of [[0, 1], [1, 0]]) {
+    x.openbw_set_touch_controls(before);
+    x.openbw_out_clear();
+    x.openbw_mouse_move(500, 350);
+    press(97);
+    x.openbw_render(0);
+    assert.ok([1, 4].includes(x.openbw_cursor()), 'Attack key arms a target before switching pointer mode');
+    x.openbw_set_touch_controls(after);
+    assert.ok([1, 4].includes(x.openbw_cursor()), 'Pointer mode changes must preserve a pending Attack target');
+    x.openbw_mouse_button(1, 1, 500, 350, 1);
+    x.openbw_mouse_button(0, 1, 500, 350, 1);
+    x.openbw_render(0);
+    assert.ok(records().some(record => record[0] === 21), 'The first click after a pointer-mode change issues Attack');
+  }
+  x.openbw_set_touch_controls(0);
+  x.openbw_out_clear();
 
   for (const shift of [225, 229]) {
     for (const releaseBeforeRender of [false, true]) {

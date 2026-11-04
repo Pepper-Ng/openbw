@@ -327,8 +327,6 @@ OPENBW_EXPORT(openbw_set_touch_controls) void openbw_set_touch_controls(int enab
 	if (!g_ui || g_ui->touch_controls == (enabled != 0)) return;
 	g_ui->touch_controls = enabled != 0;
 	g_ui->menu = 0;
-	g_ui->targeting = false;
-	g_ui->clear_pending();
 	g_ui->refresh_card();
 }
 

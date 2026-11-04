@@ -310,7 +310,7 @@ struct play_ui : ui_functions {
 	unit_id flash_unit;                              // target whose ring is flashing (0 = none)
 	double flash_start = -1;                         // ms when the flash began (-1 = idle)
 	// Event feedback: unit-ready voices on completion, "under attack" voice + minimap flash.
-	int under_attack_sound = -2;                  // advisor sfx id (-2 = unresolved, -1 = not found)
+	std::array<int, 2> under_attack_sounds{{-2, -2}};
 	int alert_cooldown = 0;                       // update-ticks until the voice may replay
 	int event_tick = 0;                           // local tick for the flash blink phase
 	static const int ALERT_TTL = 126;             // full ping: 1.2 s sweep + 0.8 s box, 60 fps ticks
@@ -564,6 +564,14 @@ struct play_ui : ui_functions {
 		return nullptr;
 	}
 
+	unit_t* acknowledgement_unit() {
+		for (auto uid : current_selection) {
+			unit_t* unit = get_unit(uid);
+			if (unit && unit->owner == my_player && ut_hero(unit)) return unit;
+		}
+		return primary_selected();
+	}
+
 	// Play one of a unit's voice-ack sounds (first..last inclusive), the way the
 	// original game client did on select/order — the sim never plays these.
 	void play_unit_ack(unit_t* u, int first, int last) {
@@ -624,6 +632,7 @@ struct play_ui : ui_functions {
 			xy r = u->building.rally.pos;
 			if (r != xy() && !close_xy(r, u->sprite->position)) show_marker(r);
 		}
+		u = acknowledgement_unit();
 		if (current_selection.size() == 1 && get_unit_id(u) == ack_unit) ++ack_count;
 		else { ack_unit = get_unit_id(u); ack_count = 0; }
 		const unit_type_t* ut = u->unit_type;
@@ -1689,11 +1698,12 @@ struct play_ui : ui_functions {
 		}
 		return -1;
 	}
-	// The race's advisor "your forces are under attack" line (*AdUpd00), by filename so
+	// The race's base/forces advisor lines, by filename so
 	// it survives sfx-table index shifts.
 	void resolve_alert_sound() {
 		int r = (int)my_race;   // 1 Terran, 2 Protoss, else Zerg
-		under_attack_sound = find_sound(r == 1 ? "TAdUpd00" : r == 2 ? "PAdUpd00" : "ZAdUpd00");
+		under_attack_sounds[0] = find_sound(r == 1 ? "TAdUpd00" : r == 2 ? "PAdUpd00" : "ZAdUpd00");
+		under_attack_sounds[1] = find_sound(r == 1 ? "TAdUpd01" : r == 2 ? "PAdUpd01" : "ZAdUpd01");
 	}
 	// Auto-spawned / transient units the game never announces (larva trickle, morph
 	// eggs, carrier interceptors, reaver scarabs) — skip their ready voice.
@@ -1721,9 +1731,10 @@ struct play_ui : ui_functions {
 		bool on_screen = pos.x >= screen_pos.x && pos.y >= screen_pos.y &&
 		                 pos.x < screen_pos.x + (int)screen_width &&
 		                 pos.y < screen_pos.y + (int)screen_height;
-		if (alert_cooldown == 0 && under_attack_sound >= 0 && !on_screen) {
+		int sound = under_attack_sounds[ut_building(u) ? 0 : 1];
+		if (alert_cooldown == 0 && sound >= 0 && !on_screen) {
 			// On-screen centre → full volume, so the advisor is audible wherever the hit is.
-			play_sound(under_attack_sound, xy(), nullptr, false);   // global advisor line, as in BW
+			play_sound(sound, xy(), nullptr, false);
 			alert_cooldown = 1800;   // ~30 s at 60 fps
 		}
 	}
@@ -1864,7 +1875,7 @@ struct play_ui : ui_functions {
 		}
 		for (auto& m : msg_log) ++m.age;
 		while (!msg_log.empty() && msg_log.front().age > MSG_TTL) msg_log.erase(msg_log.begin());
-		if (under_attack_sound == -2) resolve_alert_sound();
+		if (under_attack_sounds[0] == -2) resolve_alert_sound();
 		bool seeding = !events_seeded;
 		for (unit_t* u : ptr(st.player_units[my_player])) {
 			uint16_t id = get_unit_id(u).raw_value;
@@ -2048,7 +2059,7 @@ struct play_ui : ui_functions {
 		case T_RALLY:  cmd_order(target ? Orders::RallyPointUnit : Orders::RallyPointTile, pos, target, false); break;
 		case T_SPELL:  cmd_order(pending_spell_order, pos, pending_spell_unit ? target : nullptr, false); break;
 		}
-		if (unit_t* u = primary_selected())
+		if (unit_t* u = acknowledgement_unit())
 			play_unit_ack(u, u->unit_type->first_yes_sound, u->unit_type->last_yes_sound);
 	}
 
@@ -2930,7 +2941,7 @@ struct play_ui : ui_functions {
 			else show_marker(map_pos);
 			sync_selection();
 			cmd_default_order(map_pos, target, key_shift());
-			if (unit_t* u = primary_selected())
+			if (unit_t* u = acknowledgement_unit())
 				play_unit_ack(u, u->unit_type->first_yes_sound, u->unit_type->last_yes_sound);
 			return true;
 		}

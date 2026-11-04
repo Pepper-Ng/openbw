@@ -6712,6 +6712,104 @@ struct state_functions {
 		}
 	}
 
+	bool unit_is_floor_trap(const unit_t* u) const {
+		return unit_is(u, UnitTypes::Special_Floor_Missile_Trap) || unit_is(u, UnitTypes::Special_Floor_Gun_Trap);
+	}
+
+	bool unit_is_door(const unit_t* u) const {
+		return unit_is(u, UnitTypes::Special_Upper_Level_Door) || unit_is(u, UnitTypes::Special_Right_Upper_Level_Door)
+			|| unit_is(u, UnitTypes::Special_Pit_Door) || unit_is(u, UnitTypes::Special_Right_Pit_Door);
+	}
+
+	void set_doodad_state(unit_t* u, bool enabled) {
+		if (u_hallucination(u) || (!unit_is_trap(u) && !unit_is_door(u))) return;
+		if (u_disabled(u) == !enabled) return;
+		if (u_iscript_nobrk(u) || u_order_not_interruptible(u) || u->lockdown_timer || u->stasis_timer || u->maelstrom_timer) {
+			set_unit_order(u, get_order_type(enabled ? Orders::EnableDoodad : Orders::DisableDoodad));
+			return;
+		}
+		u->order_signal &= ~1;
+		if (enabled) u_unset_status_flag(u, unit_t::status_flag_disabled);
+		if (unit_is_door(u)) {
+			set_unit_order(u, get_order_type(enabled ? Orders::CloseDoor : Orders::OpenDoor));
+			play_sound(enabled ? u->unit_type->last_what_sound : u->unit_type->first_what_sound, u);
+		} else {
+			u_set_status_flag(u, unit_t::status_flag_disabled, !enabled);
+			set_unit_order(u, get_order_type(Orders::HiddenGun));
+			u_set_status_flag(u, unit_t::status_flag_no_collide);
+			u_set_status_flag(u, unit_t::status_flag_cloaked);
+			u_set_status_flag(u, unit_t::status_flag_requires_detector);
+			u->detected_flags = 0x80000000;
+			u->secondary_order_timer = 0;
+			if (unit_is_floor_trap(u)) u->sprite->elevation_level = enabled ? u->unit_type->elevation_level : 1;
+		}
+		sprite_run_anim(u->sprite, enabled ? iscript_anims::Enable : iscript_anims::Disable);
+	}
+
+	void order_DoodadState(unit_t* u, bool enabled) {
+		if (u_iscript_nobrk(u) || u->lockdown_timer || u->stasis_timer || u->maelstrom_timer) return;
+		u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+		if (u_disabled(u) == !enabled) order_done(u);
+		else set_doodad_state(u, enabled);
+	}
+
+	void order_Door(unit_t* u, bool open) {
+		if (!(u->order_signal & 1)) return;
+		u->order_signal &= ~1;
+		u_set_status_flag(u, unit_t::status_flag_no_collide, open);
+		u_set_status_flag(u, unit_t::status_flag_disabled, open);
+		u->sprite->elevation_level = open ? 1 : u->unit_type->elevation_level;
+		u->user_action_flags |= 1;
+		u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+		order_done(u);
+	}
+
+	void order_HiddenGun(unit_t* u) {
+		if (u->order_state == 0) {
+			u_set_status_flag(u, unit_t::status_flag_no_collide);
+			u_set_status_flag(u, unit_t::status_flag_cloaked);
+			u_set_status_flag(u, unit_t::status_flag_requires_detector);
+			if (unit_is_floor_trap(u)) u->sprite->elevation_level = 0;
+			u->detected_flags = 0x80000000;
+			u->secondary_order_timer = 0;
+			u->order_state = 1;
+			return;
+		}
+		if (unit_is_disabled(u) || u->main_order_timer) return;
+		u->main_order_timer = 15;
+		unit_t* target = find_acquire_random_target(u);
+		if (!target) return;
+		u_unset_status_flag(u, unit_t::status_flag_no_collide);
+		u_unset_status_flag(u, unit_t::status_flag_cloaked);
+		u_unset_status_flag(u, unit_t::status_flag_requires_detector);
+		u->secondary_order_timer = 0;
+		if (unit_is_floor_trap(u)) u->sprite->elevation_level = u->unit_type->elevation_level;
+		set_unit_order(u, get_order_type(Orders::RevealTrap));
+		queue_order_back(u, u->unit_type->attack_unit, {target->sprite->position, target});
+		queue_order_back(u, get_order_type(Orders::HideTrap), {});
+	}
+
+	void order_TrapAnimation(unit_t* u, bool reveal) {
+		if (u->order_state == 0) {
+			if (!reveal && !unit_is_disabled(u) && !u->main_order_timer) {
+				unit_t* target = find_acquire_random_target(u);
+				if (target) {
+					set_unit_order(u, u->unit_type->attack_unit, target);
+					queue_order_back(u, get_order_type(Orders::HideTrap), {});
+					return;
+				}
+			}
+			u->order_signal &= ~1;
+			sprite_run_anim(u->sprite, reveal ? iscript_anims::SpecialState1 : iscript_anims::SpecialState2);
+			u->order_state = 1;
+		}
+		if (u->order_signal & 1) {
+			u->order_signal &= ~1;
+			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+			order_done(u);
+		}
+	}
+
 	void order_AttackFixedRange(unit_t* u) {
 		attack_unit_reacquire_target(u);
 		unit_t* target = u->order_target.unit;
@@ -7710,6 +7808,9 @@ struct state_functions {
 		case Orders::NukeTrack:
 			order_NukeTrack(u);
 			return;
+		case Orders::EnableDoodad:
+			order_DoodadState(u, true);
+			return;
 		case Orders::WarpIn:
 			error("WarpIn");
 			return;
@@ -8184,22 +8285,22 @@ struct state_functions {
 			order_InitializePsiProvider(u);
 			break;
 		case Orders::HiddenGun:
-			error("HiddenGun");
+			order_HiddenGun(u);
 			break;
 		case Orders::OpenDoor:
-			error("OpenDoor");
+			order_Door(u, true);
 			break;
 		case Orders::CloseDoor:
-			error("CloseDoor");
+			order_Door(u, false);
 			break;
 		case Orders::HideTrap:
-			error("HideTrap");
+			order_TrapAnimation(u, false);
 			break;
 		case Orders::RevealTrap:
-			error("RevealTrap");
+			order_TrapAnimation(u, true);
 			break;
-		case Orders::EnableDoodad:
-			error("EnableDoodad");
+		case Orders::DisableDoodad:
+			order_DoodadState(u, false);
 			break;
 		case Orders::WarpIn:
 			error("WarpIn");
@@ -15117,6 +15218,11 @@ struct state_functions {
 				show_image(image);
 				break;
 
+			case opc_setspawnframe:
+				a = *p++;
+				if (noop) break;
+				if (iscript_flingy) set_next_target_waypoint(iscript_flingy, to_xy(iscript_flingy->exact_position + direction_xy(8_dir * a, 16)));
+				break;
 			case opc_setfldirect:
 				a = *p++;
 				if (noop) break;
@@ -17298,8 +17404,9 @@ struct state_functions {
 			else if (st.players[u->owner].controller == player_t::controller_computer_game) set_unit_order(u, u->unit_type->computer_ai_idle);
 			else set_unit_order(u, u->unit_type->human_ai_idle);
 		}
-		if (ut_flag(u, (unit_type_t::flags_t)0x800)) {
-			error("fixme unknown flag");
+		if (ut_powerup(u)) {
+			u->building.powerup.origin = u->sprite->position;
+			set_unit_order(u, u->unit_type->return_to_idle);
 		}
 		u->air_strength = get_unit_strength(u, false);
 		u->ground_strength = get_unit_strength(u, true);
@@ -19550,7 +19657,6 @@ struct state_functions {
 		}
 
 		if (unit_dying(u)) return false;
-		if (ut_powerup(u)) error("trigger_unit_pred: powerup");
 		if (!trigger_players_pred(owner, player, u->owner)) return false;
 		if (uid == 229) return true;
 		else if (uid == 230) {
@@ -19584,8 +19690,8 @@ struct state_functions {
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 23: case 26: case 28: case 30: case 31:
-		case 32: case 38: case 43: case 47:
+		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 26: case 28: case 30: case 31:
+		case 32: case 38: case 39: case 42: case 43: case 47:
 			return true;
 		default:
 			return false;
@@ -19730,6 +19836,21 @@ struct state_functions {
 				}
 			}
 			return true;
+		case 42:
+			{
+				int modifier = a.num_n;
+				if (!modifier && game_st.scenario_format == 59) modifier = 5;
+				if (modifier != 4 && modifier != 5 && modifier != 6) error("unsupported doodad state %d", modifier);
+				const auto& location = st.locations.at(a.location - 1);
+				for (unit_t* unit : find_units(location.area)) {
+					if (unit_dying(unit) || !unit_is_at_elevation_flags(unit, location.elevation_flags)) continue;
+					if (!trigger_players_pred(owner, a.group_n, unit->owner)
+						&& !(unit->owner == 11 && (a.group_n == 11 || a.group_n == 17))) continue;
+					if (a.extra_n != 229 && int(unit->unit_type->id) != a.extra_n) continue;
+					set_doodad_state(unit, modifier == 4 || (modifier == 6 && u_disabled(unit)));
+				}
+				return true;
+			}
 		case 23:
 		case 43:
 			{
@@ -19857,11 +19978,11 @@ struct state_functions {
 			return true;
 		case 38: // move location
 			if (true) {
-				auto& loc = st.locations.at(a.group2_n - 1);
+				auto& loc = st.locations.at(a.location - 1);
 				xy pos = (loc.area.from + loc.area.to) / 2;
 				unit_t* u = trigger_find_unit(owner, loc, a.group_n, a.extra_n);
 				if (u) pos = u->sprite->position;
-				auto& target_loc = st.locations.at(a.location - 1);
+				auto& target_loc = st.locations.at(a.group2_n - 1);
 				xy diff = pos - (target_loc.area.from + target_loc.area.to) / 2;
 				xy from = target_loc.area.from + diff;
 				xy to = target_loc.area.to + diff;
@@ -19885,6 +20006,36 @@ struct state_functions {
 				target_loc.area.to = to;
 			}
 			return true;
+		case 39:
+			{
+				const auto& source = st.locations.at(a.location - 1);
+				const auto& destination = st.locations.at(a.group2_n - 1);
+				xy position = (destination.area.from + destination.area.to) / 2;
+				a_vector<unit_t*> units;
+				for (unit_t* unit : find_units(source.area)) {
+					if (ut_turret(unit) || us_hidden(unit) || !unit_is_at_elevation_flags(unit, source.elevation_flags)) continue;
+					if (trigger_unit_pred(owner, unit, a.group_n, a.extra_n)) units.push_back(unit);
+				}
+				int remaining = a.num_n ? a.num_n : std::numeric_limits<int>::max();
+				for (unit_t* unit : units) {
+					xy previous_position = unit->sprite->position;
+					move_unit(unit, position);
+					auto placement = find_unit_placement(unit, position, false);
+					move_unit(unit, previous_position);
+					if (!placement.first) continue;
+					for (unit_t* other : ptr(st.visible_units)) remove_target_references(other, unit);
+					for (bullet_t* bullet : ptr(st.active_bullets)) remove_target_references(bullet, unit);
+					unit_finder_remove(unit);
+					if (u_grounded_building(unit)) set_unit_tiles_unoccupied(unit, unit->sprite->position);
+					if (u_flying(unit)) decrement_repulse_field(unit);
+					reset_movement_state(unit);
+					move_unit(unit, placement.second);
+					refresh_unit_position(unit);
+					set_unit_order(unit, unit->unit_type->return_to_idle);
+					if (!--remaining) break;
+				}
+				return true;
+			}
 		case 11:
 		case 44: // create unit
 			for (int p : trigger_players(owner, a.group_n)) {
@@ -22077,8 +22228,11 @@ struct game_load_functions : state_functions {
 					if (unit_type == UnitTypes::Special_Pit_Door) owner = 11;
 					if (unit_type == UnitTypes::Special_Right_Pit_Door) owner = 11;
 					if (use_map_settings || owner == 11) {
-						create_initial_unit(get_unit_type(unit_type), xy(x, y), owner);
-						if (flags & 0x80) error("disable thingy unit");
+						unit_t* unit = create_initial_unit(get_unit_type(unit_type), xy(x, y), owner);
+						if (unit && (flags & 0x80)) {
+							u_set_status_flag(unit, unit_t::status_flag_disabled);
+							sprite_run_anim(unit->sprite, iscript_anims::Disable);
+						}
 					}
 				}
 			}

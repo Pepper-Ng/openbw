@@ -111,8 +111,8 @@ static void campaign_checks(state& st) {
 	st.locations[search].elevation_flags = 0;
 	action = {};
 	action.type = 38;
-	action.location = int(destination + 1);
-	action.group2_n = int(search + 1);
+	action.location = int(search + 1);
+	action.group2_n = int(destination + 1);
 	action.group_n = 13;
 	action.extra_n = 0;
 	unit_t* located = functions.trigger_find_unit(1, st.locations[search], 13, 0);
@@ -879,6 +879,150 @@ static void desperate_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void jacobs_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		struct observed_functions : state_functions {
+			using state_functions::state_functions;
+			a_vector<trigger::action> events;
+			a_vector<std::pair<xy, xy>> camera_positions;
+			void on_trigger_action(int, const trigger::action& action) override {
+				events.push_back(action);
+				if (action.type == 10 && action.location == 30) {
+					const auto& area = st.locations.at(action.location - 1).area;
+					for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Marine) camera_positions.emplace_back((area.from + area.to) / 2, unit->sprite->position);
+				}
+			}
+		} functions(st);
+		unit_t* marine = nullptr;
+		unit_t* raynor = nullptr;
+		for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+		for (int owner : {0, 2}) for (unit_t* unit : ptr(st.player_units[owner])) if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Marine) raynor = unit;
+		require(marine && raynor, "original Jacobs Marine squad and rescuable Marine Raynor");
+		if (scenario == 5) {
+			unit_t* trap = nullptr;
+			for (int owner = 0; owner != 12; ++owner) for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (unit->unit_type->id == UnitTypes::Special_Floor_Gun_Trap && functions.u_disabled(unit)) trap = unit;
+			}
+			require(trap != nullptr, "original disabled floor gun trap");
+			xy previous_position = marine->sprite->position;
+			functions.move_unit(marine, trap->sprite->position + xy(48, 0));
+			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
+			functions.u_set_status_flag(trap, unit_t::status_flag_invincible);
+			auto previous_hp = marine->hp;
+			for (int tick = 0; tick != 120; ++tick) {
+				functions.set_sprite_visibility(marine->sprite, 0xff);
+				functions.next_frame();
+			}
+			require(marine->hp == previous_hp && functions.u_disabled(trap) && trap->order_type->id == Orders::HiddenGun, "disabled floor trap cannot attack an adjacent visible enemy");
+			functions.set_doodad_state(trap, true);
+			for (int tick = 0; tick != 240 && marine->hp == previous_hp; ++tick) {
+				functions.set_sprite_visibility(marine->sprite, 0xff);
+				functions.next_frame();
+			}
+			require(marine->hp < previous_hp && !functions.u_disabled(trap), "enabled floor trap reveals and fires its native weapon");
+			functions.move_unit(marine, previous_position);
+			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 240; ++tick) functions.next_frame();
+			require(trap->order_type->id == Orders::HiddenGun && functions.u_no_collide(trap) && functions.u_cloaked(trap), "unoccupied floor trap completes its hiding animation and becomes concealed again");
+			functions.u_set_status_flag(trap, unit_t::status_flag_iscript_nobrk);
+			functions.set_doodad_state(trap, false);
+			bool pending_disable = false;
+			for (const auto& order : trap->order_queue) if (order.order_type->id == Orders::DisableDoodad) pending_disable = true;
+			require(pending_disable && !functions.u_disabled(trap), "security shutdown queues behind a non-interruptible firing animation instead of being lost");
+			functions.u_unset_status_flag(trap, unit_t::status_flag_iscript_nobrk);
+			functions.activate_next_order(trap);
+			for (int tick = 0; tick != 240; ++tick) functions.next_frame();
+			require(functions.u_disabled(trap) && trap->order_type->id == Orders::HiddenGun && functions.u_no_collide(trap) && functions.u_cloaked(trap), "deferred security shutdown finishes and leaves the trap disabled and concealed");
+			functions.u_set_status_flag(trap, unit_t::status_flag_iscript_nobrk);
+			functions.set_doodad_state(trap, true);
+			functions.u_unset_status_flag(trap, unit_t::status_flag_iscript_nobrk);
+			functions.activate_next_order(trap);
+			for (int tick = 0; tick != 120; ++tick) functions.next_frame();
+			require(!functions.u_disabled(trap) && trap->order_type->id == Orders::HiddenGun, "queued re-enable progresses through the disabled-unit guard");
+			printf("Jacobs Installation original trap lifecycle passed.\n");
+			continue;
+		}
+		if (scenario == 1 || scenario == 2) {
+			xy previous_position = marine->sprite->position;
+			functions.move_unit(marine, raynor->sprite->position + xy(48, 0));
+			raynor->main_order_timer = 0;
+			functions.order_RescuePassive(raynor);
+			require(raynor->owner == 0, "native proximity rescues Jacobs Marine Raynor");
+			functions.move_unit(marine, previous_position);
+		}
+		if (scenario == 1 || scenario == 4) {
+			for (unit_t* unit : ptr(st.player_units[0])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			const auto& area = st.locations.at(scenario == 1 ? 19 : 6).area;
+			functions.move_unit(marine, (area.from + area.to) / 2);
+			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
+			if (scenario == 1) {
+				functions.move_unit(raynor, (area.from + area.to) / 2 + xy(48, 0));
+				functions.set_unit_order(raynor, functions.get_order_type(Orders::HoldPosition));
+			}
+		}
+		if (scenario == 6) {
+			const auto& area = st.locations.at(7).area;
+			functions.move_unit(raynor, (area.from + area.to) / 2);
+			functions.u_set_status_flag(raynor, unit_t::status_flag_invincible);
+			functions.set_unit_order(raynor, functions.get_order_type(Orders::HoldPosition));
+			a_vector<unit_t*> zerg;
+			for (unit_t* unit : ptr(st.player_units[3])) zerg.push_back(unit);
+			for (unit_t* unit : zerg) functions.kill_unit(unit);
+		}
+		if (scenario == 2) functions.kill_unit(raynor);
+		if (scenario == 3) {
+			a_vector<unit_t*> units;
+			for (unit_t* unit : ptr(st.player_units[0])) units.push_back(unit);
+			for (unit_t* unit : units) functions.kill_unit(unit);
+		}
+		bool paused = false;
+		bool teleported = false;
+		for (int tick = 0; tick != 4000 && !st.players[0].victory_state; ++tick) {
+			functions.next_frame();
+			if (st.scripted_pause) paused = true;
+			if (scenario == 4) {
+				const auto& destination = st.locations.at(7).area;
+				if (functions.xy_length(marine->sprite->position - (destination.from + destination.to) / 2) < 128) {
+					teleported = true;
+					break;
+				}
+			}
+		}
+		if (scenario == 0) require(!st.players[0].victory_state && !st.current_minerals[0] && !st.current_gas[0] && st.campaign_ai_scripts.empty(), "idle installation preserves no economy, no invented AI and no outcome");
+		if (scenario == 1) {
+			require(st.players[0].victory_state >= 3 && paused && st.trigger_switches[4], "original data terminal sequence sets its authored switch and reaches victory");
+			require(!functions.camera_positions.empty() && functions.camera_positions.back().first == functions.camera_positions.back().second, "original disk victory centers on Raynor at the data room, not the starting point");
+			int transmissions = 0;
+			for (const auto& event : functions.events) if (event.type == 7) ++transmissions;
+			require(transmissions != 0, "original data retrieval ending retains its transmissions");
+		}
+		if (scenario == 2) require(st.players[0].victory_state == 2, "original Marine Raynor-loss predicate reaches defeat");
+		if (scenario == 3) require(st.players[0].victory_state == 2, "original whole-squad loss predicate reaches defeat");
+		if (scenario == 4) {
+			require(!st.players[0].victory_state && teleported, "original Bring-triggered teleporter moves the actor without inventing victory");
+		}
+		if (scenario == 6) {
+			bool zerg_dialogue = false;
+			for (const auto& event : functions.events) if (event.type == 7 && event.string_index == 31) zerg_dialogue = true;
+			require(zerg_dialogue && paused && !st.players[0].victory_state, "killing the original Zerg force triggers its authored encounter dialogue without victory");
+			require(!functions.camera_positions.empty() && functions.camera_positions.back().first == functions.camera_positions.back().second, "original Zerg encounter centers on Raynor away from the starting point");
+		}
+		printf("Jacobs Installation original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -887,6 +1031,7 @@ int main(int argc, char** argv) {
 	bool campaign = argc > 3 && !strcmp(argv[3], "--test-campaign");
 	bool backwater = campaign && argc > 4 && !strcmp(argv[4], "terran02");
 	bool desperate = campaign && argc > 4 && !strcmp(argv[4], "terran03");
+	bool jacobs = campaign && argc > 4 && !strcmp(argv[4], "terran04");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -901,6 +1046,83 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (jacobs) {
+			player.st().strict_triggers = true;
+			require(player.st().players[0].controller == player_t::controller_occupied, "Jacobs Installation keeps its original human slot zero");
+			player.next_frame();
+			player.next_frame();
+			require(!player.st().players[0].victory_state, "Jacobs Installation does not invent an opening outcome");
+			state_functions functions(player.st());
+			unit_t* door = nullptr;
+			int disabled_traps = 0;
+			for (int owner = 0; owner != 12; ++owner) for (unit_t* unit : ptr(player.st().player_units[owner])) {
+				if (unit->unit_type->id == UnitTypes::Special_Upper_Level_Door) door = unit;
+				if (functions.unit_is_trap(unit) && functions.u_disabled(unit)) ++disabled_traps;
+			}
+			require(door && disabled_traps == 2, "original installation doors and two disabled traps survive initialization");
+			a_vector<unit_t*> marines;
+			for (unit_t* unit : ptr(player.st().player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marines.push_back(unit);
+			require(marines.size() >= 2, "original installation squad contains door and teleport test actors");
+			require(functions.is_blocked(marines[0], door->sprite->position).second == door, "closed installation door blocks native unit collision checks");
+			player.st().locations.emplace_back();
+			player.st().locations.back().area = functions.square_at(door->sprite->position, 16);
+			state_functions::execute_trigger_struct effects;
+			running_trigger running;
+			trigger::action action{};
+			unit_t* raynor = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[0])) if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Marine) raynor = unit;
+			require(raynor != nullptr, "original Jacobs camera target is naturally rescued Raynor");
+			auto anywhere = player.st().locations.at(63).area;
+			action.type = 38;
+			action.location = 64;
+			action.group2_n = 30;
+			action.extra_n = int(UnitTypes::Hero_Jim_Raynor_Marine);
+			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
+			const auto& camera_location = player.st().locations.at(29).area;
+			require((camera_location.from + camera_location.to) / 2 == raynor->sprite->position, "original Zerg and disk Move Location fields center camera location 30 on Raynor");
+			require(player.st().locations.at(63).area.from == anywhere.from && player.st().locations.at(63).area.to == anywhere.to, "moving the camera location must not move its Anywhere source");
+			action = {};
+			action.type = 42;
+			action.group_n = 17;
+			action.extra_n = int(door->unit_type->id);
+			action.location = int(player.st().locations.size());
+			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
+			require(!functions.u_no_collide(door), "door opening waits for its animation signal before removing collision");
+			for (int tick = 0; tick != 120; ++tick) player.next_frame();
+			require(functions.u_status_flag(door, unit_t::status_flag_no_collide) && functions.u_disabled(door), "legacy original doodad action opens a door after its native animation");
+			require(!functions.is_blocked(marines[0], door->sprite->position).first, "open door becomes passable to native collision and terrain checks");
+			action.num_n = 4;
+			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
+			require(functions.u_no_collide(door), "door closing retains passage until its animation signal");
+			for (int tick = 0; tick != 120; ++tick) player.next_frame();
+			require(!functions.u_status_flag(door, unit_t::status_flag_no_collide) && !functions.u_disabled(door), "enabling a door closes it and restores collision");
+			require(functions.is_blocked(marines[0], door->sprite->position).second == door, "closed door restores the physical blocker");
+			const auto& source = player.st().locations.at(0).area;
+			const auto& destination = player.st().locations.at(1).area;
+			xy source_center = (source.from + source.to) / 2;
+			xy destination_center = (destination.from + destination.to) / 2;
+			functions.move_unit(marines[0], source_center + xy(16, 0));
+			functions.move_unit(marines[1], source_center - xy(16, 0));
+			action = {};
+			action.type = 39;
+			action.group_n = 13;
+			action.extra_n = 230;
+			action.location = 1;
+			action.group2_n = 2;
+			action.num_n = 1;
+			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
+			int moved = 0;
+			for (size_t index = 0; index != 2; ++index) if (functions.xy_length(marines[index]->sprite->position - destination_center) < 128) ++moved;
+			require(moved == 1, "teleport quantity one moves only one matching actor");
+			action.num_n = 0;
+			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
+			for (size_t index = 0; index != 2; ++index) {
+				if (functions.xy_length(marines[index]->sprite->position - destination_center) >= 128 || marines[index]->path) error("teleport actor %d at %d,%d path %d; source %d,%d-%d,%d destination %d,%d last error %d", int(index), marines[index]->sprite->position.x, marines[index]->sprite->position.y, int(marines[index]->path != nullptr), source.from.x, source.from.y, source.to.x, source.to.y, destination_center.x, destination_center.y, player.st().last_error);
+			}
+			printf("Jacobs Installation normal initialization passed.\n");
+			jacobs_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (desperate) {
 			player.st().strict_triggers = true;
 			player.next_frame();

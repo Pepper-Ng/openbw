@@ -450,6 +450,7 @@ function wireInput(canvas, x) {
                    || (e.ctrlKey && !e.metaKey && !e.altKey && isDigit); // Ctrl+digit = control groups
     if (!gameBinds) return;   // hand Cmd+1, Cmd+R, Ctrl+T, … back to the browser
     x.openbw_key(down ? 1 : 0, sym, sc);
+    if (down) x.openbw_render(performance.now());
     e.preventDefault();
   };
   window.addEventListener('keydown', key(true));
@@ -1819,9 +1820,9 @@ async function boot(session) {
     const queued = e.shiftKey || (coarsePointer() && wireInput.queue);
     x.openbw_key(queued ? 1 : 0, 0, 225);
     const sym = key.charCodeAt(0);
-    x.openbw_key(1, sym, 0); x.openbw_key(0, sym, 0);   // frame loop processes it
+    x.openbw_key(1, sym, 0); x.openbw_key(0, sym, 0);
+    x.openbw_render(performance.now());
     if (!e.shiftKey) {
-      if (queued) x.openbw_render(performance.now());
       x.openbw_key(0, 0, 225);
     }
   });
@@ -2153,7 +2154,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {
