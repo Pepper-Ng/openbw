@@ -1,6 +1,9 @@
 services:
   openbw:
-    image: ghcr.io/pepper-ng/openbw:master
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openbw:latest
     container_name: openbw
     restart: unless-stopped
     ports:

@@ -1,3 +1,6 @@
-**
-!_site/
-!_site/**
+.git
+**/data/
+web/bot/vendor/
+web/bot/build/
+web/openbw*.wasm
+_site/
