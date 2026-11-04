@@ -330,12 +330,233 @@ static void campaign_outcomes(data_loading::data_files_loader<>& load_data_file,
 	}
 }
 
+static void backwater_checks(state& st) {
+	state_functions functions(st);
+	require(count_units(st, 1) == 11 && count_units(st, 2) == 0 && count_units(st, 3) == 7 && count_units(st, 4) == 61 && count_units(st, 11) == 15, "original 94 Backwater actors with natural startup Raynor rescue");
+	unit_t* infested_command_center = nullptr;
+	for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Infested_Command_Center) infested_command_center = unit;
+	require(infested_command_center && int(infested_command_center->unit_type->id) == 130, "Backwater target is the Infested Command Center, not a Hatchery");
+	require(infested_command_center->order_type->id == Orders::ComputerAI, "unscripted computer building retains its ComputerAI order");
+	functions.order_ComputerAI(infested_command_center);
+	require(count_units(st, 4) == 61 && infested_command_center->order_type->id == Orders::ComputerAI, "unscripted building idle does not invent production or replace the order");
+	for (int tick = 0; tick != 1200; ++tick) functions.next_frame();
+	require(count_units(st, 4) == 61 && infested_command_center->order_type->id == Orders::ComputerAI, "idle original Zerg force does not invent economy or attack waves");
+	require(st.current_minerals[1] == 200 && st.current_gas[1] == 200, "original Backwater trigger grants both minerals and gas");
+	trigger::condition condition{};
+	condition.type = 1;
+	condition.num_n = 10;
+	condition.count_n = 0;
+	require(functions.test_trigger_condition(condition, 1), "original countdown starts at zero");
+	st.countdown_timer = 8;
+	condition.count_n = 8;
+	require(functions.test_trigger_condition(condition, 1), "countdown exact boundary");
+	condition.count_n = 7;
+	require(!functions.test_trigger_condition(condition, 1), "countdown exact negative boundary");
+	st.countdown_timer = 0;
+	condition.type = 11;
+	condition.extra_n = 0;
+	condition.num_n = 3;
+	require(functions.test_trigger_condition(condition, 1), "original switch starts clear");
+	state_functions::execute_trigger_struct effects;
+	running_trigger running;
+	trigger::action action{};
+	action.type = 13;
+	action.group2_n = 0;
+	action.num_n = 4;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(!functions.test_trigger_condition(condition, 1), "set switch is not cleared");
+	condition.num_n = 2;
+	require(functions.test_trigger_condition(condition, 1), "set switch condition");
+	action.num_n = 6;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(!functions.test_trigger_condition(condition, 1), "toggle switch condition");
+	action.num_n = 4;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	action.num_n = 5;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	condition.num_n = 3;
+	require(functions.test_trigger_condition(condition, 1), "clear switch action");
+	printf("Backwater countdown and switch checks passed.\n");
+	unit_t* marine = nullptr;
+	for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+	require(marine != nullptr, "Backwater Marine fixture");
+	unit_t* station = nullptr;
+	for (unit_t* unit : ptr(st.player_units[3])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center) station = unit;
+	require(station != nullptr, "original rescue station Command Center");
+	int original_humans = count_units(st, 1);
+	int original_station = count_units(st, 3);
+	xy original_position = marine->sprite->position;
+	functions.move_unit(marine, station->sprite->position + xy(48, 0));
+	station->main_order_timer = 0;
+	functions.order_RescuePassive(station);
+	require(count_units(st, 3) == 0 && count_units(st, 1) == original_humans + original_station, "station depot rescue transfers the whole rescuable player");
+	functions.move_unit(marine, original_position);
+	printf("Backwater whole-station rescue check passed.\n");
+	const auto& reinforcement = st.game->triggers.at(3).actions[1];
+	require(reinforcement.type == 11 && reinforcement.num_n == 0 && reinforcement.group2_n == 0, "original legacy reinforcement encoding");
+	int firebats_before = st.unit_counts[3][UnitTypes::Terran_Firebat];
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], reinforcement);
+	require(st.unit_counts[3][UnitTypes::Terran_Firebat] == firebats_before + 1, "legacy zero-quantity creation yields one original reinforcement");
+	auto customized = reinforcement;
+	customized.group2_n = 1;
+	customized.num_n = 2;
+	auto& property_slot = st.game->unit_properties[0];
+	property_slot.valid_data_flags = 2;
+	property_slot.hitpoints_percent = 50;
+	property_slot.valid_state_flags = 16;
+	property_slot.state_flags = 16;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], customized);
+	require(st.unit_counts[3][UnitTypes::Terran_Firebat] == firebats_before + 3, "explicit creation quantity is preserved");
+	int customized_units = 0;
+	for (unit_t* unit : ptr(st.player_units[3])) if (unit->unit_type->id == UnitTypes::Terran_Firebat && functions.u_invincible(unit) && unit->hp == unit->unit_type->hitpoints / 2) ++customized_units;
+	require(customized_units == 2, "creation applies the selected UPRP hitpoint and invincibility properties");
+	property_slot = {};
+	st.locations.emplace_back();
+	st.locations.back().area = functions.square_at(marine->sprite->position, 1);
+	st.locations.back().elevation_flags = 0;
+	condition = {};
+	condition.type = 3;
+	condition.group = 13;
+	condition.unit_id = 0;
+	condition.num_n = 0;
+	condition.count_n = 1;
+	condition.location = int(st.locations.size());
+	require(functions.test_trigger_condition(condition, 1), "original Bring condition recognizes Marine in location");
+	action = {};
+	action.type = 43;
+	action.location = condition.location;
+	action.group_n = 13;
+	action.extra_n = 0;
+	action.num_n = 4;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(functions.u_invincible(marine), "invincibility enable action");
+	action.num_n = 6;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(!functions.u_invincible(marine), "invincibility toggle action");
+	action.num_n = 4;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	action.num_n = 5;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(!functions.u_invincible(marine), "invincibility disable action");
+	st.locations.back().area = functions.map_bounds();
+	action.num_n = 4;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	auto living_marines = [&]() {
+		int count = 0;
+		for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Marine && !functions.unit_dying(unit)) ++count;
+		return count;
+	};
+	int before = living_marines();
+	action.type = 23;
+	action.num_n = 1;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(living_marines() == before - 1, "kill-at-location honors quantity and kills invincible units");
+	action.num_n = 0;
+	functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+	require(living_marines() == 0, "kill-at-location zero quantity means all matching units");
+	printf("Backwater Bring, invincibility and kill-at-location checks passed.\n");
+}
+
+static void backwater_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		struct observed_functions : state_functions {
+			using state_functions::state_functions;
+			a_vector<trigger::action> events;
+			void on_trigger_action(int, const trigger::action& action) override { events.push_back(action); }
+		} functions(st);
+		unit_t* raynor = nullptr;
+		unit_t* marine = nullptr;
+		unit_t* station = nullptr;
+		unit_t* target = nullptr;
+		unit_t* guard = nullptr;
+		for (unit_t* unit : ptr(st.player_units[1])) {
+			if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture) raynor = unit;
+			if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[3])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center) station = unit;
+		for (unit_t* unit : ptr(st.player_units[4])) {
+			if (unit->unit_type->id == UnitTypes::Zerg_Infested_Command_Center) target = unit;
+			if (unit->unit_type->id == UnitTypes::Zerg_Zergling) guard = unit;
+		}
+		require(raynor && marine && station && target, "original Backwater mission-case actors");
+		if (scenario == 1) {
+			functions.move_unit(marine, station->sprite->position + xy(48, 0));
+			station->main_order_timer = 0;
+			functions.order_RescuePassive(station);
+		}
+		if (scenario == 2) functions.kill_unit(target);
+		if (scenario == 3) functions.kill_unit(raynor);
+		if (scenario >= 4 && scenario <= 6) {
+			unit_t* speaker = scenario == 6 ? raynor : marine;
+			if (scenario == 5) speaker = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Firebat), marine->sprite->position, 1);
+			require(speaker != nullptr, "Backwater dialogue speaker fixture");
+			const auto& area = st.locations.at(2).area;
+			functions.move_unit(speaker, (area.from + area.to) / 2);
+			functions.u_set_status_flag(speaker, unit_t::status_flag_invincible);
+			functions.u_set_status_flag(target, unit_t::status_flag_invincible);
+		}
+		if (scenario == 7) {
+			require(guard != nullptr, "original defending Zergling");
+			functions.move_unit(marine, guard->sprite->position + xy(24, 0));
+			functions.u_set_status_flag(guard, unit_t::status_flag_invincible);
+		}
+		bool paused = false;
+		bool guard_engaged = false;
+		for (int tick = 0; tick != 4000 && !st.players[1].victory_state; ++tick) {
+			if (scenario == 1) {
+				for (int owner : {1, 3}) for (unit_t* unit : ptr(st.player_units[owner])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			}
+			functions.next_frame();
+			if (scenario == 7 && guard->order_target.unit == marine) guard_engaged = true;
+			if (st.scripted_pause) paused = true;
+		}
+		if (scenario == 0) require(!st.players[1].victory_state && count_units(st, 4) == 61, "idle Backwater cannot invent victory, production or attack waves");
+		if (scenario == 1) {
+			require(!st.players[1].victory_state, "rescuing the station alone must not win");
+			require(st.unit_counts[1][UnitTypes::Terran_Firebat] == 5 && st.unit_counts[1][UnitTypes::Terran_SCV] == 4, "original bunker and station triggers deliver five Firebats and two additional SCVs");
+		}
+		if (scenario == 2) {
+			require(st.players[1].victory_state >= 3 && paused, "destroying the original infested Command Center completes its paused victory sequence");
+			int transmissions = 0;
+			for (const auto& event : functions.events) if (event.type == 7) ++transmissions;
+			require(transmissions >= 5, "original ending transmissions run before victory");
+		}
+		if (scenario == 3) require(st.players[1].victory_state == 2 && paused, "original Raynor-loss sequence reaches paused defeat");
+		if (scenario >= 4 && scenario <= 6) {
+			bool marine_dialogue = false;
+			bool firebat_dialogue = false;
+			for (const auto& event : functions.events) {
+				if (event.type == 7 && event.string_index == 29) marine_dialogue = true;
+				if (event.type == 7 && event.string_index == 30) firebat_dialogue = true;
+			}
+			require(!st.players[1].victory_state, "approaching the infested building alone must not win");
+			require(marine_dialogue == (scenario == 4) && firebat_dialogue == (scenario == 5), "original Marine/Firebat dialogue branches and Raynor-only exclusion");
+			require(st.unit_counts[1][(UnitTypes)101] == 0, "temporary dialogue map revealer is removed by its original kill-at-location action");
+		}
+		if (scenario == 7) require(guard_engaged && !st.players[1].victory_state, "placed Zerg guard engages an approaching player unit without inventing victory");
+		printf("Backwater original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
 	int my_player = 0;
 	race_t my_race = race_t::terran;
 	bool campaign = argc > 3 && !strcmp(argv[3], "--test-campaign");
+	bool backwater = campaign && argc > 4 && !strcmp(argv[4], "terran02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -350,6 +571,11 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (backwater) {
+			backwater_checks(player.st());
+			backwater_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		campaign_checks(player.st());
 		campaign_outcomes(load_data_file, map_file);
 		return 0;

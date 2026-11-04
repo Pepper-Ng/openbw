@@ -12,7 +12,9 @@
 - Do not commit proprietary archives, mission data, dialogue, videos, or generated packs. Local development assets remain under ignored `web/data/`.
 - Implementation was approved on 2026-11-04. Work remains on `campaign`; no merge, public deployment, or asset redistribution is authorized.
 - The user confirmed successful testing and approved the Wasteland milestone commit on 2026-11-04. The test device was not specified.
-- Next priority: Backwater Station's mission/runtime compatibility. Defer UI and mobile optimization, onboarding, and linked mission progression until later. Existing functional controls and regressions must remain intact.
+- Next priority: Desperate Alliance's corrected content/AI audit and mission/runtime compatibility. Defer UI and mobile optimization, onboarding, and linked mission progression until later. Existing functional controls and regressions must remain intact.
+- On 2026-11-04 the user completed Backwater Station and accepted it as the next playable milestone. The user authorized its commit and continuation to Desperate Alliance; exact classic behavior remains subject to comparison.
+- On 2026-11-04 the user authorized web-informed, narrowly reasoned behavior assumptions, followed by a classic StarCraft comparison and revision pass. Record inferences explicitly rather than blocking all implementation on an original-game trace.
 
 No blocking product questions are needed to follow this plan. The defaults are English assets, browser single-player, desktop plus the existing mobile interface, local development delivery first, and persistent completed-mission progress. Animated portraits, cinematics, mid-mission saves, and public asset hosting are not first-milestone requirements.
 
@@ -91,7 +93,7 @@ UNIT record counts include start-location markers. They are not expected live-un
 
 These hashes supersede the planning audit's hashes. The Python helper previously padded encrypted sector tails before decryption. StormLib decrypts only complete 32-bit words and leaves remaining bytes unchanged. The corrected helper and the production C++ decoder agree byte-for-byte on Wasteland. No source archive or scenario was edited.
 
-Wasteland's audit was regenerated after that correction. Regenerate the T2/T3 scenario and AI-script audits before P7; their earlier operation findings, including MBRF type 29, remain provisional.
+Wasteland's and Backwater Station's scenario audits were regenerated after that correction. Regenerate T3 and the AI-script audits before their implementation; earlier T3 findings, including MBRF type 29, remain provisional.
 
 The downloaded original campaign/CD wrapper has SHA-256 `ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d`. Retain the source archives unchanged. Generated mission packs need their own hashes; neither source CRC32 nor source CHK hashes are substitutes for pack validation.
 
@@ -323,7 +325,52 @@ node web/run-wasm-node.mjs --test-campaign
 node web/run-wasm-node.mjs --test-commands
 ```
 
-## Reusable Lessons From Wasteland
+### Implementation Evidence: Backwater Prototype
+
+Verified locally on 2026-11-04, as the Backwater milestone following `34d8402d5be7bdf771d0fbb5e166b2f97bb93736`:
+
+- The existing preparation script now accepts `terran01` or `terran02`, derives the single human slot/race from OWNR/SIDE, and retains pinned source hashes and path validation. No duplicate preparation tool or new UI flow was added.
+- Backwater's corrected CHK hash is `d8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce`. The pack round-trips 22 files, including 21 PCM WAVs. It totals 5,915,109 bytes; decoded content totals 5,913,701 bytes. Pack SHA-256 is `0a702bea4d1a96cc9268f29fe6ab11bbd81752312c394c134450fac3e41e408e`.
+- Its 98 UNIT records contain four start markers and 94 placed actors: ten human units, one rescuable Raynor, seven rescuable station units, 61 enemy units/buildings, and 15 neutral resources. Human slot is 1/Terran; rescue players are 2 and 3; the Zerg computer is 4. Normal loader processing naturally rescues nearby Raynor, so the initialized human count is 11 and rescue-slot-2 count is zero.
+- The regenerated operation set is conditions 1/2/3/11; actions 1/2/4/5/7/8/9/10/11/12/13/23/26/30/31/38/43; briefing actions 1/2/3/4/5/6/8. No active AI-script action is present.
+- Added and tested native countdown/switch state, countdown and switch conditions, set/clear/toggle switches, invincibility, and quantity-aware kill-at-location. Existing Bring handling and whole-station depot rescue pass original-map fixtures.
+- The native Backwater harness now uses normal initial world processing; no AI bypass remains. A 1,200-tick idle check preserves the original enemy force and obtains 200 minerals and 200 gas through the original initialization trigger.
+- The blocked unit is `Zerg_Infested_Command_Center`, ID 130, not a Hatchery. Earlier descriptions of that ID were incorrect. Its unscripted ComputerAI path retains the order and services queued orders without inventing production. It is restricted to buildings whose human idle behavior is Nothing; other unsupported AI behavior still errors.
+- Property-aware creation now uses the existing creation helper and stored UPRP slots. Explicit quantities and hitpoint/invincibility overrides pass authored checks. A zero quantity in legacy format 59 is interpreted as one creation; property index zero means no overrides. This is a reasoned compatibility inference from the repeated original actions and the documented reinforcement totals, pending classic comparison. Other ambiguous zero counts and unsupported property states still error.
+- Eight fresh original-map cases pass: idle negative; station rescue yielding five Firebats and two additional SCVs; infested-target destruction through the paused victory ending; Raynor-loss defeat; Marine discovery dialogue; Firebat discovery dialogue; Raynor-only dialogue exclusion; and a placed Zerg guard engaging an approaching Marine. Temporary discovery revealers are removed by the original kill-at-location action. Some fixtures protect units to isolate dialogue/reinforcement assertions; they are not normal-play victory evidence.
+- The shared browser-module runner validates normal initialization, original 200/200 resources, briefing modifiers, ordered/acknowledged events and native audio. Browser startup reaches the real briefing at frame zero and Begin advances gameplay with no page errors. Only the selected Backwater manifest/pack was requested as campaign content; no full CD archive was requested.
+- Normal browser controls gathered additional minerals and queued a Marine from the original Barracks. Defeat through resign left campaign progress unchanged; retry returned to Backwater's briefing at frame zero with no pack refetch or Wasteland request. The final fresh startup had no page errors. These checks do not replace the full normal-control/classic comparison playthrough.
+- The Backwater-ready ignored browser module has SHA-256 `36a3b20c52a81a54133fe3c1a061822da9c3f0b456d72b1e1403e38de2029f60`. The user subsequently completed the mission and approved this playable milestone. No new public asset delivery, full strategic AI, UI/mobile polish, onboarding, or linked mission progression was added.
+- Known comparison issue reported by the user: idle defenders visible near the northeast enemy base do not assist when their buildings are attacked until the player approaches their acquisition range. The existing reactive-guard fixture tests proximity engagement only, not group assistance. Preserve this observation for the classic comparison; do not widen acquisition ranges or add speculative assistance/waves before establishing the intended behavior.
+
+#### Narrow Behavior And Classic Comparison
+
+The [StarCraft Wiki mission walkthrough](https://starcraft.fandom.com/wiki/Backwater_Station_(mission)) and [StrategyWiki walkthrough](https://strategywiki.org/wiki/StarCraft/Backwater_Station) describe a fight through placed Zerg groups, rescue of the station, five Firebats/two SCVs, and destruction of an infested Command Center. These are behavioral references, not engine traces or code sources; walkthrough strategy is not a requirement to script attacks.
+
+The scenario contains no Drones and no active Run AI Script action. The provisional target is therefore a placed defending force and a passive unscripted infested building, not a growing melee base or invented timed waves. Exact pursuit/return ranges and the absence of all autonomous production remain classic-comparison items. A full strategic AI VM is not claimed.
+
+Compare these points in classic StarCraft before treating the prototype as faithful:
+
+1. Initial Raynor ownership and enemy activity while the player waits. Check production, construction, attack waves, and guard pursuit/return behavior separately.
+2. Station ownership transfer, five Firebats, two additional SCVs, spawn positions and timings. This directly tests the inferred format-59 zero-quantity rule.
+3. Marine versus Firebat discovery dialogue, the Raynor-only exclusion, and the timing/visibility of temporary revealers.
+4. The infested Command Center's appearance, properties and destruction ending. Victory depends on Force 2 having no unit of type 130, followed by the original paused multi-transmission sequence; approaching it or rescuing the station alone must not win.
+5. Raynor loss, paused defeat, retry, briefing/audio, and normal mining/building/combat. Record mismatches and add focused regression cases before revising behavior.
+
+Retain this comparison process for the later sequential mission playtest. UI/mobile optimization, onboarding and linked mission flow remain deferred.
+
+Commands:
+
+```powershell
+node web/prepare-campaign.mjs terran02
+& .\web\build-wasm.ps1 -SimulationTest
+node web/run-sim.mjs --test-campaign terran02
+node web/run-wasm-node.mjs --test-campaign terran02
+```
+
+All four commands now pass. Proprietary packs, manifests, and detailed audits remain ignored under `web/data/campaign/`.
+
+## Reusable Implementation Lessons
 
 Apply these lessons to later missions. The evidence above records what was tested; it does not establish support for untested scenarios or operations. Update this section when another mission changes a reusable rule.
 
@@ -331,7 +378,7 @@ Apply these lessons to later missions. The evidence above records what was teste
 
 - Cross-check decoded scenario bytes independently before accepting a new hash. A pack round-trip can repeat the same decoder error. The Python partial-word decryption bug changed hashes and could make unused bytes look like required operations; regenerate affected audits after decoder changes.
 - Reuse the production C++ MPQ/audio codecs and the existing offline pack tool. Preserve the original CHK, resolve mission-relative dependencies, and verify every output entry. Measure the generated pack; compressed source sizes do not predict the first plain-pack download size.
-- Parameterize the existing preparation and manifest-validation paths for each audited mission. They currently contain `terran01`, slot, race, source-hash, and pack-path assumptions. Derive and validate those values per mission; do not copy the whole tool or weaken path/hash validation.
+- Parameterize the existing preparation and manifest-validation paths for each audited mission. Wasteland's original `terran01`, slot, race, source-hash, and pack-path assumptions have now been removed from the shared paths for T1/T2. Derive and validate these values per mission; do not copy the whole tool or weaken path/hash validation.
 
 ### Engine Contracts
 
@@ -341,6 +388,9 @@ Apply these lessons to later missions. The evidence above records what was teste
 - Interpret Transmission fields by their operation, not by an audio-duration guess. `time` is the stored base and `group2` is the Set/Add/Subtract adjustment. Briefing and gameplay share the native formula; browser playback completion must not decide when a trigger resumes.
 - Preserve a waiting trigger's action index. Do not replay its earlier mutations or dialogue. Keep this distinct from the original scheduler's recheck of earlier triggers when a wait starts. Add interleaving tests when a later mission introduces new simultaneous waits.
 - Audit placed-unit orders separately from AI-script actions. Wasteland exercises working guard/combat behavior without an AI VM; this does not implement ComputerAI, town management, or scripted attacks. Rescue must remain a proximity-based ownership transfer, including whole-player transfer through an active grounded depot, not a mission-specific grant.
+- Backwater confirms that an empty AI-script action set can still activate ComputerAI through a placed building's DAT idle order. Include building idle orders in the next mission's readiness audit. Verify numeric IDs against the repository enums: mistaking the Infested Command Center for a Hatchery falsely suggested a broader AI requirement.
+- Web walkthroughs can justify a narrow provisional target when the user accepts later comparison. Label inferred compatibility rules and test them against original trigger totals; do not present those tests as proof of the original engine's internals.
+- Unit death is staged. `kill_unit` assigns the Die order; completed-unit counters update during later processing. Isolated action tests should check the immediate death-order contract rather than assuming counters change synchronously.
 
 ### Validation And Delivery
 
@@ -484,9 +534,9 @@ Definition of done: Wasteland is genuinely playable from selection through brief
 
 ### P7: Extend To The Next Two Missions
 
-Wasteland's local playable milestone is accepted. Backwater Station is the next implementation slice; deferred mobile/presentation polish does not block its runtime work. Physical-device and public-delivery checks remain release gates.
+Wasteland and Backwater Station are accepted local playable milestones. Desperate Alliance is the next implementation slice; deferred mobile/presentation polish does not block its runtime work. Physical-device and public-delivery checks remain release gates.
 
-First regenerate Backwater Station's audit with the corrected MPQ reader. Confirm its required operations, controllers, rescue behavior, and original outcomes before relying on the provisional findings below. Then prepare its own mission pack, extend only the missing runtime capabilities, and verify normal-play success/failure while retaining Wasteland regressions. Use the existing mission-selection surface; do not broaden this slice into onboarding or automatic mission-to-mission flow.
+First regenerate Desperate Alliance's audit with the corrected MPQ reader. Confirm its required operations, controllers, original outcomes, and reachable AI-script instructions before relying on earlier findings. Then prepare its own mission pack and extend the missing runtime capabilities while retaining both earlier missions' regressions. Use the existing mission-selection surface; do not broaden this slice into onboarding or automatic mission-to-mission flow.
 
 - Backwater Station: implement/test countdown and switch conditions, additional rescue behavior, unit-property creation, kill-at-location, and invincibility, together with its actual unit availability and objective flow. Reuse the same manifest, briefing, event, and outcome infrastructure.
 - Desperate Alliance: add kills/countdown behavior and computer-owned trigger execution, then interpret the `Ter3`/`Suic` programs from the real AI binaries. Inventory reachable instructions and add unsupported-op diagnostics before promising complete AI coverage. Campaign base building/attack waves must come from the script runtime, not hand-timed substitutes or McRave/ZZZKBot.

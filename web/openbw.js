@@ -1612,7 +1612,7 @@ async function boot(session) {
     while (briefingPlaying && briefingClock >= briefingUntil && briefingIndex < briefingActions.length) {
       const [type, text, sound, time, slot, amount, modifier, unit] = briefingActions[briefingIndex++];
       if (type === 1) briefingUntil = briefingClock + Math.max(0, time);
-      if (type === 2 || type === 8) playNarration(sound);
+      if (type === 2 || type === 8) playNarration(sound, type === 2 ? narrationChannel - 1 : narrationChannel);
       if (type === 3 || type === 8) $('briefing-text').textContent = missionString(text);
       if (type === 4) $('briefing-objectives').textContent = missionString(text);
       if (type === 5) { briefingPortraits.set(slot, unit); showBriefingPortrait(slot); }
@@ -2134,6 +2134,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
+const campaignMissionIds = ['terran01', 'terran02'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {
@@ -2149,24 +2150,29 @@ function selectGameMode(campaign) {
   $('mode-campaign').setAttribute('aria-selected', String(campaign));
   $('campaign-setup').hidden = !campaign;
   for (const id of ['map-row', 'map-info', 'slots', 'spectate-row', 'lobby-hint', 'sandbox-start', 'mp']) $(id).hidden = campaign;
-  if (campaign) {
-    const complete = campaignProgress().completed.includes('terran01');
-    $('mission-size').textContent = complete ? 'Wasteland - completed' : 'Wasteland';
-    fetch('data/campaign/terran01.json').then(response => {
-      if (!response.ok) throw new Error('Mission download unavailable.');
-      return response.json();
-    }).then(manifest => {
-      validateMissionManifest(manifest);
-      campaignManifest = manifest;
-      $('mission-size').textContent = `${(manifest.pack.bytes / 1048576).toFixed(2)} MB${complete ? ' - completed' : ''}`;
-    }).catch(error => { $('mission-size').textContent = error.message; });
-  }
+  if (campaign) loadSelectedMission();
 }
-function validateMissionManifest(manifest) {
-  if (manifest.schemaVersion !== 1 || manifest.id !== 'terran01' || manifest.humanSlot !== 1 || manifest.race !== 1 || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files)) throw new Error('Unsupported mission manifest.');
+function loadSelectedMission() {
+  const missionId = $('mission-select').value;
+  if (!campaignMissionIds.includes(missionId)) return;
+  campaignManifest = null;
+  const complete = campaignProgress().completed.includes(missionId);
+  $('mission-size').textContent = complete ? 'Completed' : '';
+  fetch(`data/campaign/${missionId}.json`).then(response => {
+    if (!response.ok) throw new Error('Mission download unavailable.');
+    return response.json();
+  }).then(manifest => {
+    validateMissionManifest(manifest, missionId);
+    if ($('mission-select').value !== missionId) return;
+    campaignManifest = manifest;
+    $('mission-size').textContent = `${(manifest.pack.bytes / 1048576).toFixed(2)} MB${complete ? ' - completed' : ''}`;
+  }).catch(error => { if ($('mission-select').value === missionId) $('mission-size').textContent = error.message; });
+}
+function validateMissionManifest(manifest, missionId) {
+  if (!campaignMissionIds.includes(missionId) || manifest.schemaVersion !== 1 || manifest.id !== missionId || !Number.isInteger(manifest.humanSlot) || manifest.humanSlot < 0 || manifest.humanSlot >= 8 || ![0, 1, 2].includes(manifest.race) || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files)) throw new Error('Unsupported mission manifest.');
   if (!Number.isInteger(manifest.pack?.bytes) || manifest.pack.bytes <= 32 || manifest.pack.bytes > 32 * 1048576 || !/^[a-f0-9]{64}$/.test(manifest.pack.sha256)) throw new Error('Invalid mission pack metadata.');
   const url = new URL(manifest.pack.url, location.href);
-  if (url.origin !== location.origin || url.pathname !== new URL('data/campaign/terran01.mpq', location.href).pathname) throw new Error('Invalid mission pack location.');
+  if (url.origin !== location.origin || url.pathname !== new URL(`data/campaign/${missionId}.mpq`, location.href).pathname) throw new Error('Invalid mission pack location.');
   if (manifest.requirements.some(required => !/^(condition|action|briefing)\.\d+$/.test(required))) throw new Error('Invalid mission capability metadata.');
 }
 function campaignFailure(error) {
@@ -2186,19 +2192,24 @@ $('load-retry').onclick = () => location.reload();
 $('load-cancel').onclick = () => campaignDownload?.abort();
 $('mode-sandbox').onclick = () => selectGameMode(false);
 $('mode-campaign').onclick = () => selectGameMode(true);
+$('mission-select').onchange = loadSelectedMission;
 $('campaign-start').onclick = async () => {
   $('campaign-start').disabled = true;
+  $('mission-select').disabled = true;
   campaignDownload = new AbortController();
   $('load-actions').hidden = false;
   $('load-cancel').hidden = false;
   $('load-retry').hidden = true;
   $('load-return').hidden = true;
   try {
+    const missionId = $('mission-select').value;
+    if (!campaignMissionIds.includes(missionId)) throw new Error('Unsupported mission selection.');
+    if (campaignManifest?.id !== missionId) campaignManifest = null;
     if (!campaignManifest) {
-      const response = await fetch('data/campaign/terran01.json', { signal: campaignDownload.signal });
+      const response = await fetch(`data/campaign/${missionId}.json`, { signal: campaignDownload.signal });
       if (!response.ok) throw new Error(`Mission manifest HTTP ${response.status}`);
       campaignManifest = await response.json();
-      validateMissionManifest(campaignManifest);
+      validateMissionManifest(campaignManifest, missionId);
     }
     const address = new URL(location.href);
     address.searchParams.set('mission', campaignManifest.id);
@@ -2236,8 +2247,11 @@ $('campaign-reset').onclick = () => {
   delete button.dataset.confirm;
   button.title = button.ariaLabel = 'Reset campaign progress';
 };
-if (selectedMission === 'terran01') selectGameMode(true);
-if (selectedMission === 'terran01' && new URLSearchParams(location.search).get('autostart') === '1') $('campaign-start').click();
+if (campaignMissionIds.includes(selectedMission)) {
+  $('mission-select').value = selectedMission;
+  selectGameMode(true);
+  if (new URLSearchParams(location.search).get('autostart') === '1') $('campaign-start').click();
+}
 if (window.lucide) window.lucide.createIcons();
 
 $('start-game').onclick = () => {
@@ -2343,7 +2357,7 @@ function probeMeleeMaps() {
     for (const m of found) if (m) mapSelect.add(new Option(m.name, m.file));
   });
 }
-if (selectedMission !== 'terran01') probeMeleeMaps();
+if (!campaignMissionIds.includes(selectedMission)) probeMeleeMaps();
 
 // Race is picked in the lobby, not before hosting — the handshake only carries the
 // starting value, and either side can change it until the countdown locks.

@@ -198,6 +198,17 @@ struct location {
 	int elevation_flags;
 };
 
+struct unit_creation_properties {
+	int valid_state_flags = 0;
+	int valid_data_flags = 0;
+	int hitpoints_percent = 0;
+	int shields_percent = 0;
+	int energy_percent = 0;
+	int resources = 0;
+	int hangar_count = 0;
+	int state_flags = 0;
+};
+
 struct cv5_entry {
 	uint16_t flags;
 	std::array<uint16_t, 16> mega_tile_index;

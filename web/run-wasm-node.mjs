@@ -9,15 +9,17 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
+const missionId = campaign ? process.argv[3] || 'terran01' : null;
+if (campaign) assert.ok(['terran01', 'terran02'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
-const mission = campaign ? JSON.parse(readFileSync('web/data/campaign/terran01.json', 'utf8')) : null;
+const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
 const files = [
   readFileSync('web/data/STARDAT.MPQ'),
   readFileSync('web/data/BROODAT.MPQ'),
   readFileSync('web/data/patch_rt.mpq'),
-  readFileSync(campaign ? 'web/data/campaign/terran01.mpq' : 'web/maps/Weave_v1.scx'),
+  readFileSync(campaign ? `web/data/campaign/${missionId}.mpq` : 'web/maps/Weave_v1.scx'),
 ];
 
 const wasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
@@ -83,26 +85,38 @@ function testCampaign() {
     return new TextDecoder().decode(bytes.subarray(pointer, end));
   };
   const units = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
-  assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
   const human = units.filter(unit => Number(unit[2]) === mission.humanSlot);
-  assert.equal(human.length, 12);
-  assert.equal(human.filter(unit => unit[1] === 'Marine').length, 5);
-  assert.equal(human.filter(unit => unit[1] === 'SCV').length, 5);
-  assert.equal(units.filter(unit => Number(unit[2]) === 2).length, 1, 'Raynor must begin with rescue ownership');
-  assert.equal(units.filter(unit => Number(unit[2]) === 4).length, 23, 'Preserve the placed Zerglings');
+  if (missionId === 'terran02') {
+    assert.equal(units.length, 79, 'Expected 79 non-neutral actors, without melee starts');
+    assert.equal(units.filter(unit => Number(unit[2]) === mission.humanSlot).length, 11);
+    assert.equal(units.filter(unit => Number(unit[2]) === 2).length, 0, 'Raynor is naturally rescued during startup');
+    assert.ok(units.some(unit => unit[1] === 'Jim Raynor' && Number(unit[2]) === mission.humanSlot));
+    assert.equal(units.filter(unit => Number(unit[2]) === 3).length, 7, 'Preserve the rescuable station');
+    assert.equal(units.filter(unit => Number(unit[2]) === 4).length, 61, 'Preserve original enemy units and buildings');
+    console.log('Backwater initialization checks passed.');
+  } else {
+    assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
+    assert.equal(human.length, 12);
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 5);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 5);
+    assert.equal(units.filter(unit => Number(unit[2]) === 2).length, 1, 'Raynor must begin with rescue ownership');
+    assert.equal(units.filter(unit => Number(unit[2]) === 4).length, 23, 'Preserve the placed Zerglings');
+  }
   assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 0, 'No injected melee minerals');
   console.log('Campaign initialization checks passed.');
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), [1, 3, 4, 5, 6, 8]);
-  for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), action[3], 'Original briefing subtracts zero from its stored duration');
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : [1, 3, 4, 5, 6, 8]);
+  const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
+  for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
   x.openbw_step();
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 40, 'Original trigger must grant 40 minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), missionId === 'terran02' ? 200 : 40, 'Original trigger grants mission minerals');
+  if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   const events = [];
   const consume = () => {
     const text = read(x.openbw_mission_events()).trim();
@@ -133,7 +147,7 @@ function testCampaign() {
   const dialogue = events.filter(event => event[3] === 7);
   assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
-    assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), event[7], 'Original gameplay transmission retains its stored duration');
+    assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), transmissionTime(event[7], event[10], event[8]), 'Original gameplay transmission uses its stored duration and modifier');
     const path = read(x.openbw_mission_string(event[6])).replaceAll('\\', '/').toLowerCase();
     const expected = mission.files.find(file => file.path === path);
     assert.ok(expected?.audio, 'Transmission audio must be in the validated pack');
@@ -145,10 +159,12 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
-  x.openbw_debug_select(Number(human.find(unit => unit[1] === 'SCV')[0]), 0);
-  const buildChecks = [[1056, 1584], [864, 1744], [1120, 1584], [1216, 1584], [1056, 1904]].map(([mapX, mapY]) => ({mapX, mapY, flags: x.openbw_debug_build_check(111, mapX, mapY)}));
-  assert.ok(buildChecks.every(check => check.flags & 1), 'Original mission permits SCVs to build Barracks');
-  console.log('Campaign Barracks placement checks:', JSON.stringify(buildChecks));
+  if (missionId === 'terran01') {
+    x.openbw_debug_select(Number(human.find(unit => unit[1] === 'SCV')[0]), 0);
+    const buildChecks = [[1056, 1584], [864, 1744], [1120, 1584], [1216, 1584], [1056, 1904]].map(([mapX, mapY]) => ({mapX, mapY, flags: x.openbw_debug_build_check(111, mapX, mapY)}));
+    assert.ok(buildChecks.every(check => check.flags & 1), 'Original mission permits SCVs to build Barracks');
+    console.log('Campaign Barracks placement checks:', JSON.stringify(buildChecks));
+  }
   console.log(`Campaign original-trigger checks passed: ${events.length} events, ${dialogue.length} transmissions.`);
 }
 

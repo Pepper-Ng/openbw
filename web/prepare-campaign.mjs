@@ -6,7 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WASI } from 'node:wasi';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const scenarioHash = '4b0e5009c4ae80cfb4cb13ede30842db0aa05bb3be2eedad695fb093fa5786f6';
+const missions = {
+  terran01: { title: 'Wasteland', order: 1, scenarioHash: '4b0e5009c4ae80cfb4cb13ede30842db0aa05bb3be2eedad695fb093fa5786f6', units: 49, triggers: 9, sounds: 8 },
+  terran02: { title: 'Backwater Station', order: 2, scenarioHash: 'd8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce', units: 98, triggers: 15, sounds: 21 },
+};
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export function normalizeMissionPath(value) {
@@ -253,7 +256,9 @@ function testAudit() {
   console.log('Campaign audit synthetic checks passed.');
 }
 
-async function prepare() {
+async function prepare(missionId = 'terran01') {
+  assert.ok(Object.hasOwn(missions, missionId), 'Unsupported mission ID');
+  const mission = missions[missionId];
   const source = resolve(root, 'web/data/StarCraft.mpq');
   assert.equal(statSync(source).size, 601389682, 'Unexpected source archive size');
   const sourceHasher = createHash('sha256');
@@ -261,32 +266,37 @@ async function prepare() {
   assert.equal(sourceHasher.digest('hex'), 'ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d', 'Source archive hash mismatch');
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
-  const temporary = resolve(directory, 'terran01.mpq.tmp');
-  const manifestTemporary = resolve(directory, 'terran01.json.tmp');
+  const temporary = resolve(directory, `${missionId}.mpq.tmp`);
+  const manifestTemporary = resolve(directory, `${missionId}.json.tmp`);
   try {
-    const wasi = new WASI({ version: 'preview1', args: ['campaign-pack', `/input/${basename(source)}`, 'terran01', '/output/terran01.mpq.tmp'], preopens: { '/input': dirname(source), '/output': directory }, returnOnExit: true });
+    const wasi = new WASI({ version: 'preview1', args: ['campaign-pack', `/input/${basename(source)}`, missionId, `/output/${missionId}.mpq.tmp`], preopens: { '/input': dirname(source), '/output': directory }, returnOnExit: true });
     const module = await WebAssembly.compile(readFileSync(resolve(root, 'web/campaign-pack.wasm')));
     const instance = await WebAssembly.instantiate(module, wasi.getImportObject());
     assert.equal(wasi.start(instance), 0, 'Campaign extraction failed');
     const bytes = readFileSync(temporary);
     const read = readPlainMissionPack(bytes);
     const scenario = read('staredit/scenario.chk');
-    assert.equal(sha256(scenario), scenarioHash, 'Wasteland scenario changed');
+    assert.equal(sha256(scenario), mission.scenarioHash, `${mission.title} scenario changed`);
     const audit = auditScenario(scenario);
-    assert.equal(audit.units.length, 49);
-    assert.equal(audit.gameplay.records.length, 9);
+    assert.equal(audit.units.length, mission.units);
+    assert.equal(audit.gameplay.records.length, mission.triggers);
     assert.equal(audit.briefing.records.length, 1);
-    assert.equal(audit.wavePaths.length, 8);
+    assert.equal(audit.wavePaths.length, mission.sounds);
+    const humanSlots = audit.controllers.flatMap((controller, slot) => controller === 6 ? [slot] : []);
+    assert.equal(humanSlots.length, 1, 'Expected one open human mission slot');
+    const humanSlot = humanSlots[0];
+    const race = audit.races[humanSlot];
+    assert.ok([0, 1, 2].includes(race), 'Expected a fixed mission race');
     const files = ['staredit/scenario.chk', ...audit.wavePaths].map(path => {
       const content = read(path);
       return { path, bytes: content.length, sha256: sha256(content), ...(path.endsWith('.wav') ? { audio: waveMetadata(content) } : {}) };
     });
     const requirements = [...audit.gameplay.conditions.map(type => `condition.${type}`), ...audit.gameplay.actions.map(type => `action.${type}`), ...audit.briefing.actions.map(type => `briefing.${type}`)];
-    const manifest = { schemaVersion: 1, contentVersion: 1, id: 'terran01', episode: 1, order: 1, title: 'Wasteland', humanSlot: 1, race: 1, sourceChkSha256: scenarioHash, pack: { url: 'data/campaign/terran01.mpq', bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
+    const manifest = { schemaVersion: 1, contentVersion: 1, id: missionId, episode: 1, order: mission.order, title: mission.title, humanSlot, race, sourceChkSha256: mission.scenarioHash, pack: { url: `data/campaign/${missionId}.mpq`, bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
     writeFileSync(manifestTemporary, `${JSON.stringify(manifest, null, 2)}\n`);
-    writeFileSync(resolve(directory, 'terran01.audit.json'), `${JSON.stringify(audit, null, 2)}\n`);
-    renameSync(temporary, resolve(directory, 'terran01.mpq'));
-    renameSync(manifestTemporary, resolve(directory, 'terran01.json'));
+    writeFileSync(resolve(directory, `${missionId}.audit.json`), `${JSON.stringify(audit, null, 2)}\n`);
+    renameSync(temporary, resolve(directory, `${missionId}.mpq`));
+    renameSync(manifestTemporary, resolve(directory, `${missionId}.json`));
     console.log(JSON.stringify({ mission: manifest.id, packBytes: bytes.length, decodedBytes: files.reduce((total, file) => total + file.bytes, 0), packSha256: manifest.pack.sha256, dialogueFiles: files.filter(file => file.audio).length, conditions: audit.gameplay.conditions, actions: audit.gameplay.actions, briefing: audit.briefing.actions }, null, 2));
   } finally {
     rmSync(temporary, { force: true });
@@ -296,5 +306,5 @@ async function prepare() {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv[2] === '--test') testAudit();
-  else await prepare();
+  else await prepare(process.argv[2]);
 }

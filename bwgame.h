@@ -145,6 +145,8 @@ struct game_state {
 	size_t map_height;
 
 	a_vector<a_string> map_strings;
+	int scenario_format = 0;
+	std::array<unit_creation_properties, 64> unit_properties{};
 
 	a_string scenario_name;
 	a_string scenario_description;
@@ -242,6 +244,8 @@ struct state_base_copyable {
 	int last_error;
 
 	int trigger_timer;
+	int countdown_timer = 0;
+	std::array<bool, 256> trigger_switches{};
 	bool scripted_pause = false;
 	bool strict_triggers = false;
 	std::array<a_vector<running_trigger>, 8> running_triggers;
@@ -4273,6 +4277,11 @@ struct state_functions {
 		}
 	}
 
+	void order_ComputerAI(unit_t* u) {
+		if (!ut_building(u) || u->unit_type->human_ai_idle->id != Orders::Nothing) error("unsupported ComputerAI behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
+		if (!u->order_queue.empty()) activate_next_order(u);
+	}
+
 	void order_Nothing(unit_t* u) {
 		if (!u->order_queue.empty()) {
 			activate_next_order(u);
@@ -8098,7 +8107,7 @@ struct state_functions {
 			error("CTFCOP2");
 			break;
 		case Orders::ComputerAI:
-			error("ComputerAI");
+			order_ComputerAI(u);
 			break;
 		case Orders::AtkMoveEP:
 			error("AtkMoveEP");
@@ -12648,7 +12657,7 @@ struct state_functions {
 			error("hidden EnterTransport");
 			break;
 		case Orders::ComputerAI:
-			error("hidden ComputerAI");
+			order_ComputerAI(u);
 			break;
 		case Orders::RescuePassive:
 			order_RescuePassive(u);
@@ -13220,6 +13229,7 @@ struct state_functions {
 	void next_frame() {
 		if (!st.scripted_pause) {
 			++st.current_frame;
+			if (st.current_frame % 16 == 0 && st.countdown_timer > 0) --st.countdown_timer;
 			process_frame();
 		}
 		process_triggers();
@@ -18918,6 +18928,8 @@ struct state_functions {
 
 	bool test_trigger_condition(const trigger::condition& c, int owner) const {
 		switch (c.type) {
+		case 1:
+			return trigger_count_comparison(c, st.countdown_timer);
 		case 2: // command
 			return trigger_count_comparison(c, trigger_command_count(st, owner, c.group, c.unit_id, c.num_n != 1));
 		case 3: // bring
@@ -18933,6 +18945,10 @@ struct state_functions {
 			}
 		case 12: // elapsed time
 			return trigger_count_comparison(c, st.current_frame / 16);
+		case 11:
+			if (c.num_n == 2) return st.trigger_switches.at(c.extra_n);
+			if (c.num_n == 3) return !st.trigger_switches.at(c.extra_n);
+			return false;
 		case 14: // opponents
 			return trigger_count_comparison(c, trigger_opponent_count(owner, c.group));
 		case 22: // always
@@ -18941,6 +18957,21 @@ struct state_functions {
 			error("unknown trigger condition %d\n", c.type);
 			return false;
 		}
+	}
+
+	void apply_creation_properties(unit_t* unit, const unit_creation_properties& properties) {
+		if (properties.state_flags & properties.valid_state_flags & 7) error("unsupported cloaked/burrowed/in-transit creation properties");
+		if ((properties.valid_data_flags & 32) && properties.hangar_count) error("unsupported creation hangar count");
+		if (properties.valid_data_flags & 2) {
+			using extended_hp = fixed_point<32, 8, true>;
+			auto hp = extended_hp::extend(unit->unit_type->hitpoints) * properties.hitpoints_percent / 100;
+			set_unit_hp(unit, fp8::truncate(std::max(hp, extended_hp::from_raw(1))));
+		}
+		if (properties.valid_data_flags & 4) set_unit_shield_points(unit, fp8::integer(unit->unit_type->shield_points * properties.shields_percent / 100));
+		if (properties.valid_data_flags & 8) set_unit_energy(unit, unit_max_energy(unit) * properties.energy_percent / 100);
+		if (properties.valid_data_flags & 16) set_unit_resources(unit, properties.resources);
+		if (properties.valid_state_flags & properties.state_flags & 8) make_unit_hallucination(unit);
+		if (properties.valid_state_flags & 16) u_set_status_flag(unit, unit_t::status_flag_invincible, ut_invincible(unit) || (properties.state_flags & 16));
 	}
 
 	unit_t* trigger_create_unit(const unit_type_t* unit_type, xy pos, int owner) {
@@ -19080,14 +19111,14 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 2 || type == 4 || type == 12 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 11 || type == 12 || type == 22;
 	}
 
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 12: case 17: case 26: case 30: case 31:
-		case 32: case 38: case 47:
+		case 9: case 10: case 11: case 12: case 13: case 17: case 23: case 26: case 30: case 31:
+		case 32: case 38: case 43: case 47:
 			return true;
 		default:
 			return false;
@@ -19155,6 +19186,15 @@ struct state_functions {
 			return true;
 		case 47:
 			return true;
+		case 13:
+			{
+				auto& value = st.trigger_switches.at(a.group2_n);
+				if (a.num_n == 4) value = true;
+				else if (a.num_n == 5) value = false;
+				else if (a.num_n == 6) value = !value;
+				else error("unsupported switch modifier %d", a.num_n);
+				return true;
+			}
 		case 15: // ai script
 			switch (a.group2_n) {
 			case 0x3069562b:
@@ -19207,6 +19247,31 @@ struct state_functions {
 				}
 			}
 			return true;
+		case 23:
+		case 43:
+			{
+				const auto& location = st.locations.at(a.location - 1);
+				int remaining = a.num_n ? a.num_n : std::numeric_limits<int>::max();
+				for (int player : trigger_players(owner, a.group_n)) {
+					for (auto iterator = st.player_units[player].begin(); iterator != st.player_units[player].end();) {
+						unit_t* unit = &*iterator++;
+						if (ut_turret(unit) || unit_dying(unit) || !unit_is_at_elevation_flags(unit, location.elevation_flags)) continue;
+						if (!trigger_unit_pred(owner, unit, a.group_n, a.extra_n)) continue;
+						auto bounds = unit_sprite_inner_bounding_box(unit);
+						if (bounds.to.x < location.area.from.x || bounds.from.x > location.area.to.x || bounds.to.y < location.area.from.y || bounds.from.y > location.area.to.y) continue;
+						if (a.type == 23) {
+							kill_unit(unit);
+							if (!--remaining) return true;
+						} else if (!u_hallucination(unit)) {
+							if (a.num_n == 4) u_set_status_flag(unit, unit_t::status_flag_invincible);
+							else if (a.num_n == 5) u_set_status_flag(unit, unit_t::status_flag_invincible, ut_invincible(unit));
+							else if (a.num_n == 6) u_set_status_flag(unit, unit_t::status_flag_invincible, ut_invincible(unit) || !u_invincible(unit));
+							else error("unsupported invincibility state %d", a.num_n);
+						}
+					}
+				}
+				return true;
+			}
 		case 24: // remove unit
 			for (int p : trigger_players(owner, a.group_n)) {
 				int uid = a.extra_n;
@@ -19337,14 +19402,21 @@ struct state_functions {
 				target_loc.area.to = to;
 			}
 			return true;
+		case 11:
 		case 44: // create unit
 			for (int p : trigger_players(owner, a.group_n)) {
 				const unit_type_t* ut = get_unit_type((UnitTypes)a.extra_n);
 				if (unit_is_mineral_field(ut) || unit_is(ut, UnitTypes::Resource_Vespene_Geyser)) p = 11;
 				auto& loc = st.locations.at(a.location - 1);
 				xy pos = (loc.area.from + loc.area.to) / 2;
-				for (int i = 0; i != a.num_n; ++i) {
-					trigger_create_unit(ut, pos, p);
+				int count = a.num_n;
+				if (!count && game_st.scenario_format == 59) count = 1;
+				if (!count) error("unsupported zero-quantity unit creation for scenario format %d", game_st.scenario_format);
+				unit_creation_properties properties{};
+				if (a.type == 11 && a.group2_n) properties = game_st.unit_properties.at(a.group2_n - 1);
+				for (int index = 0; index != count; ++index) {
+					unit_t* unit = trigger_create_unit(ut, pos, p);
+					if (unit && a.type == 11) apply_creation_properties(unit, properties);
 				}
 			}
 			return true;
@@ -21367,6 +21439,7 @@ struct game_load_functions : state_functions {
 		int version = 0;
 		tag_funcs["VER "] = [&](data_reader_le r) {
 			version = r.get<uint16_t>();
+			game_st.scenario_format = version;
 		};
 		tag_funcs["DIM "] = [&](data_reader_le r) {
 			game_st.map_tile_width = r.get<uint16_t>();
@@ -21784,25 +21857,17 @@ struct game_load_functions : state_functions {
 
 		tag_funcs["UPRP"] = [&](data_reader_le r) {
 			for (int i = 0; i < 64; ++i) {
-				int valid_flags = r.get<uint16_t>();
-				int valid_properties = r.get<uint16_t>();
-				int owner = r.get<uint8_t>();
-				int hp_percent = r.get<uint8_t>();
-				int shield_percent = r.get<uint8_t>();
-				int energy_percent = r.get<uint8_t>();
-				int resources = r.get<uint32_t>();
-				int units_in_hangar = r.get<uint16_t>();
-				int flags = r.get<uint16_t>();
+				auto& properties = game_st.unit_properties[i];
+				properties.valid_state_flags = r.get<uint16_t>();
+				properties.valid_data_flags = r.get<uint16_t>();
+				r.get<uint8_t>();
+				properties.hitpoints_percent = r.get<uint8_t>();
+				properties.shields_percent = r.get<uint8_t>();
+				properties.energy_percent = r.get<uint8_t>();
+				properties.resources = r.get<uint32_t>();
+				properties.hangar_count = r.get<uint16_t>();
+				properties.state_flags = r.get<uint16_t>();
 				r.get<uint32_t>();
-				(void)valid_flags;
-				(void)valid_properties;
-				(void)owner;
-				(void)hp_percent;
-				(void)shield_percent;
-				(void)energy_percent;
-				(void)resources;
-				(void)units_in_hangar;
-				(void)flags;
 			}
 		};
 

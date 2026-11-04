@@ -6,11 +6,13 @@ import { readFileSync } from 'node:fs';
 import { argv } from 'node:process';
 
 const campaign = argv[2] === '--test-campaign';
-const map = campaign ? '/data/campaign/terran01.mpq' : argv[2] || '/maps/Benzene.scx';
+const missionId = campaign ? argv[3] || 'terran01' : null;
+if (campaign && !['terran01', 'terran02'].includes(missionId)) throw new Error('Unsupported test mission');
+const map = campaign ? `/data/campaign/${missionId}.mpq` : argv[2] || '/maps/Benzene.scx';
 
 const wasi = new WASI({
   version: 'preview1',
-  args: ['sim', '/data', map, ...(campaign ? ['--test-campaign'] : [])],
+  args: ['sim', '/data', map, ...(campaign ? ['--test-campaign', missionId] : [])],
   preopens: { '/data': 'web/data', '/maps': 'web/maps' },
 });
 
