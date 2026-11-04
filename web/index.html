@@ -402,6 +402,45 @@
     #mobilewarn { display: none !important; }
   }
 </style>
+<style>
+  #play-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 12px 0 20px; }
+  #play-modes button { display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 4px; }
+  #play-modes button[aria-selected="true"] { border-color: #38bdf8; color: #e2f5ff; background: #193744; }
+  #play-modes svg, #campaign-setup svg, #load-actions svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #controls [hidden], #load-actions[hidden] { display: none !important; }
+  #campaign-setup { text-align: left; }
+  #campaign-setup label { display: block; margin-bottom: 8px; }
+  #mission-select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 10px; background: #111827; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; font: inherit; }
+  #mission-size { min-height: 20px; margin: 10px 0; color: #94a3b8; font-size: 13px; }
+  #campaign-start, #load-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  #campaign-tools { display: flex; gap: 8px; margin-top: 16px; }
+  #campaign-tools button { width: 44px; height: 44px; padding: 10px; border-radius: 4px; }
+  #load-actions { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
+  #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #load-actions button[hidden] { display: none !important; }
+  #mission-briefing { position: fixed; inset: 0; z-index: 15; display: grid; align-content: center; overflow: auto; padding: 24px; box-sizing: border-box; background: rgba(5, 12, 16, .96); color: #e2e8f0; }
+  .briefing-content { width: min(100%, 720px); margin: auto; min-width: 0; }
+  #briefing-title { font-size: 24px; margin: 0 0 12px; }
+  #briefing-speaker-row { display: flex; gap: 12px; align-items: center; min-height: 64px; margin: 12px 0; }
+  #briefing-portrait { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; }
+  #briefing-speaker { font-size: 16px; }
+  #briefing-text, #briefing-objectives { white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; }
+  #briefing-text { min-height: 96px; max-height: 32svh; overflow-y: auto; margin: 12px 0; }
+  #briefing-objectives { border-top: 1px solid #334155; padding-top: 12px; max-height: 22svh; overflow-y: auto; color: #b6d8c8; }
+  .briefing-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+  .briefing-actions button { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; border-radius: 4px; }
+  .briefing-actions svg { width: 18px; height: 18px; }
+  #briefing-state { color: #94a3b8; font-size: 13px; margin-top: 12px; min-height: 20px; }
+  #mission-hud { position: fixed; z-index: 4; top: calc(var(--touch-top, 0px) + 52px); right: 12px; width: min(300px, calc(100vw - 24px)); font-size: 13px; }
+  #mission-objectives { padding: 8px 10px; background: rgba(4, 12, 15, .9); border: 1px solid #3b5556; border-radius: 4px; }
+  #mission-objectives summary { cursor: pointer; min-height: 24px; }
+  #mission-objectives-text { white-space: pre-line; overflow-wrap: anywhere; max-height: 28svh; overflow-y: auto; line-height: 1.4; padding-top: 8px; }
+  #mission-leaderboard { margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); }
+  #mission-caption { position: fixed; z-index: 5; top: calc(var(--touch-top, 0px) + 108px); left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 28px)); box-sizing: border-box; background: rgba(4, 12, 15, .94); border-left: 3px solid #7bb79a; padding: 10px 12px; pointer-events: none; }
+  #mission-caption-speaker { font-size: 13px; color: #b6d8c8; margin-bottom: 4px; }
+  #mission-caption-text { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; max-height: 24svh; overflow-y: auto; }
+  #go-progress { font-size: 13px; color: #b6d8c8; margin: 12px 0; }
+  @media (max-height: 500px) { #mission-briefing { padding: 12px 20px; } #briefing-title { font-size: 18px; } #briefing-speaker-row { min-height: 36px; margin: 4px 0; } #briefing-portrait { width: 36px; height: 36px; } #briefing-text { min-height: 44px; } .briefing-actions { margin-top: 10px; } }
+</style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="1280" height="800"></canvas></div>
@@ -470,15 +509,38 @@
 <div id="hud"><div id="status"></div><div id="wires"></div><div id="card"></div></div>
 <div id="toast"></div>
 <div id="messages"></div>
+<aside id="mission-hud" hidden>
+  <details id="mission-objectives"><summary>Objectives</summary><div id="mission-objectives-text"></div></details>
+  <div id="mission-leaderboard" hidden></div>
+</aside>
+<div id="mission-caption" role="status" aria-live="polite" hidden>
+  <div id="mission-caption-speaker"></div><div id="mission-caption-text"></div>
+</div>
+<div id="mission-briefing" role="dialog" aria-modal="true" aria-labelledby="briefing-title" hidden>
+  <div class="briefing-content">
+    <h1 id="briefing-title">Wasteland</h1>
+    <div id="briefing-speaker-row"><img id="briefing-portrait" alt="" hidden><span id="briefing-speaker"></span></div>
+    <div id="briefing-text" aria-live="polite"></div>
+    <div id="briefing-objectives"></div>
+    <div class="briefing-actions">
+      <button id="briefing-play" type="button"><i data-lucide="play"></i><span>Play Briefing</span></button>
+      <button id="briefing-begin" type="button"><i data-lucide="skip-forward"></i><span>Begin Mission</span></button>
+      <button id="briefing-return" type="button"><i data-lucide="arrow-left"></i><span>Return</span></button>
+    </div>
+    <div id="briefing-state" role="status">Ready</div>
+  </div>
+</div>
 <input id="chatinput" type="text" maxlength="80" autocomplete="off" spellcheck="false" style="display:none">
 <div id="paused"><span>Paused</span></div>
 <button id="dropbtn">Drop opponent</button>
 <div id="gameover">
   <div class="go-card">
     <h1 id="go-title">Game over</h1>
+    <div id="go-progress" role="status"></div>
     <div id="go-table"><table id="go-stats"></table></div>
     <div class="go-actions">
       <button id="go-replay">Save replay (.rep)</button>
+      <button id="go-retry" hidden>Retry Mission</button>
       <button id="go-close" class="go-ghost">Look at map</button>
       <button id="go-new" class="go-ghost">New game</button>
     </div>
@@ -489,12 +551,35 @@
   <h1><a id="home" href="./" title="Start over on a clean URL">OpenBW Web</a></h1>
   <div id="bar"><i></i></div>
   <div id="msg">Preparing…</div>
+  <div id="load-actions" hidden>
+    <button id="load-cancel" type="button" hidden><i data-lucide="x"></i>Cancel</button>
+    <button id="load-retry" type="button"><i data-lucide="rotate-cw"></i>Retry</button>
+    <button id="load-return" type="button"><i data-lucide="arrow-left"></i>Return</button>
+  </div>
   <div id="mobilewarn">
     📱 Touch controls: <b>tap</b> to select, <b>drag</b> to pan, <b>long-press</b> to
     command (move/attack), <b>long-press&nbsp;+&nbsp;drag</b> to box-select. Best in
     landscape. First run downloads ~90&nbsp;MB of game data.
   </div>
   <div id="controls" style="display:none">
+    <div id="play-modes" role="tablist" aria-label="Game mode">
+      <button id="mode-sandbox" type="button" role="tab" aria-selected="true"><i data-lucide="swords"></i>Sandbox</button>
+      <button id="mode-campaign" type="button" role="tab" aria-selected="false"><i data-lucide="book-open"></i>Campaign</button>
+    </div>
+    <div id="campaign-setup" hidden>
+      <label for="mission-select">Terran Campaign</label>
+      <select id="mission-select">
+        <option value="terran01">1. Wasteland</option>
+        <option value="terran02" disabled>2. Backwater Station - unavailable</option>
+        <option value="terran03" disabled>3. Desperate Alliance - unavailable</option>
+      </select>
+      <div id="mission-size" role="status" aria-live="polite"></div>
+      <button id="campaign-start" type="button"><i data-lucide="play"></i>Start Mission</button>
+      <div id="campaign-tools">
+        <button id="campaign-delete" type="button" title="Delete downloaded missions" aria-label="Delete downloaded missions"><i data-lucide="trash-2"></i></button>
+        <button id="campaign-reset" type="button" title="Reset campaign progress" aria-label="Reset campaign progress"><i data-lucide="rotate-ccw"></i></button>
+      </div>
+    </div>
     <div id="map-row">
       <span class="lbl">Map</span>
       <select id="map-select"></select>
@@ -507,7 +592,7 @@
       <input type="checkbox" id="spectate"> Bot vs Bot (spectate)
     </label>
     <div id="lobby-hint" class="hint"></div>
-    <p><button id="start-game">Start Game</button></p>
+    <p id="sandbox-start"><button id="start-game">Start Game</button></p>
     <div id="mp">
       <h2>or play a friend (1v1)</h2>
       <div class="row" id="mp-setup">

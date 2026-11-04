@@ -4,13 +4,15 @@
 
 - Research date: 2026-11-04.
 - Branch: `campaign`, based on `dev` at `9958fa5034ceb9f6ab1d05c9d240e031020732cb`.
-- This document records research and planned work. Campaign gameplay is not implemented yet.
+- The local Wasteland prototype has mission loading, briefing, narration, objectives, rescue, triggers, outcomes, retry, and progression. A normal-control browser victory and the automated Wasteland gates passed. Physical iPhone acceptance remains open; this is not support for the full campaign.
 - First playable milestone: the original Terran mission Wasteland, from briefing through actual victory or defeat, using its original scenario rather than a scripted recreation.
 - Follow-up missions: Backwater Station and Desperate Alliance. Completing the first mission does not establish support for all campaign maps.
 - Keep the working melee sandbox, optional bots, multiplayer, mobile controls, and command regressions intact.
 - Use shared cached game data and mission-at-a-time downloads. Do not require the entire campaign/CD archive before the first mission starts.
 - Do not commit proprietary archives, mission data, dialogue, videos, or generated packs. Local development assets remain under ignored `web/data/`.
-- This change is documentation only. The next implementation session should work through the milestones below after approval.
+- Implementation was approved on 2026-11-04. Work remains on `campaign`; no merge, public deployment, or asset redistribution is authorized.
+- The user confirmed successful testing and approved the Wasteland milestone commit on 2026-11-04. The test device was not specified.
+- Next priority: Backwater Station's mission/runtime compatibility. Defer UI and mobile optimization, onboarding, and linked mission progression until later. Existing functional controls and regressions must remain intact.
 
 No blocking product questions are needed to follow this plan. The defaults are English assets, browser single-player, desktop plus the existing mobile interface, local development delivery first, and persistent completed-mission progress. Animated portraits, cinematics, mid-mission saves, and public asset hosting are not first-milestone requirements.
 
@@ -83,9 +85,13 @@ UNIT record counts include start-location markers. They are not expected live-un
 
 | Scenario   | SHA-256 Of Raw CHK                                                 |
 | ---------- | ------------------------------------------------------------------ |
-| `terran01` | `4c2487ac0219eee53719ff88e068ecc77d0634aad250ecb69d69b0089b849ff9` |
-| `terran02` | `fbfc8325fe73e2351771f3b37ce09642a4f88f3ff89e060a61dc8a549c2e721d` |
-| `terran03` | `597c34e9f74d1564978a5971a065e2699ae20f49eacfff1ff0e28d2537d7d03e` |
+| `terran01` | `4b0e5009c4ae80cfb4cb13ede30842db0aa05bb3be2eedad695fb093fa5786f6` |
+| `terran02` | `d8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce` |
+| `terran03` | `9d83a8bde18c38ee12f54f4c5253bed5466027fc612141e9a7415c94d3346737` |
+
+These hashes supersede the planning audit's hashes. The Python helper previously padded encrypted sector tails before decryption. StormLib decrypts only complete 32-bit words and leaves remaining bytes unchanged. The corrected helper and the production C++ decoder agree byte-for-byte on Wasteland. No source archive or scenario was edited.
+
+Wasteland's audit was regenerated after that correction. Regenerate the T2/T3 scenario and AI-script audits before P7; their earlier operation findings, including MBRF type 29, remain provisional.
 
 The downloaded original campaign/CD wrapper has SHA-256 `ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d`. Retain the source archives unchanged. Generated mission packs need their own hashes; neither source CRC32 nor source CHK hashes are substitutes for pack validation.
 
@@ -205,6 +211,8 @@ Before a mission runs, verify all required dependencies and supported operations
 
 ## Existing Code And Compatibility Gaps
 
+The table and numbered hazards in this section describe the research baseline. Current implementation results are recorded under Implementation Evidence below.
+
 | Area           | Existing Behavior                                                                            | Campaign Requirement                                                                                                 |
 | -------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Initialization | [web/wasm_main.cpp](web/wasm_main.cpp#L80) always calls melee setup.                         | Add a separate mission path without changing melee defaults.                                                         |
@@ -259,12 +267,61 @@ Use a new queue only for the actual native-to-browser presentation need. Do not 
 - [x] Inspect Wasteland's controllers, unit records, resource grant, Force owners, and numeric outcomes.
 - [x] Locate the existing MPQ/audio, scenario-loader, callback, and single-player lockstep boundaries.
 - [x] Find first-mission rescue, UMS-ordering, trigger-continuation, and outcome risks in source.
-- [ ] Round-trip a generated mission pack and decode/play its actual dialogue through the production path.
-- [ ] Confirm classic timing, pause/skip behavior, rescue rules, and the enemy idle orders activated by the map.
-- [ ] Verify nontrivial existing operations, especially Move Location direction/extent handling, before treating them as correct.
+- [x] Round-trip a generated mission pack and decode/play its actual dialogue through the production path.
+- [x] Confirm the required timing boundaries, pause/skip behavior, rescue rules, and the guard/combat orders activated by Wasteland against the checked references and runtime tests.
+- [x] Verify Move Location direction and extent preservation with an authored native fixture. General custom-map compatibility remains outside this milestone.
 - [ ] Resolve public asset-delivery authorization/range support before a public campaign release; local packs do not require resolving public hosting first.
 
 The remaining technical gates have concrete owners and tests below. They are not product questions that need to block this document or require the user to explain implementation details.
+
+### Implementation Evidence: Asset Preparation
+
+Verified locally on 2026-11-04:
+
+- [web/campaign_pack.cpp](web/campaign_pack.cpp) reads the embedded archive through a bounded reader, decodes the original scenario/audio, and writes a plain MPQ. It reopens every generated entry through the production reader and compares bytes.
+- [web/prepare-campaign.mjs](web/prepare-campaign.mjs) verifies the source SHA-256, independently reads the output tables, checks CHK structure/operations, validates PCM lengths/formats/durations, and emits the ignored pack, manifest, and audit.
+- The production reader now accepts uncompressed unencrypted MPQ entries. Compressed payload lengths exclude their method byte.
+- The pack contains nine files, totals 3,582,624 bytes, and has SHA-256 `2045ab3a2a076d23ce1f895fea5ec9069539675d6e4482c16de49c8a60001c87`. Its decoded content totals 3,581,936 bytes. All eight WAVs pass RIFF/PCM metadata checks.
+- Synthetic checks cover malformed sections/strings, append-versus-replacement sections, disabled conditions/actions, first-zero termination, owner preservation, and unsafe paths. Python runtime checks cover partial-word decryption and the independent scenario comparison.
+- This checkpoint establishes pack preparation. Completed browser playback/network checks are recorded in the mission-runtime evidence below.
+
+Commands:
+
+```powershell
+& .\web\build-wasm.ps1 -CampaignPack
+node web/prepare-campaign.mjs --test
+node web/prepare-campaign.mjs
+```
+
+### Implementation Evidence: Mission Runtime
+
+Verified locally on 2026-11-04 for the Wasteland milestone:
+
+- The explicit campaign entry point loads the mission overlay before shared archives, preserves slot 1/Terran and the original 46 actors, and injects no melee units or minerals. The original trigger grants 40 minerals.
+- UMS race handling and zero-based CHK force normalization are corrected. Rescue-passive orders use a 64-pixel search box and the existing ownership-transfer helper. Placed Zerglings use the existing guard/combat path; no campaign AI substitute was added.
+- Authored checks cover rescue range/ownership, Force/All Players/Current Player selectors, raw Exactly 10, Accumulate holdings, resource modifiers/underflow, disabled conditions, one-shot continuation, Move Location direction/extents, scripted pause, transmission modifiers, ordered events, and the earlier-trigger recheck when Wait starts.
+- Elapsed Time uses 16 ticks per game second. Regular scans retain the 31-tick cadence; UMS first scans at tick 2. Waits use the checked Fastest 42 ms quantization and minimum two ticks. Script pause freezes the world while trigger waits continue.
+- Eight fresh-state cases pass through the original mission triggers: all three missing-victory-requirement cases, full victory with real rescue transfer, all human units lost, Raynor lost, paused economy defeat at 399 minerals, and survival at 400.
+- The browser-module runner covers 1,200 logical steps, separate briefing parsing, pre-Begin freeze, native capabilities, event acknowledgement, render-independent delivery, persistent objectives, actual WAV durations, native sound loading, and sound-handle reuse.
+- The browser loads only Wasteland's manifest and pack as campaign content. A subsequent fresh mission session reused the verified cached pack with zero pack network requests. No campaign/CD archive or other mission was requested.
+- Browser briefing text and narration were exercised: the first real voice clip decoded and started in Web Audio while the world remained at frame zero. Begin/Skip entered gameplay with the original 40 minerals. Portrait briefing layout passed at 390 x 640 with touch emulation and no horizontal overflow.
+- Normal-control play demonstrated gathering, enemy attacks, Raynor rescue, replacement-SCV production, Barracks construction, five additional Marine trainings, and original-trigger victory. No resources or units were granted. Terminal state was ten Marines, one Barracks, human-owned Raynor, outcome 1, and completed mission `terran01` in persistent progress.
+- Browser checks also passed defeat without progress writes, fresh retry at frame zero, quota-failed progress storage, unsupported-operation preflight, corrupt-pack rejection, cancelled download, runtime-failure stop/recovery, and preservation of the good cached pack.
+- Touch-emulated briefing/gameplay was checked at 390 x 640 and 844 x 390. Expanded objectives initially overlapped narration; the corrected layout places captions beside or below the panel. The checked worker layouts have no control/objective/caption overlap or horizontal overflow. Actual iPhone testing remains open.
+
+The briefing uses unit icons and speaker-name fallbacks rather than animated portraits. Briefing and gameplay share the stored base-duration/adjustment calculation. The action's `time` is the base; `group2` supplies Set/Add/Subtract adjustment, not the WAV length. Waits round up to 42 ms ticks; 0/42/43/84/85 ms boundaries pass. Camera changes are immediate rather than eased. Only Fastest is offered in campaign mode. Later missions remain unavailable.
+
+Acceptance used the integrated Chromium browser on Windows. The normal-control victory occurred at world frame 22,817 on an intermediate build. The subsequent transmission-field and wait-boundary corrections passed the full original-predicate and browser-module suites; the long normal-control playthrough was not repeated after those timing corrections. The final ignored browser module has SHA-256 `a78f2dc6fd637c5974671c786afc0c42fa9fc0a02548b3279fff0692efe62a73`. The milestone is based on `132f96b165cc051e8d9623f9e65150461a923784` on `campaign`. The user subsequently confirmed successful testing. No merge, push, public deployment, or proprietary-asset publication was performed.
+
+Commands:
+
+```powershell
+& .\web\build-wasm.ps1 -SimulationTest
+node web/run-sim.mjs --test-campaign
+& .\web\build-wasm.ps1
+node web/run-wasm-node.mjs --test-campaign
+node web/run-wasm-node.mjs --test-commands
+```
 
 ## Implementation Milestones
 
@@ -400,7 +457,9 @@ Definition of done: Wasteland is genuinely playable from selection through brief
 
 ### P7: Extend To The Next Two Missions
 
-Only start this after P6 is demonstrated or after explicitly recording why a dependency must be developed earlier.
+Wasteland's local playable milestone is accepted. Backwater Station is the next implementation slice; deferred mobile/presentation polish does not block its runtime work. Physical-device and public-delivery checks remain release gates.
+
+First regenerate Backwater Station's audit with the corrected MPQ reader. Confirm its required operations, controllers, rescue behavior, and original outcomes before relying on the provisional findings below. Then prepare its own mission pack, extend only the missing runtime capabilities, and verify normal-play success/failure while retaining Wasteland regressions. Use the existing mission-selection surface; do not broaden this slice into onboarding or automatic mission-to-mission flow.
 
 - Backwater Station: implement/test countdown and switch conditions, additional rescue behavior, unit-property creation, kill-at-location, and invincibility, together with its actual unit availability and objective flow. Reuse the same manifest, briefing, event, and outcome infrastructure.
 - Desperate Alliance: add kills/countdown behavior and computer-owned trigger execution, then interpret the `Ter3`/`Suic` programs from the real AI binaries. Inventory reachable instructions and add unsupported-op diagnostics before promising complete AI coverage. Campaign base building/attack waves must come from the script runtime, not hand-timed substitutes or McRave/ZZZKBot.
@@ -444,9 +503,9 @@ There is no reliable calendar estimate for all campaigns yet. P1-P3 runtime evid
 
 1. Open this file; confirm `campaign` and inspect the actual worktree before editing.
 2. Reconfirm the three core archives and the original CD archive locally; do not redownload or commit them unnecessarily.
-3. Start P0/P1. Do not begin with a campaign menu that can only load melee maps.
-4. Write the first failing pack/UMS/rescue test, then implement only that slice. Keep milestone evidence and open questions here.
-5. After P2-P3 work, provide a concrete playable-state report before broadening to more missions. Ask for the user's normal-play/mobile feedback at P6.
+3. Regenerate Backwater Station's audit and prepare its mission pack using the corrected reader. Do not assume the provisional T2/T3 profiles are final.
+4. Add a failing check for each newly required operation, then extend the existing runtime. Keep milestone evidence and open questions here.
+5. Verify Backwater Station through original-trigger success/failure and retain Wasteland regressions. Keep UI/mobile polish, onboarding, and linked mission flow deferred.
 6. Commit related milestones on `campaign` with the established personal author/signing setup when requested. Do not merge or deploy to `dev`/`master` without instruction.
 
 ## Validation Baseline
@@ -488,6 +547,10 @@ Additional references checked for this plan:
 - [Trigger owner expansion and execution ordering](https://wiki.staredit.net/w/index.php?title=Triggers&oldid=560).
 - [Wait-block behavior and per-player waits](https://wiki.staredit.net/w/index.php?title=Wait_blocks&oldid=629).
 - [Wait quantization and trigger-cycle caveats](https://wiki.staredit.net/w/index.php?title=Hyper_Triggers&oldid=559).
+- [Game-second, initial-scan, and regular-scan tick measurements](https://wiki.staredit.net/w/index.php?title=Game_speed&oldid=699).
+- [Rescue behavior reference](https://github.com/BoomerangAide/GPTP/blob/ce321f0fa83174aee741b91f1b2eaec30300773e/GPTP/hooks/orders/rescuable_order.cpp), consulted for behavior only; no implementation code was copied.
+- [Transmission duration fields and trigger scheduling reference](https://github.com/neivv/teippi/blob/05c006c2f74ad11285c39d37135aed03d1fb8806/src/triggers.cpp). Its MIT license was checked; no implementation code was copied.
+- [StormLib MPQ block decryption](https://github.com/ladislav-zezula/StormLib/blob/master/src/SBaseCommon.cpp), checked for whole-word handling; no implementation code was copied.
 - [PyMS license](https://github.com/poiuyqwert/PyMS/blob/master/LICENSE.md), identified by GitHub as MIT during this research. No implementation code was copied in this planning change.
 
 References describe intended formats/behavior; they are not evidence that the current engine implements it. Pin any additional reference revision used for code or normative timing tests during implementation.

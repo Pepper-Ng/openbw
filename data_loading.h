@@ -1050,7 +1050,9 @@ struct mpq_archive_file_reader {
 	mpq_archive_file_reader(a_string arg_filename, base_reader_T& r, size_t sector_size, block_table_entry be, uint32_t key, const crypt_table_t& crypt_table) : filename(std::move(arg_filename)), r(r), sector_size(sector_size), be(be), key(key), crypt_table(crypt_table) {
 
 		if (~be.flags & 0x200 && ~be.flags & 0x100) {
-			error("mpq: %s: file is not compressed", filename);
+			if (be.flags & 0x10000) error("mpq: %s: encrypted uncompressed files are unsupported", filename);
+			if (be.compressed_size != be.size) error("mpq: %s: invalid uncompressed size", filename);
+			return;
 		}
 
 		sector_data.resize(sector_size);
@@ -1101,9 +1103,10 @@ struct mpq_archive_file_reader {
 		} else {
 			if (be.flags & 0x10000) get_data(make_encrypted_reader(r, sector_data_size, key + (uint32_t)current_sector, crypt_table));
 			else get_data(r);
-			if (compression_flags == 8) decompress(compressed_data.data(), sector_data_size, sector_data.data(), current_sector_size);
+			size_t payload_size = sector_data_size - ((be.flags & 0x200) ? 1 : 0);
+			if (compression_flags == 8) decompress(compressed_data.data(), payload_size, sector_data.data(), current_sector_size);
 			else {
-				size_t input_size = sector_data_size;
+				size_t input_size = payload_size;
 				auto swap_buffers = [&](size_t new_input_size) {
 					input_size = new_input_size;
 					std::swap(compressed_data, sector_data);
@@ -1132,7 +1135,14 @@ struct mpq_archive_file_reader {
 	}
 
 	void get_bytes(uint8_t* dst, size_t n) {
-		if (file_position + n > be.size) error("mpq: %s: attempt to read past end", filename);
+		if (n > be.size - file_position) error("mpq: %s: attempt to read past end", filename);
+		if (!n) return;
+		if (~be.flags & 0x200 && ~be.flags & 0x100) {
+			r.seek(be.data_offset + file_position);
+			r.get_bytes(dst, n);
+			file_position += n;
+			return;
+		}
 		if (file_position / sector_size != current_sector) read_sector();
 		size_t sector_offset = file_position % sector_size;
 		while (sector_size - sector_offset < n) {

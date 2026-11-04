@@ -187,6 +187,7 @@ struct game_state {
 	regions_t regions;
 
 	a_vector<trigger> triggers;
+	a_vector<trigger> briefings;
 };
 
 struct state_base_copyable {
@@ -241,6 +242,8 @@ struct state_base_copyable {
 	int last_error;
 
 	int trigger_timer;
+	bool scripted_pause = false;
+	bool strict_triggers = false;
 	std::array<a_vector<running_trigger>, 8> running_triggers;
 	std::array<int, 12> trigger_wait_timers;
 	std::array<bool, 12> trigger_waiting;
@@ -339,6 +342,7 @@ struct state_functions {
 
 	virtual void on_player_eliminated(int owner) {}
 	virtual void on_victory_state(int owner, int state) {}
+	virtual void on_trigger_action(int owner, const trigger::action& action) {}
 
 	virtual ~state_functions() {}
 
@@ -7607,6 +7611,23 @@ struct state_functions {
 		}
 	}
 
+	void order_RescuePassive(unit_t* u) {
+		if (u->main_order_timer) return;
+		u->main_order_timer = 1;
+		unit_t* rescuer = find_unit(square_at(u->sprite->position, 64), [&](const unit_t* candidate) {
+			return st.players[candidate->owner].controller == player_t::controller_occupied && candidate->order_type->id != Orders::Die;
+		});
+		if (!rescuer) return;
+		int recipient = rescuer->owner;
+		if (unit_is_active_resource_depot(u)) {
+			a_vector<unit_t*> rescued;
+			for (unit_t* candidate : ptr(st.player_units[u->owner])) {
+				if (candidate->sprite && candidate->order_type->id != Orders::Die) rescued.push_back(candidate);
+			}
+			for (unit_t* candidate : rescued) trigger_give_unit_to(candidate, recipient);
+		} else trigger_give_unit_to(u, recipient);
+	}
+
 	void order_Neutral(unit_t* u) {
 		unit_t* target = u->auto_target_unit;
 		if (target) {
@@ -8092,7 +8113,7 @@ struct state_functions {
 			error("GuardPost");
 			break;
 		case Orders::RescuePassive:
-			error("RescuePassive");
+			order_RescuePassive(u);
 			break;
 		case Orders::Neutral:
 			order_Neutral(u);
@@ -12630,7 +12651,7 @@ struct state_functions {
 			error("hidden ComputerAI");
 			break;
 		case Orders::RescuePassive:
-			error("hidden RescuePassive");
+			order_RescuePassive(u);
 			break;
 		default:
 			break;
@@ -13129,13 +13150,14 @@ struct state_functions {
 
 		bool any_triggers_executed = false;
 		for (int i : active_players()) {
-			for (auto& rt : st.running_triggers[i]) {
-				if (rt.flags & 8) continue;
+			auto execute_one = [&](running_trigger& rt) {
+				if (rt.flags & 8) return;
 				auto& t = *rt.t;
 				bool execute_now = true;
 				if (~rt.flags & 1) {
 					for (auto& c : t.conditions) {
 						if (c.type == 0) break;
+						if (c.flags & 2) continue;
 						if (!test_trigger_condition(c, i)) {
 							execute_now = false;
 							break;
@@ -13143,9 +13165,16 @@ struct state_functions {
 					}
 				}
 				if (execute_now) {
-					rt.current_action_index = 0;
 					execute_trigger(ets, i, rt, t);
 					any_triggers_executed = true;
+				}
+			};
+			auto& triggers = st.running_triggers[i];
+			for (size_t index = 0; index != triggers.size(); ++index) {
+				bool waiting = st.trigger_waiting[i];
+				execute_one(triggers[index]);
+				if (!waiting && st.trigger_waiting[i]) {
+					for (size_t previous = 0; previous != index; ++previous) execute_one(triggers[previous]);
 				}
 			}
 		}
@@ -13189,8 +13218,10 @@ struct state_functions {
 	}
 
 	void next_frame() {
-		++st.current_frame;
-		process_frame();
+		if (!st.scripted_pause) {
+			++st.current_frame;
+			process_frame();
+		}
 		process_triggers();
 	}
 
@@ -17200,7 +17231,7 @@ struct state_functions {
 			u->secondary_order_timer = 0;
 		}
 		if (st.players[u->owner].controller == player_t::controller_rescue_passive) {
-			error("fixme rescue passive");
+			set_unit_order(u, get_order_type(Orders::RescuePassive));
 		} else {
 			if (st.players[u->owner].controller == player_t::controller_neutral) set_unit_order(u, get_order_type(Orders::Neutral));
 			else if (st.players[u->owner].controller == player_t::controller_computer_game) set_unit_order(u, u->unit_type->computer_ai_idle);
@@ -18804,7 +18835,7 @@ struct state_functions {
 				else if (unit_id == 230) r += count_obj.non_building_counts[p];
 				else if (unit_id == 231) r += count_obj.building_counts[p];
 				else if (unit_id == 232) r += count_obj.factory_counts[p];
-				else r += count_obj.unit_counts[owner].at((UnitTypes)unit_id);
+				else r += count_obj.unit_counts[p].at((UnitTypes)unit_id);
 			}
 		}
 		return r;
@@ -18813,7 +18844,7 @@ struct state_functions {
 	bool trigger_count_comparison(const trigger::condition& c, int count) const {
 		if (c.num_n == 0) return count >= c.count_n;
 		else if (c.num_n == 1) return count <= c.count_n;
-		else if (c.num_n == 2) return count == c.count_n;
+		else if (c.num_n == 2 || c.num_n == 10) return count == c.count_n;
 		else return false;
 	}
 
@@ -18891,8 +18922,17 @@ struct state_functions {
 			return trigger_count_comparison(c, trigger_command_count(st, owner, c.group, c.unit_id, c.num_n != 1));
 		case 3: // bring
 			return trigger_count_comparison(c, trigger_command_count(trigger_bring_count(st.locations.at(c.location - 1)), owner, c.group, c.unit_id, c.num_n != 1));
+		case 4:
+			{
+				int amount = 0;
+				for (int player : trigger_players(owner, c.group)) {
+					if (c.extra_n == 0 || c.extra_n == 2) amount += st.current_minerals[player];
+					if (c.extra_n == 1 || c.extra_n == 2) amount += st.current_gas[player];
+				}
+				return trigger_count_comparison(c, amount);
+			}
 		case 12: // elapsed time
-			return trigger_count_comparison(c, st.current_frame);
+			return trigger_count_comparison(c, st.current_frame / 16);
 		case 14: // opponents
 			return trigger_count_comparison(c, trigger_opponent_count(owner, c.group));
 		case 22: // always
@@ -19039,6 +19079,35 @@ struct state_functions {
 		std::array<int, 12> victory_state{};
 	};
 
+	static bool campaign_condition_supported(int type) {
+		return type == 2 || type == 4 || type == 12 || type == 22;
+	}
+
+	static bool campaign_action_supported(int type) {
+		switch (type) {
+		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
+		case 9: case 10: case 12: case 17: case 26: case 30: case 31:
+		case 32: case 38: case 47:
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	static bool campaign_briefing_supported(int type) {
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 6 || type == 8;
+	}
+
+	int trigger_transmission_duration(const trigger::action& action) {
+		int64_t duration = action.time_n;
+		if (action.num_n == 7) duration = action.group2_n;
+		else if (action.num_n == 8) duration += action.group2_n;
+		else if (action.num_n == 9) duration -= action.group2_n;
+		else error("invalid transmission time modifier %d", action.num_n);
+		if (duration > std::numeric_limits<int>::max()) error("transmission duration out of range");
+		return int(std::max<int64_t>(0, duration));
+	}
+
 	bool execute_trigger_action(execute_trigger_struct& ets, int owner, running_trigger& rt, running_trigger::action& ra, const trigger::action& a) {
 		switch (a.type) {
 		case 1: // victory
@@ -19061,10 +19130,31 @@ struct state_functions {
 				return true;
 			}
 			if (rt.flags & 0x10) return true;
+			if (a.time_n > std::numeric_limits<int>::max() - 41) error("trigger wait duration out of range");
 			st.trigger_waiting[owner] = true;
-			st.trigger_wait_timers[owner] = a.time_n;
+			st.trigger_wait_timers[owner] = (std::max(42, a.time_n) + 41) / 42 * 42;
 			ra.flags |= 1;
 			return false;
+		case 5:
+			st.scripted_pause = true;
+			return true;
+		case 6:
+			st.scripted_pause = false;
+			return true;
+		case 7:
+			{
+				if (st.trigger_waiting[owner]) return false;
+				if (!(ra.flags & 1) && !(rt.flags & 0x10)) on_trigger_action(owner, a);
+				auto wait = a;
+				wait.type = 4;
+				wait.time_n = trigger_transmission_duration(a);
+				return execute_trigger_action(ets, owner, rt, ra, wait);
+			}
+		case 8: case 9: case 10: case 12: case 17: case 30: case 31: case 32:
+			on_trigger_action(owner, a);
+			return true;
+		case 47:
+			return true;
 		case 15: // ai script
 			switch (a.group2_n) {
 			case 0x3069562b:
@@ -19205,7 +19295,7 @@ struct state_functions {
 						st.current_gas[p] += a.group2_n;
 						st.total_gas_gathered[p] += a.group2_n;
 					}
-				} else if (a.num_n == 8) {
+				} else if (a.num_n == 9) {
 					if (a.extra_n == 0 || a.extra_n == 2) {
 						if (st.current_minerals[p] < a.group2_n) st.current_minerals[p] = 0;
 						else st.current_minerals[p] -= a.group2_n;
@@ -19219,12 +19309,12 @@ struct state_functions {
 			return true;
 		case 38: // move location
 			if (true) {
-				auto& loc = st.locations.at(a.location - 1);
+				auto& loc = st.locations.at(a.group2_n - 1);
 				xy pos = (loc.area.from + loc.area.to) / 2;
 				unit_t* u = trigger_find_unit(owner, loc, a.group_n, a.extra_n);
 				if (u) pos = u->sprite->position;
-				auto& target_loc = st.locations.at(a.group2_n - 1);
-				xy diff = pos - (loc.area.from + loc.area.to) / 2;
+				auto& target_loc = st.locations.at(a.location - 1);
+				xy diff = pos - (target_loc.area.from + target_loc.area.to) / 2;
 				xy from = target_loc.area.from + diff;
 				xy to = target_loc.area.to + diff;
 				if (from.x < 0) {
@@ -19300,6 +19390,7 @@ struct state_functions {
 			}
 			return true;
 		default:
+			if (st.strict_triggers) error("unsupported trigger action %d for owner %d at action %zu", a.type, owner, rt.current_action_index);
 			// Unknown or newer (e.g. Remastered) trigger action: skip it and continue
 			// rather than aborting the whole game, so such maps still run.
 			return true;
@@ -19311,9 +19402,12 @@ struct state_functions {
 		size_t index = rt.current_action_index;
 		for (;index != 64; ++index) {
 			auto& a = t.actions[index];
+			if (a.type == 0) {
+				index = 64;
+				break;
+			}
 			if (a.flags & 2) continue;
-			if (a.type == 0) index = 63;
-			else if (!execute_trigger_action(ets, owner, rt, rt.actions[index], a)) break;
+			if (!execute_trigger_action(ets, owner, rt, rt.actions[index], a)) break;
 		}
 		rt.current_action_index = index;
 		if (index == 64) {
@@ -21347,7 +21441,9 @@ struct game_load_functions : state_functions {
 			}
 			if (r.left()) {
 				for (size_t i = 0; i != 8; ++i) {
-					st.players[i].force = r.get<uint8_t>();
+					int force = r.get<uint8_t>();
+					if (force >= 4) error("invalid scenario force");
+					st.players[i].force = force + 1;
 				}
 				for (size_t i = 0; i != 4; ++i) {
 					game_st.forces[i].name = get_map_string(r.get<uint16_t>());
@@ -21727,10 +21823,10 @@ struct game_load_functions : state_functions {
 			}
 		};
 
-		tag_funcs["TRIG"] = [&](data_reader_le r) {
+		auto read_triggers = [&](data_reader_le r, a_vector<trigger>& destination) {
 			while (r.left()) {
-				game_st.triggers.emplace_back();
-				auto& t = game_st.triggers.back();
+				destination.emplace_back();
+				auto& t = destination.back();
 				for (size_t i = 0; i != 16; ++i) {
 					auto& c = t.conditions[i];
 					c.location = r.get<uint32_t>();
@@ -21765,11 +21861,15 @@ struct game_load_functions : state_functions {
 					t.enabled[i] = r.get<uint8_t>() != 0;
 					if (!enabled_for_any && t.enabled[i]) enabled_for_any = true;
 				}
-				if (!enabled_for_any) game_st.triggers.pop_back();
+				if (!enabled_for_any) destination.pop_back();
 			}
+		};
+		tag_funcs["MBRF"] = [&](data_reader_le r) { read_triggers(r, game_st.briefings); };
+		tag_funcs["TRIG"] = [&](data_reader_le r) {
+			read_triggers(r, game_st.triggers);
 			for (auto& t : game_st.triggers) {
 				for (int i = 0; i != 8; ++i) {
-					if (st.players[i].controller != player_t::controller_occupied) continue;
+					if (st.players[i].controller != player_t::controller_occupied && st.players[i].controller != player_t::controller_computer_game) continue;
 					if (!t.enabled[i] && !t.enabled.at(17 + st.players[i].force) && !t.enabled[17]) continue;
 					st.running_triggers[i].emplace_back();
 					auto& rt = st.running_triggers[i].back();
@@ -21811,23 +21911,22 @@ struct game_load_functions : state_functions {
 					st.alliances[i2][i] = 1;
 				}
 			}
-			if (!use_map_settings) {
-				if (st.players[i].controller == player_t::controller_open || st.players[i].controller == player_t::controller_computer) {
-					st.players[i].race = (race_t)5;
-				}
-			}
 		}
 
 		if (setup_f) {
 			setup_f();
-		} else {
-			for (size_t i = 0; i != 12; ++i) {
-				if (st.players[i].controller == player_t::controller_open) st.players[i].controller = player_t::controller_occupied;
-				if (st.players[i].controller == player_t::controller_computer) st.players[i].controller = player_t::controller_computer_game;
-			}
 		}
 
 		use_map_settings = setup_info.victory_condition == 0 && setup_info.tournament_mode == 0 && setup_info.starting_units == 0;
+		if (use_map_settings) st.trigger_timer = 1;
+		for (size_t owner = 0; owner != 12; ++owner) {
+			auto& player = st.players[owner];
+			if (!use_map_settings && (player.controller == player_t::controller_open || player.controller == player_t::controller_computer)) player.race = (race_t)5;
+			if (!setup_f) {
+				if (player.controller == player_t::controller_open) player.controller = player_t::controller_occupied;
+				if (player.controller == player_t::controller_computer) player.controller = player_t::controller_computer_game;
+			}
+		}
 
 		if (version == 59 || version == 63) {
 			if (use_map_settings) {
@@ -21850,7 +21949,8 @@ struct game_load_functions : state_functions {
 					{"UNIT", true},
 					{"UPRP", true},
 					{"MRGN", true},
-					{"TRIG", true}
+					{"TRIG", true},
+					{"MBRF", false}
 				});
 			} else {
 				read_chunks({
@@ -21877,6 +21977,7 @@ struct game_load_functions : state_functions {
 					{"UPRP", true},
 					{"MRGN", true},
 					{"TRIG", true},
+					{"MBRF", false},
 					{"COLR", true},
 				});
 			} else {

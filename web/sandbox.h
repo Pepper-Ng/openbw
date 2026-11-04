@@ -331,6 +331,24 @@ struct play_ui : ui_functions {
 	a_vector<uint8_t> player_eliminated = a_vector<uint8_t>(8);  // already announced dead
 	int outcome = 0;                              // 0 undecided, 1 victory, 2 defeat
 	bool competitive = false;                     // true only with an opponent (multiplayer)
+	bool mission_mode = false;
+	bool mission_started = true;
+	bool mission_speech_muted = false;
+	int mission_objective_string = 0;
+	int mission_leaderboard_unit = -1;
+	int mission_leaderboard_title = 0;
+	bool mission_leaderboard_computers = true;
+	struct mission_event {
+		unsigned sequence;
+		int owner;
+		trigger::action action;
+	};
+	a_vector<mission_event> mission_events;
+	unsigned mission_sequence = 0;
+	a_string mission_event_text;
+	a_unordered_map<int, int> mission_sound_durations;
+	a_vector<uint8_t> mission_sound_data;
+	a_unordered_map<int, std::unique_ptr<native_sound::sound>> mission_sounds;
 
 	// Replay recording. Our command stream already *is* BW's action format, so recording
 	// is just teeing it into replay_saver_state along with the map's CHK bytes.
@@ -346,6 +364,83 @@ struct play_ui : ui_functions {
 		: ui_functions(std::move(player)), my_player(my_player), my_race(my_race),
 		  kit(kit_for(my_race)) {
 		fog_player = my_player;   // render from this player's perspective
+	}
+
+	const a_string& mission_string(int index) const {
+		if (index <= 0 || size_t(index) > game_st.map_strings.size()) error("invalid mission string %d", index);
+		return game_st.map_strings[index - 1];
+	}
+
+	int trigger_sound_duration(int index) {
+		auto found = mission_sound_durations.find(index);
+		if (found != mission_sound_durations.end()) return found->second;
+		load_data_file(mission_sound_data, mission_string(index));
+		data_loading::data_reader<> reader(mission_sound_data.data(), mission_sound_data.data() + mission_sound_data.size());
+		if (reader.get<uint32_t>() != 0x46464952) error("invalid mission RIFF");
+		if (reader.get<uint32_t>() != mission_sound_data.size() - 8 || reader.get<uint32_t>() != 0x45564157) error("invalid mission WAVE");
+		uint32_t rate = 0;
+		uint32_t size = 0;
+		while (reader.left()) {
+			auto type = reader.get<uint32_t>();
+			auto length = reader.get<uint32_t>();
+			const uint8_t* chunk = reader.get_n(length);
+			if (type == 0x20746d66) {
+				if (length < 16 || data_loading::value_at<uint16_t, true>(chunk) != 1) error("unsupported mission PCM");
+				rate = data_loading::value_at<uint32_t, true>(chunk + 8);
+			}
+			if (type == 0x61746164) size = length;
+			if (length & 1) reader.skip(1);
+		}
+		if (!rate || !size) error("missing mission PCM data");
+		int duration = int((uint64_t(size) * 1000 + rate - 1) / rate);
+		mission_sound_durations[index] = duration;
+		return duration;
+	}
+
+	void play_mission_sound(int index, int channel) {
+		if (channel != 62 && channel != 63) error("invalid mission audio channel");
+		auto& sound = mission_sounds[index];
+		if (!sound) {
+			load_data_file(mission_sound_data, mission_string(index));
+			sound = native_sound::load_wav(mission_sound_data.data(), mission_sound_data.size());
+		}
+		if (sound) native_sound::play(channel, sound.get(), 128, 0);
+	}
+
+	void on_trigger_action(int owner, const trigger::action& action) override {
+		if (!mission_mode || owner != my_player) return;
+		if (action.type == 12) mission_objective_string = action.string_index;
+		if (action.type == 17) {
+			mission_leaderboard_unit = action.extra_n;
+			mission_leaderboard_title = action.string_index;
+		}
+		if (action.type == 30) mission_speech_muted = true;
+		if (action.type == 31) mission_speech_muted = false;
+		if (action.type == 32) {
+			if (action.num_n == 4) mission_leaderboard_computers = true;
+			else if (action.num_n == 5) mission_leaderboard_computers = false;
+			else if (action.num_n == 6) mission_leaderboard_computers = !mission_leaderboard_computers;
+			else error("invalid leaderboard computer modifier");
+		}
+		if (action.type == 10) {
+			const auto& area = st.locations.at(action.location - 1).area;
+			center_on((area.from + area.to) / 2);
+		}
+		if (mission_events.size() >= 256) error("mission presentation queue overflow");
+		mission_events.push_back({++mission_sequence, owner, action});
+	}
+
+	const char* mission_event_stream() {
+		mission_event_text.clear();
+		for (const auto& event : mission_events) {
+			const auto& action = event.action;
+			mission_event_text += format("1\t%u\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", event.sequence, event.owner, action.type, action.location, action.string_index, action.sound_index, action.time_n, action.num_n, action.extra_n, action.group2_n);
+		}
+		return mission_event_text.c_str();
+	}
+
+	void acknowledge_mission_events(unsigned sequence) {
+		mission_events.erase(std::remove_if(mission_events.begin(), mission_events.end(), [&](const mission_event& event) { return event.sequence <= sequence; }), mission_events.end());
 	}
 
 	xy screen_to_map(int mx, int my) const {
@@ -467,6 +562,7 @@ struct play_ui : ui_functions {
 	// Play one of a unit's voice-ack sounds (first..last inclusive), the way the
 	// original game client did on select/order — the sim never plays these.
 	void play_unit_ack(unit_t* u, int first, int last) {
+		if (mission_speech_muted) return;
 		if (spectator) return;   // a spectator is nobody's player — no unit voices, for anyone
 		if (!u || first <= 0 || last < first) return;
 		int id = first + (sound_rotation++ % (last - first + 1));
@@ -540,6 +636,10 @@ struct play_ui : ui_functions {
 	// a defeat has to be inferred from someone else having won. Both peers run the same
 	// deterministic sim, so a 1v1 reaches the same verdict on the same frame for free.
 	void on_victory_state(int owner, int state) override {
+		if (mission_mode) {
+			if (owner == my_player && !outcome && state) outcome = state >= 3 ? 1 : 2;
+			return;
+		}
 		// Single-player is a sandbox — a lone melee player "wins" instantly, so ignore it.
 		if (!competitive || outcome || state == 0) return;
 		if (owner == my_player) outcome = state >= 3 ? 1 : 2;
@@ -1735,6 +1835,7 @@ struct play_ui : ui_functions {
 
 	// Announce a participant the moment it loses its last unit/building.
 	void poll_eliminations() {
+		if (mission_mode) return;
 		for (int i = 0; i != 8; ++i) {
 			if (!st.players[i].initially_active) continue;
 			bool alive = false;
@@ -1763,7 +1864,7 @@ struct play_ui : ui_functions {
 		for (unit_t* u : ptr(st.player_units[my_player])) {
 			uint16_t id = get_unit_id(u).raw_value;
 			if (u_completed(u) && announced.insert(id).second && !seeding && announces_ready(u)) {
-				play_sound(u->unit_type->ready_sound, u->sprite->position, u, false);
+				if (!mission_speech_muted) play_sound(u->unit_type->ready_sound, u->sprite->position, u, false);
 				ping_minimap(u, 0);
 			}
 			int life = u->hp.ceil().integer_part() + u->shield_points.integer_part();

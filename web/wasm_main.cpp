@@ -46,13 +46,15 @@ struct js_file_reader {
 	void open(a_string filename) {
 		a_string low;
 		for (char c : filename) low += (char)std::tolower((unsigned char)c);
-		auto has = [&](const char* s) { return low.find(s) != a_string::npos; };
-		if (has("stardat")) index = 0;
-		else if (has("brood")) index = 1;
-		else if (has("patch")) index = 2;
-		else index = 3;   // the map archive
+		if (low == "stardat.mpq") index = 0;
+		else if (low == "broodat.mpq") index = 1;
+		else if (low == "patch_rt.mpq") index = 2;
+		else if (low == "openbw.map" || low == "openbw.mission") index = 3;
+		else error("unknown browser asset: %s", filename);
+		file_pointer = 0;
 	}
 	void get_bytes(uint8_t* dst, size_t n) {
+		if (file_pointer > size() || n > size() - file_pointer) error("browser asset read out of bounds");
 		js_read_data((int)index, dst, (unsigned)file_pointer, (unsigned)n);
 		file_pointer += n;
 	}
@@ -75,8 +77,10 @@ play_ui* g_ui = nullptr;
 
 // Build the game with `n` occupied slots. Every peer must pass an identical slot list (and
 // the same map) or their initial states differ and lockstep is broken from frame 0.
-static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n) {
+static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n, bool mission = false) {
+	if (g_ui || my_slot < 0 || my_slot >= 8) error("invalid or already initialized game session");
 	g_loader = new loader_t(data_loading::data_files_directory<loader_t>(""));
+	if (mission) g_loader->mpqs.emplace_front("openbw.mission");
 
 	race_t my_race = race_t::terran;
 	for (size_t k = 0; k != n; ++k) if (slots[k].slot == my_slot) my_race = slots[k].race;
@@ -85,6 +89,8 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 	g_ui = new play_ui(std::move(player), my_slot, my_race);
 	g_ui->exit_on_close = false;
 	g_ui->competitive = n > 1;   // victory/defeat only matters with an opponent
+	g_ui->mission_mode = mission;
+	g_ui->mission_started = !mission;
 	g_ui->load_data_file = [](a_vector<uint8_t>& data, a_string filename) {
 		(*g_loader)(data, std::move(filename));
 	};
@@ -94,12 +100,42 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 	data_loading::mpq_file<data_loading::js_file_reader<>> map_loader("openbw.map");
 	// Tee the map's CHK out of the loader: a .rep embeds it verbatim, and it's the only
 	// part of the replay we can't reconstruct from the sim afterwards.
-	setup_melee_slots(g_ui->player.st(), [&](a_vector<uint8_t>& out, a_string fn) {
+	auto load_map = [&](a_vector<uint8_t>& out, a_string fn) {
 		map_loader(out, fn);
 		a_string low;
 		for (char c : fn) low += (char)std::tolower((unsigned char)c);
 		if (low.find("scenario.chk") != a_string::npos) g_ui->rep_map = out;
-	}, slots, n, &rep_seed0);
+	};
+	if (mission) {
+		state& st = g_ui->player.st();
+		game_load_functions game_load(st);
+		game_load.load_map(load_map, [&]() {
+			game_load.setup_info.victory_condition = 0;
+			game_load.setup_info.tournament_mode = 0;
+			game_load.setup_info.starting_units = 0;
+			game_load.setup_info.resource_type = 0;
+			game_load.setup_info.starting_minerals = 0;
+			st.strict_triggers = true;
+			if (st.players[my_slot].controller != player_t::controller_open || st.players[my_slot].race != my_race) error("mission human slot/race mismatch");
+			for (size_t owner = 0; owner != 12; ++owner) {
+				game_load.setup_info.create_melee_units_for_player[owner] = false;
+				if (st.players[owner].controller == player_t::controller_open) st.players[owner].controller = int(owner) == my_slot ? player_t::controller_occupied : player_t::controller_inactive;
+				if (st.players[owner].controller == player_t::controller_computer) st.players[owner].controller = player_t::controller_computer_game;
+			}
+		});
+		for (size_t record = 0; record != g_ui->game_st.triggers.size(); ++record) {
+			const auto& trigger = g_ui->game_st.triggers[record];
+			for (const auto& condition : trigger.conditions) {
+				if (!condition.type) break;
+				if (!(condition.flags & 2) && !state_functions::campaign_condition_supported(condition.type)) error("unsupported mission condition %d in trigger %zu", condition.type, record);
+			}
+			for (size_t index = 0; index != trigger.actions.size(); ++index) {
+				const auto& action = trigger.actions[index];
+				if (!action.type) break;
+				if (!(action.flags & 2) && !state_functions::campaign_action_supported(action.type)) error("unsupported mission action %d in trigger %zu action %zu", action.type, record, index);
+			}
+		}
+	} else setup_melee_slots(g_ui->player.st(), load_map, slots, n, &rep_seed0);
 
 	g_ui->wnd.create("OpenBW Web", 0, 0, width, height);
 	g_ui->resize(width, height);
@@ -109,7 +145,7 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 
 	// Seed the replay header from the loaded game. Everything here is fixed at start, so
 	// the recording only has to accumulate actions from now on.
-	{
+	if (!mission) {
 		state& st = g_ui->player.st();
 		replay_saver_state& r = g_ui->rep;
 		r.map_data = g_ui->rep_map.data();
@@ -152,6 +188,11 @@ OPENBW_EXPORT(openbw_init) void openbw_init(int width, int height, int race, int
 	init_game(width, height, slot, &s, 1);
 }
 
+OPENBW_EXPORT(openbw_init_campaign) void openbw_init_campaign(int width, int height, int race, int slot) {
+	mp_slot human{slot, (race_t)race};
+	init_game(width, height, slot, &human, 1, true);
+}
+
 // Resize the render target (e.g. when the browser window changes). Recreates
 // the framebuffer at the new size; ui.resize() rebuilds the surfaces.
 OPENBW_EXPORT(openbw_resize) void openbw_resize(int width, int height) {
@@ -171,7 +212,84 @@ OPENBW_EXPORT(openbw_pan) void openbw_pan(int dx, int dy) {
 // ticking (throttled) while the tab is backgrounded and never fast-forwards a
 // backlog on return — unlike advancing by elapsed wall-clock time.
 OPENBW_EXPORT(openbw_step) void openbw_step() {
-	if (g_ui) g_ui->state_functions::next_frame();
+	if (g_ui && !(g_ui->mission_mode && (!g_ui->mission_started || g_ui->outcome))) g_ui->state_functions::next_frame();
+}
+
+OPENBW_EXPORT(openbw_campaign_capabilities) const char* openbw_campaign_capabilities() {
+	static a_string capabilities;
+	if (capabilities.empty()) {
+		for (int type = 1; type != 64; ++type) {
+			if (state_functions::campaign_condition_supported(type)) capabilities += format("condition.%d\n", type);
+			if (state_functions::campaign_action_supported(type)) capabilities += format("action.%d\n", type);
+			if (state_functions::campaign_briefing_supported(type)) capabilities += format("briefing.%d\n", type);
+		}
+	}
+	return capabilities.c_str();
+}
+OPENBW_EXPORT(openbw_mission_briefing) const char* openbw_mission_briefing() {
+	if (!g_ui || !g_ui->mission_mode) return "";
+	g_ui->mission_event_text.clear();
+	for (const auto& briefing : g_ui->game_st.briefings) {
+		int owner = g_ui->my_player;
+		if (!briefing.enabled[owner] && !briefing.enabled[17] && !briefing.enabled.at(17 + g_ui->st.players[owner].force)) continue;
+		for (const auto& action : briefing.actions) {
+			if (!action.type) break;
+			if (action.flags & 2) continue;
+			if (!state_functions::campaign_briefing_supported(action.type)) error("unsupported mission briefing action %d", action.type);
+			g_ui->mission_event_text += format("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", action.type, action.string_index, action.sound_index, action.time_n, action.group_n, action.group2_n, action.num_n, action.extra_n);
+		}
+	}
+	return g_ui->mission_event_text.c_str();
+}
+OPENBW_EXPORT(openbw_mission_begin) void openbw_mission_begin() {
+	if (g_ui && g_ui->mission_mode) g_ui->mission_started = true;
+}
+
+OPENBW_EXPORT(openbw_mission_events) const char* openbw_mission_events() {
+	return g_ui ? g_ui->mission_event_stream() : "";
+}
+OPENBW_EXPORT(openbw_mission_ack) void openbw_mission_ack(unsigned sequence) {
+	if (g_ui) g_ui->acknowledge_mission_events(sequence);
+}
+OPENBW_EXPORT(openbw_mission_string) const char* openbw_mission_string(int index) {
+	return g_ui && index ? g_ui->mission_string(index).c_str() : "";
+}
+OPENBW_EXPORT(openbw_mission_paused) int openbw_mission_paused() {
+	return g_ui && g_ui->st.scripted_pause;
+}
+OPENBW_EXPORT(openbw_mission_objectives) const char* openbw_mission_objectives() {
+	return g_ui && g_ui->mission_objective_string ? g_ui->mission_string(g_ui->mission_objective_string).c_str() : "";
+}
+OPENBW_EXPORT(openbw_mission_sound_duration) int openbw_mission_sound_duration(int index) {
+	return g_ui ? g_ui->trigger_sound_duration(index) : 0;
+}
+OPENBW_EXPORT(openbw_mission_transmission_time) int openbw_mission_transmission_time(int base, int adjustment, int modifier) {
+	if (!g_ui) return 0;
+	trigger::action action{};
+	action.time_n = base;
+	action.group2_n = adjustment;
+	action.num_n = modifier;
+	return g_ui->trigger_transmission_duration(action);
+}
+OPENBW_EXPORT(openbw_mission_play_sound) void openbw_mission_play_sound(int index, int channel) {
+	if (g_ui && g_ui->mission_mode) g_ui->play_mission_sound(index, channel);
+}
+OPENBW_EXPORT(openbw_mission_unit_name) const char* openbw_mission_unit_name(int type) {
+	static a_string name;
+	name = g_ui && type >= 0 && type < 228 ? g_ui->unit_name((UnitTypes)type) : "";
+	return name.c_str();
+}
+OPENBW_EXPORT(openbw_mission_leaderboard) const char* openbw_mission_leaderboard() {
+	static a_string result;
+	result.clear();
+	if (!g_ui || g_ui->mission_leaderboard_unit < 0) return "";
+	result = format("%d\t%d\n", g_ui->mission_leaderboard_title, g_ui->mission_leaderboard_unit);
+	for (int owner = 0; owner != 8; ++owner) {
+		int controller = g_ui->st.players[owner].controller;
+		if (controller != player_t::controller_occupied && !(g_ui->mission_leaderboard_computers && controller == player_t::controller_computer_game)) continue;
+		result += format("%d\t%d\n", owner, g_ui->trigger_command_count(g_ui->st, owner, owner, g_ui->mission_leaderboard_unit, true));
+	}
+	return result.c_str();
 }
 
 // Render the current state into the framebuffer and process input. JS drives
@@ -259,7 +377,13 @@ OPENBW_EXPORT(openbw_error) const char* openbw_error() { return g_ui ? g_ui->err
 OPENBW_EXPORT(openbw_messages) const char* openbw_messages() { return g_ui ? g_ui->game_messages() : ""; }
 
 // Read-only debug dump of the primary selected unit (window.__bw.x.openbw_debug_dump).
-OPENBW_EXPORT(openbw_debug_dump) const char* openbw_debug_dump() { return g_ui ? g_ui->debug_dump() : ""; }
+OPENBW_EXPORT(openbw_debug_dump) const char* openbw_debug_dump() {
+	static a_string result;
+	if (!g_ui) return "";
+	result = g_ui->debug_dump();
+	result += format("camera=%d,%d\n", g_ui->screen_pos.x, g_ui->screen_pos.y);
+	return result.c_str();
+}
 
 // Vision tripwire: nonzero = abnormal fog/shared-vision/cheat state (see sandbox.h).
 OPENBW_EXPORT(openbw_vision_anomaly) int openbw_vision_anomaly() { return g_ui ? g_ui->vision_anomaly() : 0; }
@@ -282,6 +406,15 @@ OPENBW_EXPORT(openbw_set_view_scale) void openbw_set_view_scale(double s) { if (
 OPENBW_EXPORT(openbw_debug_units) const char* openbw_debug_units() { return g_ui ? g_ui->debug_units() : ""; }
 OPENBW_EXPORT(openbw_debug_select) void openbw_debug_select(int id, int add) { if (g_ui) g_ui->debug_select(id, add); }
 OPENBW_EXPORT(openbw_debug_set_life) void openbw_debug_set_life(int id, int hp, int shields) { if (g_ui) g_ui->debug_set_life(id, hp, shields); }
+OPENBW_EXPORT(openbw_debug_build_check) int openbw_debug_build_check(int type, int map_x, int map_y) {
+	if (!g_ui || type < 0 || type >= 228) return 0;
+	unit_t* worker = g_ui->primary_selected();
+	if (!worker) return 0;
+	const unit_type_t* building = g_ui->get_unit_type((UnitTypes)type);
+	int result = g_ui->unit_build_order_valid(worker, g_ui->get_order_type(g_ui->kit.build_order), building, g_ui->my_player) ? 1 : 0;
+	if (g_ui->can_place_building(worker, g_ui->my_player, building, xy(map_x, map_y), false, false)) result |= 2;
+	return result;
+}
 
 // Cancel the build-queue slot a status chip was clicked on (0 = the one in progress).
 OPENBW_EXPORT(openbw_cancel) void openbw_cancel(int slot) { if (g_ui) g_ui->cancel_queue_slot(slot); }
@@ -324,6 +457,7 @@ OPENBW_EXPORT(openbw_post_message) void openbw_post_message(int len) {
 // Apply `len` bytes of framed commands as `owner`. Must be called on every peer for every
 // player, in the same order, on the same frame.
 OPENBW_EXPORT(openbw_apply) void openbw_apply(int owner, int len) {
+	if (g_ui && g_ui->mission_mode && (!g_ui->mission_started || g_ui->outcome || g_ui->st.scripted_pause || owner != g_ui->my_player)) return;
 	if (g_ui && len > 0 && (size_t)len <= g_inbuf.size())
 		g_ui->apply_commands(owner, g_inbuf.data(), (size_t)len);
 }

@@ -5,11 +5,12 @@ import { WASI } from 'node:wasi';
 import { readFileSync } from 'node:fs';
 import { argv } from 'node:process';
 
-const map = argv[2] || '/maps/Benzene.scx';
+const campaign = argv[2] === '--test-campaign';
+const map = campaign ? '/data/campaign/terran01.mpq' : argv[2] || '/maps/Benzene.scx';
 
 const wasi = new WASI({
   version: 'preview1',
-  args: ['sim', '/data', map],
+  args: ['sim', '/data', map, ...(campaign ? ['--test-campaign'] : [])],
   preopens: { '/data': 'web/data', '/maps': 'web/maps' },
 });
 

@@ -8,19 +8,22 @@ import { WASI } from 'node:wasi';
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
-const out = process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const campaign = process.argv[2] === '--test-campaign';
+const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const mission = campaign ? JSON.parse(readFileSync('web/data/campaign/terran01.json', 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
 const files = [
   readFileSync('web/data/STARDAT.MPQ'),
   readFileSync('web/data/BROODAT.MPQ'),
   readFileSync('web/data/patch_rt.mpq'),
-  readFileSync('web/maps/Weave_v1.scx'),
+  readFileSync(campaign ? 'web/data/campaign/terran01.mpq' : 'web/maps/Weave_v1.scx'),
 ];
 
 const wasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
 
 let memory;
+const missionSoundLoads = [];
 const env = {
   js_file_size: (index) => files[index].length,
   js_read_data: (index, dst, offset, n) => {
@@ -28,7 +31,11 @@ const env = {
     mem.set(files[index].subarray(offset, offset + n), dst);
   },
   // no audio in headless Node — stubs so instantiation doesn't fail
-  js_sound_load: () => -1, js_sound_play: () => {}, js_sound_is_playing: () => 0,
+  js_sound_load: (pointer, size) => {
+    if (!campaign) return -1;
+    missionSoundLoads.push({ pointer, size });
+    return missionSoundLoads.length - 1;
+  }, js_sound_play: () => {}, js_sound_is_playing: () => 0,
   js_sound_stop: () => {}, js_sound_set_volume: () => {},
 };
 
@@ -41,8 +48,9 @@ memory = instance.exports.memory;
 wasi.initialize(instance);   // reactor: runs ctors + libc init
 
 const x = instance.exports;
-x.openbw_init(1280, 800, 1 /*terran*/, 0 /*slot*/);
-for (let i = 0; i < 4; i++) x.openbw_step();
+if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
+else x.openbw_init(1280, 800, 1 /*terran*/, 0 /*slot*/);
+if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
 
 if (out) {
@@ -61,8 +69,87 @@ if (out) {
   }
   writeFileSync(out, Buffer.concat([header, body]));
   console.log(`wrote ${out} (${w}x${h})`);
+} else if (campaign) {
+  testCampaign();
 } else {
   testCommands();
+}
+
+function testCampaign() {
+  const read = pointer => {
+    const bytes = new Uint8Array(memory.buffer);
+    let end = pointer;
+    while (bytes[end]) end++;
+    return new TextDecoder().decode(bytes.subarray(pointer, end));
+  };
+  const units = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+  assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
+  const human = units.filter(unit => Number(unit[2]) === mission.humanSlot);
+  assert.equal(human.length, 12);
+  assert.equal(human.filter(unit => unit[1] === 'Marine').length, 5);
+  assert.equal(human.filter(unit => unit[1] === 'SCV').length, 5);
+  assert.equal(units.filter(unit => Number(unit[2]) === 2).length, 1, 'Raynor must begin with rescue ownership');
+  assert.equal(units.filter(unit => Number(unit[2]) === 4).length, 23, 'Preserve the placed Zerglings');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 0, 'No injected melee minerals');
+  console.log('Campaign initialization checks passed.');
+  const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
+  for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
+  const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), [1, 3, 4, 5, 6, 8]);
+  for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), action[3], 'Original briefing subtracts zero from its stored duration');
+  const beforeBriefing = x.openbw_frame();
+  x.openbw_step();
+  assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
+  x.openbw_mission_begin();
+  for (let frame = 0; frame < 4; frame++) x.openbw_step();
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 40, 'Original trigger must grant 40 minerals');
+  const events = [];
+  const consume = () => {
+    const text = read(x.openbw_mission_events()).trim();
+    if (!text) return;
+    const batch = text.split('\n').map(line => line.split('\t').map(Number));
+    for (const event of batch) {
+      assert.equal(event[0], 1, 'Fresh-session event generation');
+      assert.equal(event[2], mission.humanSlot);
+      assert.equal(event[1], events.length + 1, 'Ordered, nonduplicated mission events');
+      events.push(event);
+    }
+    x.openbw_mission_ack(batch.at(-1)[1]);
+    assert.equal(read(x.openbw_mission_events()), '', 'Acknowledged events must not replay');
+  };
+  consume();
+  for (let tick = 0; tick < 1200; tick++) {
+    x.openbw_step();
+    if (tick % 16 === 0) {
+      x.openbw_render(tick * 42);
+      consume();
+      x.openbw_render(tick * 42 + 1);
+      assert.equal(read(x.openbw_mission_events()), '', 'Extra rendering cannot create dialogue');
+    }
+  }
+  consume();
+  assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
+  assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
+  const dialogue = events.filter(event => event[3] === 7);
+  assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
+  for (const event of dialogue) {
+    assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), event[7], 'Original gameplay transmission retains its stored duration');
+    const path = read(x.openbw_mission_string(event[6])).replaceAll('\\', '/').toLowerCase();
+    const expected = mission.files.find(file => file.path === path);
+    assert.ok(expected?.audio, 'Transmission audio must be in the validated pack');
+    assert.equal(x.openbw_mission_sound_duration(event[6]), expected.audio.durationMs);
+    x.openbw_mission_play_sound(event[6], 63);
+    assert.equal(missionSoundLoads.at(-1).size, expected.bytes, 'Actual mission WAV must reach native_sound::load_wav');
+    const loads = missionSoundLoads.length;
+    x.openbw_mission_play_sound(event[6], 63);
+    assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
+  }
+  assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  x.openbw_debug_select(Number(human.find(unit => unit[1] === 'SCV')[0]), 0);
+  const buildChecks = [[1056, 1584], [864, 1744], [1120, 1584], [1216, 1584], [1056, 1904]].map(([mapX, mapY]) => ({mapX, mapY, flags: x.openbw_debug_build_check(111, mapX, mapY)}));
+  assert.ok(buildChecks.every(check => check.flags & 1), 'Original mission permits SCVs to build Barracks');
+  console.log('Campaign Barracks placement checks:', JSON.stringify(buildChecks));
+  console.log(`Campaign original-trigger checks passed: ${events.length} events, ${dialogue.length} transmissions.`);
 }
 
 function testCommands() {

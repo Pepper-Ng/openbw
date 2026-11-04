@@ -132,8 +132,8 @@ function idbPut(db, key, val) {
   });
 }
 
-async function fetchWithProgress(url, expected, onProgress) {
-  const resp = await fetch(url);
+async function fetchWithProgress(url, expected, onProgress, signal) {
+  const resp = await fetch(url, { signal });
   if (!resp.ok) throw new Error(`fetch ${url}: HTTP ${resp.status}`);
   const total = +resp.headers.get('content-length') || expected || 0;
   const reader = resp.body.getReader();
@@ -144,6 +144,7 @@ async function fetchWithProgress(url, expected, onProgress) {
     if (done) break;
     chunks.push(value);
     got += value.length;
+    if (expected && got > expected) { await reader.cancel(); throw new Error('Download exceeds expected size.'); }
     if (total) onProgress(got / total);
   }
   const buf = new Uint8Array(got);
@@ -153,8 +154,26 @@ async function fetchWithProgress(url, expected, onProgress) {
 }
 
 // Returns [stardat, broodat, patch_rt, map] as Uint8Arrays.
-async function loadAssets(mapFile = MAP_LOCAL) {
-  const db = await idbOpen();
+async function missionDigest(bytes) {
+  if (!globalThis.crypto?.subtle) throw new Error('Mission verification requires HTTPS or localhost.');
+  return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
+}
+
+async function loadMissionPack(manifest, db, signal) {
+  const key = `campaign:${manifest.id}:${manifest.contentVersion}:${manifest.pack.sha256}`;
+  const valid = async bytes => bytes && bytes.byteLength === manifest.pack.bytes && await missionDigest(bytes) === manifest.pack.sha256;
+  let bytes = db ? await idbGet(db, key).catch(() => null) : null;
+  if (!await valid(bytes)) {
+    setMsg(`Downloading ${manifest.title} (${(manifest.pack.bytes / 1048576).toFixed(2)} MB)...`);
+    bytes = await fetchWithProgress(manifest.pack.url, manifest.pack.bytes, fraction => setBar(0.75 + fraction * 0.25), signal);
+    if (!await valid(bytes)) throw new Error('Mission pack failed its size or SHA-256 check.');
+    if (db) await idbPut(db, key, bytes).catch(error => console.warn('[campaign] pack cache unavailable', error));
+  }
+  return new Uint8Array(bytes);
+}
+
+async function loadAssets(mapFile = MAP_LOCAL, mission = null, signal) {
+  const db = await idbOpen().catch(error => { console.warn('[assets] cache unavailable', error); return null; });
   const out = new Array(MPQS.length);
 
   // Fetch the three MPQs concurrently. archive.org throttles per-connection, so
@@ -169,27 +188,34 @@ async function loadAssets(mapFile = MAP_LOCAL) {
   setMsg(`Downloading game data (${(totalBytes / 1e6) | 0} MB)…`);
 
   await Promise.all(MPQS.map(async ({ key, local, url, size }, i) => {
-    let buf = await idbGet(db, key);
+    let buf = db ? await idbGet(db, key).catch(() => null) : null;
     if (!buf) {
       // Same-origin local mirror is a dev convenience; production hosts no game
       // files, so this 404s and the archive.org URL is used.
       let mirror = null;
-      try { const r = await fetch(local); if (r.ok) mirror = await r.arrayBuffer(); } catch {}
+      try { const r = await fetch(local, { signal }); if (r.ok) mirror = await r.arrayBuffer(); } catch (error) { if (signal?.aborted) throw error; }
       if (!mirror && DEV) throw new Error('Missing local game data: ' + local);
-      buf = mirror || await fetchWithProgress(url, size, (frac) => { got[i] = frac * size; renderBar(); });
-      await idbPut(db, key, buf);
+      buf = mirror || await fetchWithProgress(url, size, (frac) => { got[i] = frac * size; renderBar(); }, signal);
+      if (db) await idbPut(db, key, buf).catch(error => console.warn('[assets] cache write unavailable', error));
     }
     got[i] = size; renderBar();
     out[i] = new Uint8Array(buf);
   }));
 
   setMsg('Loading map…');
+  if (mission) {
+    out.push(await loadMissionPack(mission, db, signal));
+    if (db) db.close();
+    setBar(1);
+    return out;
+  }
   // fetchMap memoises, so a map the lobby already hashed isn't downloaded twice.
   let mapBytes = null;
   try { mapBytes = await fetchMap(mapFile); } catch {}
   if (!mapBytes && MAP_REMOTE) mapBytes = new Uint8Array(await (await fetch(MAP_REMOTE)).arrayBuffer());
   if (!mapBytes) throw new Error('No map available — set MAP_REMOTE to a hosted .scx URL.');
   out.push(mapBytes);
+  if (db) db.close();
   setBar(1);
   return out;
 }
@@ -720,6 +746,9 @@ async function makeBotReplica(assets, moduleName, slots, botSlot, w, h) {
 // and a few frames of input delay. Both peers must pass an identical `slots` list.
 // Bot-vs-bot spectate adds { spectate:true, bot:{slot,module}, bot2:{slot,module} }.
 async function boot(session) {
+  let briefingActive = !!session.mission;
+  let sessionFailed = false;
+  let missionTicks = 0;
   // Audio is created LAZILY on the first user gesture, never during boot. The constructor
   // is a synchronous IPC to Chrome's shared audio service; on a reload the old game's
   // context is being torn down in the same renderer, and constructing a new one in that
@@ -742,6 +771,12 @@ async function boot(session) {
   };
   addEventListener('pointerdown', ensureAudio);
   addEventListener('keydown', ensureAudio);
+  addEventListener('pagehide', () => {
+    sessionFailed = true;
+    removeEventListener('pointerdown', ensureAudio);
+    removeEventListener('keydown', ensureAudio);
+    if (audioCtx) audioCtx.close().catch(() => {});
+  });
 
   const muteBtn = $('mute');
   const applyMute = () => {
@@ -779,7 +814,8 @@ async function boot(session) {
   const hb = (stage) => { try { localStorage.setItem('openbw-heartbeat', stage + ' @' + new Date().toISOString()); } catch {} };
   hb('boot:start');
 
-  const assets = await loadAssets(session.mapFile || MAP_LOCAL);
+  const assets = await loadAssets(session.mapFile || MAP_LOCAL, session.mission, session.signal);
+  session.signal?.throwIfAborted();
   hb('boot:assets-loaded');
 
   let memory;
@@ -808,6 +844,7 @@ async function boot(session) {
   };
   const decodeWav = (id, wav) => {
     audioCtx.decodeAudioData(wav.buffer).then((b) => {
+      if (sessionFailed) return;
       soundBuffers[id] = b;
       // A play requested while still decoding would be silently dropped
       // (a one-shot sound like a selection ack) — fire it now that it's ready.
@@ -883,7 +920,16 @@ async function boot(session) {
   zoom = Math.min(zoom, zoomMax());
   x._initialize();
   const { slots, mySlot, link = null, delay = 0 } = session;
-  if (slots.length > 1) {
+  if (session.mission) {
+    const pointer = x.openbw_campaign_capabilities();
+    const bytes = new Uint8Array(memory.buffer);
+    let end = pointer;
+    while (bytes[end]) end++;
+    const capabilities = new Set(new TextDecoder().decode(bytes.subarray(pointer, end)).trim().split('\n'));
+    const missing = session.mission.requirements.filter(required => !capabilities.has(required));
+    if (missing.length) throw new Error('Unsupported mission operations: ' + missing.join(', '));
+    x.openbw_init_campaign(...winSize(), session.mission.race, session.mission.humanSlot);
+  } else if (slots.length > 1) {
     // Hand the slot list to the wasm as int32 [slot, race] pairs via the scratch buffer.
     const pairs = new Int32Array(slots.length * 2);
     slots.forEach((s, i) => { pairs[2 * i] = s.slot; pairs[2 * i + 1] = s.race; });
@@ -1053,10 +1099,20 @@ async function boot(session) {
   const showGameOver = (title, won) => {
     if (gameOverShown) return;
     gameOverShown = true;
+    if (session.mission) {
+      stopNarration();
+      $('mission-caption').hidden = true;
+      if (won) {
+        const progress = campaignProgress();
+        if (!progress.completed.includes(session.mission.id)) progress.completed.push(session.mission.id);
+        try { localStorage.setItem(campaignProgressKey, JSON.stringify(progress)); $('go-progress').textContent = 'Mission complete.'; }
+        catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
+      }
+    }
     // openbw_stats returns a C-string pointer, not a JS string — read it out of wasm memory.
     const ptr = x.openbw_stats();
     const rows = (ptr ? readCString(ptr) : '').split('\n');
-    const secs = Math.round((+(rows.shift() || '0\t0').split('\t')[1] || 0) / 24);   // ~24 fps
+    const secs = Math.round((+(rows.shift() || '0\t0').split('\t')[1] || 0) / (session.mission ? 16 : 24));
     let html = '<tr><th>Player</th><th>Units</th><th>Buildings</th><th>Minerals</th><th>Gas</th><th>Score</th></tr>';
     for (const line of rows) {
       if (!line) continue;
@@ -1081,6 +1137,14 @@ async function boot(session) {
   $('go-replay').onclick = (e) => saveReplay(e.currentTarget);
   $('go-close').onclick = () => { x.openbw_reveal_map(); $('gameover').classList.remove('show'); };
   $('go-new').onclick = toMainMenu;
+  $('go-replay').hidden = !!session.mission;
+  $('go-retry').hidden = !session.mission;
+  $('go-retry').onclick = () => {
+    const address = new URL(location.origin + location.pathname);
+    address.searchParams.set('mission', session.mission.id);
+    address.searchParams.set('autostart', '1');
+    location.replace(address);
+  };
 
   // Debug (?debug in the URL): force a win/lose to exercise the game-over screen without
   // playing to elimination. Bypasses the competitive gate, so it works in single-player.
@@ -1092,7 +1156,8 @@ async function boot(session) {
     $('dbg-resources').onclick = () => { settingsPop.style.display = 'none'; x.openbw_debug_resources(2000, 1000); };
     $('dbg-reveal').onclick = () => { settingsPop.style.display = 'none'; x.openbw_reveal_map(); };
     // Not while spectating: a cheat mutates only the rendered replica, desyncing the shadow.
-    debugResourcesPending = !session.spectate;   // start rich; applied after the first step sets the melee start
+    debugResourcesPending = !session.spectate && !session.mission;
+    if (session.mission) $('opt-debug').style.display = 'none';
   }
 
   // Chat (Enter to open). Messages go into the same log the sim uses for eliminations, via
@@ -1166,6 +1231,7 @@ async function boot(session) {
   // rendering and input keep running, so you can still look around and give orders.
   let paused = false, waiting = false, stepMs = 42;   // 42 ms ≈ 24 Hz "fastest" game speed
   try { stepMs = +localStorage.getItem('openbw-speed') || 42; } catch {}
+  if (session.mission) stepMs = 42;
 
   // Local input is serialised to BW command bytes rather than applied directly; the
   // lockstep queue drains them, schedules them, and applies every player's batch before
@@ -1235,7 +1301,7 @@ async function boot(session) {
   }
   const mySums = new Map(), peerSums = new Map();
   const SUM_EVERY = 240;   // ~10 s at "fastest"
-  {
+  if (!session.mission) {
     const m = MAPS.find((e) => e.file === (session.mapFile || MAP_LOCAL));
     const actual = x.openbw_start_locations();
     if (m && actual && m.starts !== actual)
@@ -1277,9 +1343,9 @@ async function boot(session) {
   };
   let stepTimer, stepClock = performance.now(), lastProgress = performance.now(), overSince = 0;
   let lastHb = 0;   // heartbeat pacing (see the black-box recorder)
-  const stepLoop = () => {
+  const runStepLoop = () => {
     let burstMs = 0;
-    if (!paused && (!over || (link && performance.now() - overSince < OVER_GRACE_MS))) {
+    if (!briefingActive && !paused && (!over || (link && performance.now() - overSince < OVER_GRACE_MS))) {
       const now = performance.now();
       if (now - stepClock > MAX_DEBT_MS) stepClock = now - MAX_DEBT_MS;
       let budget = Math.min(Math.floor((now - stepClock) / stepMs), MAX_CATCHUP);
@@ -1287,7 +1353,11 @@ async function boot(session) {
       // Heartbeat brackets the tick burst: if a wedge leaves 'run:pre-tick' as the last
       // stamp, the spin is inside the engine step; 'run:frame=N' means we returned.
       if (now - lastHb > 1000) { hb('run:pre-tick frame=' + lockstep.frame); }
-      while (budget-- > 0 && performance.now() - now < MAX_BURST_MS && lockstep.tick()) advanced++;
+      while (budget-- > 0 && performance.now() - now < MAX_BURST_MS && lockstep.tick()) {
+        advanced++;
+        if (session.mission) { missionTicks++; consumeMissionEvents(); }
+        if (session.mission && x.openbw_outcome()) break;
+      }
       if (now - lastHb > 1000) {
         hb('run:frame=' + lockstep.frame);
         lastHb = now;
@@ -1344,6 +1414,19 @@ async function boot(session) {
     // can't render or take input and looks frozen even while the sim advances.
     stepTimer = setTimeout(stepLoop, Math.max(8, stepMs >> 1, burstMs * 0.7));
   };
+  const failSession = error => {
+    if (sessionFailed) return;
+    sessionFailed = true;
+    over = true;
+    clearTimeout(stepTimer);
+    stopNarration();
+    if (session.mission) campaignFailure(error);
+    else { setBanner('Game stopped: ' + error.message, 0); console.error(error); }
+  };
+  const stepLoop = () => {
+    if (sessionFailed) return;
+    try { runStepLoop(); } catch (error) { failSession(error); }
+  };
   stepTimer = setTimeout(stepLoop, stepMs);
 
   // Reload is how players go back to the main menu, and a same-origin reload reuses the
@@ -1354,7 +1437,8 @@ async function boot(session) {
   // reclaim the (large) wasm memory sooner.
   addEventListener('pagehide', () => {
     clearTimeout(stepTimer);
-    try { if (audioCtx) audioCtx.close(); } catch {}
+    sessionFailed = true;
+    stopNarration();
     try { if (link) link.close(); } catch {}
     if (DEV) window.__bw = null;
   });
@@ -1402,6 +1486,7 @@ async function boot(session) {
   // Game speed lives in the settings popup; the value is the ms per sim frame.
   const optSpeed = $('opt-speed');
   optSpeed.value = String(stepMs);
+  optSpeed.disabled = !!session.mission;
   optSpeed.onchange = () => {
     stepMs = +optSpeed.value || 42;
     try { localStorage.setItem('openbw-speed', String(stepMs)); } catch {}
@@ -1438,6 +1523,137 @@ async function boot(session) {
     iconCache.set(id, url);
     return url;
   };
+
+  const missionDecoder = new TextDecoder('windows-1252');
+  const missionText = pointer => {
+    const bytes = new Uint8Array(memory.buffer);
+    let end = pointer;
+    while (bytes[end]) end++;
+    return missionDecoder.decode(bytes.subarray(pointer, end)).replace(/[\x01-\x09\x0b-\x1f\x7f]/g, '');
+  };
+  const missionString = index => index ? missionText(x.openbw_mission_string(index)) : '';
+  const narratorName = type => type === 106 ? 'Adjutant' : type === 23 ? 'Edmund Duke' : type === 19 ? 'Jim Raynor' : missionText(x.openbw_mission_unit_name(type));
+  const narrationChannel = 63;
+  let captionUntil = 0;
+  let lastMissionSequence = 0;
+  function stopNarration() {
+    audio.js_sound_stop(narrationChannel);
+    audio.js_sound_stop(narrationChannel - 1);
+    for (const id of Object.keys(pendingPlay)) if (pendingPlay[id].channel >= narrationChannel - 1) delete pendingPlay[id];
+  }
+  function playNarration(index, channel = narrationChannel) {
+    if (!index || sessionFailed) return;
+    audio.js_sound_stop(channel);
+    for (const id of Object.keys(pendingPlay)) if (pendingPlay[id].channel === channel) delete pendingPlay[id];
+    x.openbw_mission_play_sound(index, channel);
+  }
+  function consumeMissionEvents() {
+    const stream = readCString(x.openbw_mission_events()).trim();
+    if (!stream) return;
+    for (const line of stream.split('\n')) {
+      const [generation, sequence, owner, type, location, text, sound, time, modifier, unit, adjustment] = line.split('\t').map(Number);
+      if (generation !== 1 || sequence !== lastMissionSequence + 1 || owner !== mySlot) throw new Error('Invalid mission presentation sequence.');
+      lastMissionSequence = sequence;
+      if (type === 7 || type === 8) playNarration(sound, type === 8 ? narrationChannel - 1 : narrationChannel);
+      if (type === 7 || type === 9) {
+        $('mission-caption-text').textContent = missionString(text);
+        $('mission-caption-speaker').textContent = type === 7 ? narratorName(unit) : '';
+        $('mission-caption').hidden = false;
+        const duration = type === 7 ? x.openbw_mission_transmission_time(time, adjustment, modifier) : 7000;
+        captionUntil = missionTicks + Math.ceil(Math.max(3000, duration) / 42);
+      }
+      if (type === 12) $('mission-objectives-text').textContent = missionString(text);
+    }
+    x.openbw_mission_ack(lastMissionSequence);
+  }
+  function updateMissionHud() {
+    if (!session.mission || briefingActive) return;
+    $('mission-objectives-text').textContent = missionText(x.openbw_mission_objectives());
+    const leaderboard = readCString(x.openbw_mission_leaderboard()).trim();
+    $('mission-leaderboard').hidden = !leaderboard;
+    if (leaderboard) {
+      const lines = leaderboard.split('\n');
+      const [title, unit] = lines.shift().split('\t').map(Number);
+      const label = missionString(title) || missionText(x.openbw_mission_unit_name(unit));
+      $('mission-leaderboard').textContent = [label, ...lines.map(line => { const [owner, count] = line.split('\t').map(Number); return `${owner === mySlot ? 'You' : `Player ${owner + 1}`}: ${count}`; })].join('  ');
+    }
+    if (missionTicks >= captionUntil) $('mission-caption').hidden = true;
+    const caption = $('mission-caption');
+    if (!caption.hidden) {
+      caption.style.left = '';
+      caption.style.width = '';
+      caption.style.top = '';
+      caption.style.transform = '';
+      const bounds = caption.getBoundingClientRect();
+      const objectives = $('mission-hud').getBoundingClientRect();
+      if (bounds.left < objectives.right && bounds.right > objectives.left && bounds.top < objectives.bottom && bounds.bottom > objectives.top) {
+        const available = objectives.left - 28;
+        if (available >= 280) {
+          caption.style.left = '14px';
+          caption.style.width = `${Math.min(520, available)}px`;
+          caption.style.transform = 'none';
+        } else caption.style.top = `${objectives.bottom + 8}px`;
+      }
+    }
+  }
+  let briefingPlaying = false, briefingIndex = 0, briefingClock = 0, briefingUntil = 0, briefingLast = 0;
+  let briefingActions = [];
+  const briefingPortraits = new Map();
+  function showBriefingPortrait(slot) {
+    const unit = briefingPortraits.get(slot);
+    $('briefing-portrait').hidden = unit === undefined;
+    $('briefing-speaker').textContent = unit === undefined ? '' : narratorName(unit);
+    if (unit !== undefined) { $('briefing-portrait').src = iconURL(unit); $('briefing-portrait').alt = narratorName(unit); }
+  }
+  function briefingFrame(now) {
+    if (!briefingActive || !briefingPlaying) return;
+    if (!document.hidden) briefingClock += Math.min(100, Math.max(0, now - briefingLast));
+    briefingLast = now;
+    while (briefingPlaying && briefingClock >= briefingUntil && briefingIndex < briefingActions.length) {
+      const [type, text, sound, time, slot, amount, modifier, unit] = briefingActions[briefingIndex++];
+      if (type === 1) briefingUntil = briefingClock + Math.max(0, time);
+      if (type === 2 || type === 8) playNarration(sound);
+      if (type === 3 || type === 8) $('briefing-text').textContent = missionString(text);
+      if (type === 4) $('briefing-objectives').textContent = missionString(text);
+      if (type === 5) { briefingPortraits.set(slot, unit); showBriefingPortrait(slot); }
+      if (type === 6) { briefingPortraits.delete(slot); showBriefingPortrait(slot); }
+      if (type === 8) {
+        showBriefingPortrait(slot);
+        briefingUntil = briefingClock + x.openbw_mission_transmission_time(time, amount, modifier);
+      }
+    }
+    if (briefingIndex === briefingActions.length && briefingClock >= briefingUntil) {
+      briefingPlaying = false;
+      $('briefing-state').textContent = 'Complete';
+      $('briefing-play').querySelector('span').textContent = 'Replay Briefing';
+    }
+  }
+  if (session.mission) {
+    const stream = readCString(x.openbw_mission_briefing()).trim();
+    briefingActions = stream ? stream.split('\n').map(line => line.split('\t').map(Number)) : [];
+    $('briefing-title').textContent = session.mission.title;
+    const objectives = briefingActions.find(action => action[0] === 4);
+    if (objectives) $('briefing-objectives').textContent = missionString(objectives[1]);
+    $('mission-briefing').hidden = false;
+    $('briefing-play').focus();
+    $('briefing-play').onclick = () => {
+      stopNarration(); ensureAudio();
+      briefingPortraits.clear();
+      briefingIndex = 0; briefingClock = 0; briefingUntil = 0; briefingLast = performance.now();
+      briefingPlaying = true;
+      $('briefing-state').textContent = 'Playing';
+      $('briefing-text').textContent = '';
+    };
+    $('briefing-begin').onclick = () => {
+      stopNarration(); ensureAudio();
+      briefingPlaying = false; briefingActive = false;
+      $('mission-briefing').hidden = true;
+      $('mission-hud').hidden = false;
+      x.openbw_mission_begin();
+      stepClock = performance.now();
+    };
+    $('briefing-return').onclick = returnToStartup;
+  }
 
   const updateCard = () => {
     const ptr = x.openbw_card();
@@ -1794,7 +2010,8 @@ async function boot(session) {
     curCanvas.style.display = 'block';
   };
 
-  function frame() {
+  function renderFrame() {
+    briefingFrame(performance.now());
     x.openbw_render(performance.now());
     const w = x.openbw_framebuffer_width(), h = x.openbw_framebuffer_height(), ptr = x.openbw_framebuffer();
     if (w && h && ptr) {
@@ -1810,7 +2027,12 @@ async function boot(session) {
     updateMessages();
     updateCursor();
     updateCursorOverlay();
+    updateMissionHud();
     requestAnimationFrame(frame);
+  }
+  function frame() {
+    if (sessionFailed) return;
+    try { renderFrame(); } catch (error) { failSession(error); }
   }
   requestAnimationFrame(frame);
 }
@@ -1910,6 +2132,114 @@ mapSelect.addEventListener('change', () => { renderMapInfo(); buildSlots(); });
 $('spectate').addEventListener('change', buildSlots);   // toggling swaps "You" for a 2nd bot
 renderMapInfo(); buildSlots();
 
+const campaignProgressKey = 'openbw-campaign-progress-v1';
+const selectedMission = new URLSearchParams(location.search).get('mission');
+let campaignManifest = null;
+let campaignDownload = null;
+function campaignProgress() {
+  try {
+    const value = JSON.parse(localStorage.getItem(campaignProgressKey) || 'null');
+    if (value?.version === 1 && Array.isArray(value.completed)) return value;
+  } catch {}
+  return { version: 1, completed: [] };
+}
+function selectGameMode(campaign) {
+  if (!campaign) probeMeleeMaps();
+  $('mode-sandbox').setAttribute('aria-selected', String(!campaign));
+  $('mode-campaign').setAttribute('aria-selected', String(campaign));
+  $('campaign-setup').hidden = !campaign;
+  for (const id of ['map-row', 'map-info', 'slots', 'spectate-row', 'lobby-hint', 'sandbox-start', 'mp']) $(id).hidden = campaign;
+  if (campaign) {
+    const complete = campaignProgress().completed.includes('terran01');
+    $('mission-size').textContent = complete ? 'Wasteland - completed' : 'Wasteland';
+    fetch('data/campaign/terran01.json').then(response => {
+      if (!response.ok) throw new Error('Mission download unavailable.');
+      return response.json();
+    }).then(manifest => {
+      validateMissionManifest(manifest);
+      campaignManifest = manifest;
+      $('mission-size').textContent = `${(manifest.pack.bytes / 1048576).toFixed(2)} MB${complete ? ' - completed' : ''}`;
+    }).catch(error => { $('mission-size').textContent = error.message; });
+  }
+}
+function validateMissionManifest(manifest) {
+  if (manifest.schemaVersion !== 1 || manifest.id !== 'terran01' || manifest.humanSlot !== 1 || manifest.race !== 1 || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files)) throw new Error('Unsupported mission manifest.');
+  if (!Number.isInteger(manifest.pack?.bytes) || manifest.pack.bytes <= 32 || manifest.pack.bytes > 32 * 1048576 || !/^[a-f0-9]{64}$/.test(manifest.pack.sha256)) throw new Error('Invalid mission pack metadata.');
+  const url = new URL(manifest.pack.url, location.href);
+  if (url.origin !== location.origin || url.pathname !== new URL('data/campaign/terran01.mpq', location.href).pathname) throw new Error('Invalid mission pack location.');
+  if (manifest.requirements.some(required => !/^(condition|action|briefing)\.\d+$/.test(required))) throw new Error('Invalid mission capability metadata.');
+}
+function campaignFailure(error) {
+  console.error('[campaign]', error);
+  $('overlay').style.display = 'grid';
+  $('controls').style.display = 'none';
+  $('load-actions').hidden = false;
+  $('load-cancel').hidden = true;
+  $('load-retry').hidden = false;
+  $('load-return').hidden = false;
+  $('mission-briefing').hidden = true;
+  setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : `Mission unavailable: ${error.message}`);
+}
+const returnToStartup = () => location.replace(location.origin + location.pathname);
+$('load-return').onclick = returnToStartup;
+$('load-retry').onclick = () => location.reload();
+$('load-cancel').onclick = () => campaignDownload?.abort();
+$('mode-sandbox').onclick = () => selectGameMode(false);
+$('mode-campaign').onclick = () => selectGameMode(true);
+$('campaign-start').onclick = async () => {
+  $('campaign-start').disabled = true;
+  campaignDownload = new AbortController();
+  $('load-actions').hidden = false;
+  $('load-cancel').hidden = false;
+  $('load-retry').hidden = true;
+  $('load-return').hidden = true;
+  try {
+    if (!campaignManifest) {
+      const response = await fetch('data/campaign/terran01.json', { signal: campaignDownload.signal });
+      if (!response.ok) throw new Error(`Mission manifest HTTP ${response.status}`);
+      campaignManifest = await response.json();
+      validateMissionManifest(campaignManifest);
+    }
+    const address = new URL(location.href);
+    address.searchParams.set('mission', campaignManifest.id);
+    history.replaceState(null, '', address);
+    $('controls').style.display = 'none';
+    await boot({ mission: campaignManifest, signal: campaignDownload.signal, slots: [{ slot: campaignManifest.humanSlot, race: campaignManifest.race }], mySlot: campaignManifest.humanSlot });
+  } catch (error) { campaignFailure(error); }
+};
+$('campaign-delete').onclick = async () => {
+  try {
+    const db = await idbOpen();
+    const transaction = db.transaction('assets', 'readwrite');
+    const store = transaction.objectStore('assets');
+    store.openKeyCursor().onsuccess = event => {
+      const cursor = event.target.result;
+      if (!cursor) return;
+      if (String(cursor.key).startsWith('campaign:')) store.delete(cursor.key);
+      cursor.continue();
+    };
+    await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); transaction.onabort = () => reject(transaction.error); });
+    db.close();
+    $('mission-size').textContent = 'Mission downloads deleted.';
+  } catch { $('mission-size').textContent = 'Mission downloads could not be deleted.'; }
+};
+$('campaign-reset').onclick = () => {
+  const button = $('campaign-reset');
+  if (button.dataset.confirm !== '1') {
+    button.dataset.confirm = '1';
+    button.title = button.ariaLabel = 'Confirm campaign progress reset';
+    $('mission-size').textContent = 'Confirm progress reset.';
+    return;
+  }
+  try { localStorage.removeItem(campaignProgressKey); $('mission-size').textContent = 'Campaign progress reset.'; }
+  catch { $('mission-size').textContent = 'Campaign progress could not be reset.'; }
+  delete button.dataset.confirm;
+  button.title = button.ariaLabel = 'Reset campaign progress';
+};
+if (selectedMission === 'terran01') selectGameMode(true);
+if (selectedMission === 'terran01' && new URLSearchParams(location.search).get('autostart') === '1') $('campaign-start').click();
+if (window.lucide) window.lucide.createIcons();
+
 $('start-game').onclick = () => {
   $('controls').style.display = 'none';
   const file = mapSelect.value;
@@ -2003,11 +2333,17 @@ const mpShow = (el, on) => { el.style.display = on ? 'block' : 'none'; };
 // HEAD requests confirm — the UI is never empty and never offers a map that isn't there.
 mapSelect.add(new Option(MAPS[0].name, MAPS[0].file));
 for (const sel of mp.r) fillRaces(sel);
-Promise.all(MAPS.slice(1).map(async (m) => {
-  try { return (await fetch(m.file, { method: 'HEAD' })).ok ? m : null; } catch { return null; }
-})).then((found) => {
-  for (const m of found) if (m) mapSelect.add(new Option(m.name, m.file));
-});
+let mapProbesStarted = false;
+function probeMeleeMaps() {
+  if (mapProbesStarted) return;
+  mapProbesStarted = true;
+  Promise.all(MAPS.slice(1).map(async (m) => {
+    try { return (await fetch(m.file, { method: 'HEAD' })).ok ? m : null; } catch { return null; }
+  })).then((found) => {
+    for (const m of found) if (m) mapSelect.add(new Option(m.name, m.file));
+  });
+}
+if (selectedMission !== 'terran01') probeMeleeMaps();
 
 // Race is picked in the lobby, not before hosting — the handshake only carries the
 // starting value, and either side can change it until the countdown locks.

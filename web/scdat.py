@@ -158,12 +158,14 @@ def _hash(s, htype):
 
 def _decrypt(buf, key):
     s2, out = 0xEEEEEEEE, bytearray()
-    for (v,) in struct.iter_unpack('<I', buf):
+    aligned = len(buf) & ~3
+    for (v,) in struct.iter_unpack('<I', buf[:aligned]):
         s2 = (s2 + _CT[0x400 + (key & 0xFF)]) & 0xFFFFFFFF
         v ^= (key + s2) & 0xFFFFFFFF
         out += struct.pack('<I', v)
         key = (((~key << 0x15) + 0x11111111) | (key >> 0x0B)) & 0xFFFFFFFF
         s2 = (v + s2 + (s2 << 5) + 3) & 0xFFFFFFFF
+    out += buf[aligned:]
     return bytes(out)
 
 F_IMPLODE, F_COMPRESS, F_ENCRYPTED, F_FIX_KEY = 0x100, 0x200, 0x10000, 0x20000
@@ -221,12 +223,12 @@ class MPQ:
 
         if not flags & (F_COMPRESS | F_IMPLODE):          # plain stored file
             if flags & F_ENCRYPTED:
-                raw = _decrypt(raw + b'\0' * (-len(raw) % 4), key)[:len(raw)]
+                raw = _decrypt(raw, key)
             return raw[:fsz]
 
         if flags & F_SINGLE_UNIT:
             if flags & F_ENCRYPTED:
-                raw = _decrypt(raw + b'\0' * (-len(raw) % 4), key)[:len(raw)]
+                raw = _decrypt(raw, key)
             if csz == fsz:
                 return raw[:fsz]
             return explode(raw, fsz) if flags & F_IMPLODE else self._decomp(raw, fsz)
@@ -240,8 +242,7 @@ class MPQ:
         for i in range(nsect):
             chunk = raw[offs[i]:offs[i + 1]]
             if flags & F_ENCRYPTED:
-                chunk = _decrypt(chunk + b'\0' * (-len(chunk) % 4),
-                                 (key + i) & 0xFFFFFFFF)[:len(chunk)]
+                chunk = _decrypt(chunk, (key + i) & 0xFFFFFFFF)
             want = min(self.sector, fsz - i * self.sector)
             if len(chunk) == want:                        # stored sector
                 out += chunk
