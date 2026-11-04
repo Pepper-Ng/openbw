@@ -670,6 +670,25 @@ function testCommands() {
   x.openbw_pan(-32, -32);
   x.openbw_render(0);
 
+  x.openbw_set_touch_controls(0);
+  press(98);
+  x.openbw_render(0);
+  const desktopDepot = commandRows().find(command => command[1] === 'Supply Depot');
+  assert.ok(desktopDepot);
+  press(desktopDepot[0].charCodeAt(0));
+  x.openbw_mouse_move(previewScreenX, previewScreenY);
+  x.openbw_render(0);
+  assert.equal(x.openbw_cursor(), 2, 'Mouse hover keeps the desktop placement command active');
+  assert.ok(!commandRows().some(command => command[1] === 'Confirm'), 'Desktop placement must not require mobile confirmation');
+  assert.equal(records().length, 0, 'Mouse hover previews without placing');
+  x.openbw_mouse_button(1, 1, previewScreenX, previewScreenY, 1);
+  x.openbw_mouse_button(0, 1, previewScreenX, previewScreenY, 1);
+  x.openbw_render(0);
+  assert.ok(records().some(record => record[0] === 12), 'One desktop click must issue the building command');
+  assert.notEqual(x.openbw_cursor(), 2, 'One desktop click finishes placement without Confirm');
+  x.openbw_out_clear();
+  x.openbw_set_touch_controls(1);
+
   x.openbw_debug_select(Number(building[0]), 0);
   const clickSelected = (screenX, screenY, clicks = 1) => {
     x.openbw_mouse_button(1, 1, screenX, screenY, clicks);

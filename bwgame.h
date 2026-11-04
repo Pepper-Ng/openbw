@@ -19206,8 +19206,9 @@ struct state_functions {
 				for (unit_id id : ai.attacking) {
 					unit_t* unit = get_unit(id);
 					if (unit->order_type->id != Orders::Guard && unit->order_type->id != Orders::PlayerGuard && unit->order_type->id != Orders::ComputerAI && unit->order_type->id != Orders::Nothing) continue;
-					if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit)) continue;
+					if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit) && unit_can_attack_target(unit, unit->auto_target_unit) && unit_target_in_weapon_movement_range(unit, unit->auto_target_unit)) continue;
 					if (!u_flying(unit) && !is_reachable(unit, target)) continue;
+					unit->auto_target_unit = nullptr;
 					issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
 				}
 			}

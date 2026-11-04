@@ -319,9 +319,24 @@ const winSize = () => {
 
 function wireInput(canvas, x) {
   const touchMedia = window.matchMedia('(pointer: coarse)');
-  const syncTouchControls = () => x.openbw_set_touch_controls?.(touchMedia.matches ? 1 : 0);
+  const mouseMedia = window.matchMedia('(any-pointer: fine) and (any-hover: hover)');
+  let touchControls;
+  const useTouchControls = (touch) => {
+    if (touchControls === touch) return;
+    touchControls = touch;
+    x.openbw_set_touch_controls?.(touch ? 1 : 0);
+  };
+  const syncTouchControls = () => useTouchControls(touchMedia.matches && !mouseMedia.matches);
   syncTouchControls();
   touchMedia.addEventListener('change', syncTouchControls);
+  mouseMedia.addEventListener('change', syncTouchControls);
+  window.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse') useTouchControls(false);
+    else if (event.pointerType === 'touch' || event.pointerType === 'pen') useTouchControls(true);
+  }, {capture: true, passive: true});
+  window.addEventListener('pointermove', (event) => {
+    if (event.pointerType === 'mouse') useTouchControls(false);
+  }, {passive: true});
   const xy = (e) => {
     const r = canvas.getBoundingClientRect();
     return [Math.round((e.clientX - r.left) * canvas.width / r.width),

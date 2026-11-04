@@ -805,16 +805,31 @@ static void desperate_mission_cases(data_loading::data_files_loader<>& load_data
 			unit_t* old_target = functions.get_unit(ai.military_target);
 			require(old_target && ai.attacking.size() == 2, "military party has an initial shared target");
 			functions.kill_unit(old_target);
+			functions.move_unit(zerglings[0], old_target->sprite->position);
+			unit_t* distant_target = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) {
+				if (functions.unit_dying(unit)) continue;
+				if (!functions.unit_target_in_weapon_movement_range(zerglings[0], unit)) { distant_target = unit; break; }
+			}
+			require(distant_target != nullptr, "continuing military has an out-of-range living enemy fixture");
 			for (int member = 0; member != 2; ++member) {
 				functions.move_unit(zerglings[member], old_target->sprite->position);
 				functions.set_unit_order(zerglings[member], functions.get_order_type(Orders::PlayerGuard));
-				zerglings[member]->auto_target_unit = nullptr;
+				zerglings[member]->auto_target_unit = distant_target;
+				require(!functions.unit_target_in_weapon_movement_range(zerglings[member], distant_target), "remembered target is outside actual combat range");
 			}
 			st.current_frame = (st.current_frame + 7) / 8 * 8;
 			functions.progress_campaign_ai_town(4);
 			unit_t* target = functions.get_unit(ai.military_target);
 			require(target && target != old_target && !functions.unit_dying(target), "military chooses a new live target after a cleared destination");
 			for (int member = 0; member != 2; ++member) require(zerglings[member]->order_type->id == Orders::AttackMove && zerglings[member]->order_target.pos == target->sprite->position, "surviving idle attackers continue together rather than parking at the old destination");
+			functions.move_unit(zerglings[1], target->sprite->position + xy(16, 0));
+			functions.set_unit_order(zerglings[1], functions.get_order_type(Orders::PlayerGuard));
+			zerglings[1]->auto_target_unit = target;
+			functions.set_sprite_visibility(target->sprite, 0xff);
+			require(functions.unit_can_attack_target(zerglings[1], target) && functions.unit_target_in_weapon_movement_range(zerglings[1], target), "continuing military has an active in-range combat fixture");
+			functions.progress_campaign_ai_town(4);
+			require(zerglings[1]->order_type->id == Orders::PlayerGuard && zerglings[1]->auto_target_unit == target, "continuation preserves valid in-range native combat");
 			printf("Desperate Alliance continuing military retargeting passed.\n");
 			continue;
 		}
