@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -158,6 +158,29 @@ function testCampaign() {
     x.openbw_debug_select(0, 0);
     x.openbw_out_clear();
     console.log('The Trump Card initialization checks passed.');
+  } else if (missionId === 'terran08') {
+    assert.equal(mission.humanSlot, 0, 'Keep the original Big Push human slot');
+    assert.equal(human.length, 22, 'Original fleet and naturally rescued Duke');
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 4);
+    assert.equal(human.filter(unit => unit[1] === 'Ghost').length, 2);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 4);
+    assert.equal(human.filter(unit => unit[1] === 'Dropship').length, 2);
+    const duke = human.find(unit => unit[1] === 'Norad II');
+    assert.ok(duke, 'Duke is the original flying hero Battlecruiser');
+    x.openbw_debug_select(Number(duke[0]), 0);
+    x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /Yamato/);
+    const buildings = human.filter(unit => ['Command Center', 'Barracks', 'Factory', 'Starport', 'Science Facility'].includes(unit[1]));
+    assert.equal(buildings.length, 6, 'Original six in-transit buildings');
+    for (const building of buildings) {
+      x.openbw_debug_select(Number(building[0]), 0);
+      x.openbw_render(0);
+      assert.match(read(x.openbw_card()), /\tLand\t/, 'Authored airborne buildings expose native Land');
+    }
+    x.openbw_debug_select(0, 0);
+    x.openbw_out_clear();
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Big Push has no survival countdown');
+    console.log('The Big Push initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -171,7 +194,7 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -179,7 +202,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'terran08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Big Push trigger grants 100 gas');
   if (missionId === 'terran03') assert.equal(x.openbw_mission_countdown(), 1800, 'Original thirty-minute countdown');
   if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   if (missionId === 'terran05') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 300, 'Original Revolution trigger grants gas');
@@ -215,7 +239,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const locationDrivenDialogue = ['terran04', 'terran05', 'terran06'].includes(missionId);
+  const locationDrivenDialogue = ['terran04', 'terran05', 'terran06', 'terran08'].includes(missionId);
   if (locationDrivenDialogue) assert.equal(dialogue.length, 0, 'Original mission dialogue is location-triggered, not invented at idle startup');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {

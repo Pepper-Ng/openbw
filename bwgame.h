@@ -5197,14 +5197,7 @@ struct state_functions {
 		}
 	}
 
-	void order_BuildingLiftoff(unit_t* u) {
-		if (!u_grounded_building(u) || !ut_flying_building(u)) {
-			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
-			order_done(u);
-			return;
-		}
-		if (u->building.addon) building_abandon_addon(u);
-		if (unit_is_factory(u)) u->building.rally.unit = u;
+	void set_building_airborne(unit_t* u) {
 		set_unit_tiles_unoccupied(u, u->sprite->position);
 		u_unset_status_flag(u, unit_t::status_flag_grounded_building);
 		u_set_status_flag(u, unit_t::status_flag_can_turn);
@@ -5215,6 +5208,17 @@ struct state_functions {
 		check_unit_collision(u);
 		unit_finder_remove(u);
 		unit_finder_insert(u);
+	}
+
+	void order_BuildingLiftoff(unit_t* u) {
+		if (!u_grounded_building(u) || !ut_flying_building(u)) {
+			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+			order_done(u);
+			return;
+		}
+		if (u->building.addon) building_abandon_addon(u);
+		if (unit_is_factory(u)) u->building.rally.unit = u;
+		set_building_airborne(u);
 		if (u->sprite->images.back().modifier == 10) {
 			u->sprite->images.back().frozen_y_value = get_image_map_position(&u->sprite->images.back()).y;
 			u->sprite->images.back().flags |= image_t::flag_y_frozen;
@@ -22725,6 +22729,11 @@ struct game_load_functions : state_functions {
 				unit_t* u = create_initial_unit(unit_type, {x, y}, owner);
 
 				if (!u) continue;
+				if (valid_flags & flags & 4) {
+					if (!ut_flying_building(u)) error("in-transit placement requires a flying building");
+					set_building_airborne(u);
+					if (u->sprite->images.back().modifier == 10) u->sprite->images.back().offset.y = 42;
+				}
 
 				if (valid_properties & 0x2) {
 					using tmp_t = fixed_point<32, 8, true>;

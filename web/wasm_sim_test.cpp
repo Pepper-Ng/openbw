@@ -1389,6 +1389,115 @@ static void trump_mission_cases(data_loading::data_files_loader<>& load_data_fil
 	}
 }
 
+static void big_push_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+		unit_t* duke = nullptr;
+		for (unit_t* unit : ptr(st.player_units[0])) {
+			functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			if (unit->unit_type->id == UnitTypes::Hero_Norad_II) duke = unit;
+		}
+		require(duke && duke->sprite->owner == 2, "original Duke is naturally rescued without changing his display color");
+		if (scenario == 1) functions.kill_unit(duke);
+		if (scenario == 2 || scenario == 3 || scenario == 4) {
+			a_vector<unit_t*> victims;
+			for (int owner : (scenario == 2 ? a_vector<int>{0} : scenario == 4 ? a_vector<int>{4} : a_vector<int>{4, 5})) {
+				for (unit_t* unit : ptr(st.player_units[owner])) if (scenario == 2 || functions.ut_building(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		}
+		if (scenario == 5) {
+			a_vector<unit_t*> assigned;
+			a_vector<std::pair<unit_t*, unit_t*>> claims;
+			for (unit_t* addon : ptr(st.player_units[11])) {
+				if (!functions.ut_addon(addon)) continue;
+				unit_t* parent = nullptr;
+				for (unit_t* unit : ptr(st.player_units[0])) {
+					if (!functions.ut_flying_building(unit) || !functions.unit_can_attach_addon(unit, addon)) continue;
+					if (std::find(assigned.begin(), assigned.end(), unit) == assigned.end()) { parent = unit; break; }
+				}
+				require(parent != nullptr, "original airborne parent for every abandoned add-on");
+				assigned.push_back(parent);
+				claims.emplace_back(parent, addon);
+				functions.u_set_status_flag(addon, unit_t::status_flag_invincible);
+				xy destination = addon->sprite->position - addon->unit_type->placement_size / 2 - addon->unit_type->addon_position + parent->unit_type->placement_size / 2;
+				functions.set_unit_order(parent, functions.get_order_type(Orders::BuildingLand), destination);
+			}
+			require(claims.size() == 5, "original two silos, Control Tower, Covert Ops and Machine Shop");
+			for (int tick = 0; tick != 3000; ++tick) functions.next_frame();
+			for (const auto& claim : claims) {
+				require(functions.u_grounded_building(claim.first) && !functions.u_flying(claim.first), "native landing grounds the original fleet building");
+				require(claim.first->building.addon == claim.second && claim.second->owner == 0, "native landing claims its original abandoned add-on");
+			}
+			printf("The Big Push original fleet landing and abandoned add-ons passed.\n");
+			unit_t* worker = nullptr;
+			unit_t* transport = nullptr;
+			unit_t* base = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) {
+				if (unit->unit_type->id == UnitTypes::Terran_SCV) worker = unit;
+				if (unit->unit_type->id == UnitTypes::Terran_Dropship) transport = unit;
+				if (unit->unit_type->id == UnitTypes::Terran_Command_Center) base = unit;
+			}
+			require(worker && transport && base, "original SCV, Dropship and landed base for fleet relocation");
+			functions.set_unit_order(worker, functions.get_order_type(Orders::EnterTransport), transport);
+			for (int tick = 0; tick != 400 && !functions.us_hidden(worker); ++tick) functions.next_frame();
+			require(functions.us_hidden(worker), "original SCV boards its original Dropship");
+			functions.set_unit_order(transport, functions.get_order_type(Orders::MoveUnload), base->sprite->position + xy(-128, 64));
+			for (int tick = 0; tick != 1600 && functions.us_hidden(worker); ++tick) functions.next_frame();
+			require(!functions.us_hidden(worker) && functions.is_reachable(worker, base), "native transport unloads the SCV on the new base platform");
+			unit_t* mineral = functions.find_nearest_unit(worker, functions.map_bounds(), [&](unit_t* unit) { return functions.unit_is_mineral_field(unit) && functions.is_reachable(worker, unit); });
+			require(mineral != nullptr, "original minerals reachable from the new platform");
+			int minerals_before = st.current_minerals[0];
+			functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToMinerals), mineral);
+			for (int tick = 0; tick != 1800 && st.current_minerals[0] <= minerals_before; ++tick) functions.next_frame();
+			require(st.current_minerals[0] > minerals_before, "original SCV mines and returns real minerals to the landed base");
+			printf("The Big Push original transport relocation and economy passed.\n");
+			std::array<bool, 2> fired{};
+			bool light_air_fire = false;
+			const int attack_budget = 9000 + 7500 + 3 * (500 + 180 * 15);
+			for (int tick = 0; tick != attack_budget; ++tick) {
+				for (unit_t* unit : ptr(st.player_units[0])) {
+					functions.u_unset_status_flag(unit, unit_t::status_flag_invincible);
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+				}
+				functions.next_frame();
+				for (int index = 0; index != 2; ++index) for (unit_id id : st.campaign_ai[index + 4].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						fired[index] = true;
+						if (index == 1 && functions.u_flying(unit)) light_air_fire = true;
+					}
+				}
+				if (fired[0] && fired[1] && light_air_fire) break;
+			}
+			require(fired[0] && fired[1] && light_air_fire, "both original Confederate scripts deploy weapon-firing parties including the light air wave");
+			printf("The Big Push original heavy/light town attacks and air combat passed.\n");
+			continue;
+		}
+		for (int tick = 0; tick != 4000 && !st.players[0].victory_state; ++tick) functions.next_frame();
+		if (scenario == 0 || scenario == 4) require(!st.players[0].victory_state, "idle fleet or one surviving Confederate force cannot satisfy the original victory");
+		if (scenario == 0 || scenario == 4) require(st.trigger_switches[1] && st.trigger_switches[2] && st.campaign_ai[4].town_active && st.campaign_ai[5].town_active, "original elapsed-time or Deaths predicates activate both Confederate scripts");
+		if (scenario == 1 || scenario == 2) require(st.players[0].victory_state == 2, "original Duke or human-force loss reaches defeat");
+		if (scenario == 3) require(st.players[0].victory_state >= 3, "destroying both original Confederate building forces reaches victory");
+		printf("The Big Push original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1401,6 +1510,7 @@ int main(int argc, char** argv) {
 	bool revolution = campaign && argc > 4 && !strcmp(argv[4], "terran05");
 	bool norad = campaign && argc > 4 && !strcmp(argv[4], "terran06");
 	bool trump = campaign && argc > 4 && !strcmp(argv[4], "terran07");
+	bool big_push = campaign && argc > 4 && !strcmp(argv[4], "terran08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1415,6 +1525,22 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (big_push) {
+			player.st().strict_triggers = true;
+			state_functions functions(player.st());
+			int flying_buildings = 0;
+			for (unit_t* unit : ptr(player.st().player_units[0])) if (functions.ut_flying_building(unit)) {
+				require(functions.u_flying(unit), "original Big Push in-transit buildings start flying");
+				++flying_buildings;
+			}
+			require(flying_buildings == 6, "original six flying Big Push buildings");
+			for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+			require(player.st().current_minerals[0] == 250 && player.st().current_gas[0] == 100, "original Big Push starting resources");
+			require(!player.st().players[0].victory_state, "The Big Push does not invent an opening outcome");
+			printf("The Big Push normal initialization passed.\n");
+			big_push_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (trump) {
 			player.st().strict_triggers = true;
 			require(player.st().players[0].controller == player_t::controller_occupied, "The Trump Card preserves original human slot zero");
