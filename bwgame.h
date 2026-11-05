@@ -250,6 +250,7 @@ struct state_base_copyable {
 		int owner;
 		size_t position;
 		int wait = 0;
+		size_t town = 0;
 		rect area;
 	};
 	struct campaign_ai_player {
@@ -270,6 +271,12 @@ struct state_base_copyable {
 		type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
 		type_indexed_array<int, TechTypes> tech_requests{};
 		type_indexed_array<int, UnitTypes> attack_requests{};
+		struct area_town {
+			rect area;
+			xy home;
+			type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
+		};
+		a_vector<area_town> area_towns;
 		struct defense_request { int category; int amount; UnitTypes type; };
 		struct defense_region {
 			bool owned = false;
@@ -284,6 +291,9 @@ struct state_base_copyable {
 		a_vector<defender> defending;
 		a_vector<unit_id> attack_party;
 		a_vector<unit_id> attacking;
+		a_vector<unit_id> transport_passengers;
+		struct transport_flight { unit_id transport; a_vector<unit_id> passengers; xy destination; bool departing = false; };
+		a_vector<transport_flight> transport_flights;
 	};
 	a_vector<campaign_ai_script> campaign_ai_scripts;
 	std::array<campaign_ai_player, 12> campaign_ai;
@@ -13310,7 +13320,8 @@ struct state_functions {
 		execute_trigger_struct ets;
 
 		bool any_triggers_executed = false;
-		for (int i : active_players()) {
+		for (int i = 0; i != 8; ++i) {
+			if (!player_slot_active(i)) continue;
 			auto execute_one = [&](running_trigger& rt) {
 				if (rt.flags & 8) return;
 				auto& t = *rt.t;
@@ -19136,11 +19147,24 @@ struct state_functions {
 					if (st.players.at(script.owner).controller != player_t::controller_computer_game) error("campaign town requires computer owner");
 					ai.home = (script.area.from + script.area.to) / 2;
 					ai.town_active = true;
+					script.town = 0;
+				} else if (opcode == 4) {
+					if (st.players.at(script.owner).controller != player_t::controller_computer_game) error("campaign area town requires computer owner");
+					auto existing = std::find_if(ai.area_towns.begin(), ai.area_towns.end(), [&](const auto& town) { return town.area.from == script.area.from && town.area.to == script.area.to; });
+					if (existing == ai.area_towns.end()) {
+						if (ai.area_towns.size() >= 8) error("campaign area town limit exceeded");
+						state_base_copyable::campaign_ai_player::area_town town;
+						town.area = script.area;
+						town.home = (script.area.from + script.area.to) / 2;
+						ai.area_towns.push_back(town);
+						script.town = ai.area_towns.size();
+					} else script.town = size_t(existing - ai.area_towns.begin()) + 1;
 				} else if (opcode == 6) {
 					int amount = read(1);
 					const auto* type = get_unit_type((UnitTypes)read(2));
 					int priority = read(1);
-					ai.build_requests[type->id] = {amount, priority};
+					if (script.town) ai.area_towns.at(script.town - 1).build_requests[type->id] = {amount, priority};
+					else ai.build_requests[type->id] = {amount, priority};
 				} else if (opcode == 8) {
 					const auto* tech = get_tech_type((TechTypes)read(2));
 					ai.tech_requests[tech->id] = read(1);
@@ -19177,7 +19201,56 @@ struct state_functions {
 				} else if (opcode == 34) ai.minimum_force = read(1);
 				else if (opcode == 35) ai.default_build = false;
 				else if (opcode == 36) script.position = 0;
+				else if (opcode == 37) {
+					st.players.at(script.owner).controller = player_t::controller_rescue_passive;
+					ai.town_active = false;
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || ut_turret(unit)) continue;
+						set_unit_order(unit, get_order_type(Orders::RescuePassive));
+					}
+				}
+				else if (opcode == 41) {
+					a_vector<std::pair<unit_t*, int>> bunkers;
+					for (unit_t* bunker : ptr(st.player_units[script.owner])) {
+						if (!unit_is(bunker, UnitTypes::Terran_Bunker) || unit_dying(bunker) || !u_completed(bunker)) continue;
+						if (!is_in_bounds(bunker->sprite->position, script.area)) continue;
+						int available = int(unit_space_left(bunker));
+						for (unit_t* unit : ptr(st.player_units[script.owner])) {
+							if (unit->order_type->id == Orders::EnterTransport && unit->order_target.unit == bunker) available -= unit->unit_type->space_required;
+						}
+						bunkers.emplace_back(bunker, available);
+					}
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || us_hidden(unit) || ut_worker(unit) || ut_building(unit) || u_flying(unit) || u_hallucination(unit)) continue;
+						if (!is_in_bounds(unit->sprite->position, script.area) || unit->order_type->id == Orders::EnterTransport) continue;
+						auto selected = bunkers.end();
+						for (auto candidate = bunkers.begin(); candidate != bunkers.end(); ++candidate) {
+							if (candidate->second < int(unit->unit_type->space_required) || !unit_can_load_target(candidate->first, unit) || !is_reachable(unit, candidate->first)) continue;
+							if (selected == bunkers.end() || xy_length(candidate->first->sprite->position - unit->sprite->position) < xy_length(selected->first->sprite->position - unit->sprite->position)) selected = candidate;
+						}
+						if (selected == bunkers.end()) continue;
+						set_unit_order(unit, get_order_type(Orders::EnterTransport), selected->first);
+						selected->second -= unit->unit_type->space_required;
+					}
+				}
 				else if (opcode == 46) ai.maximum_force = read(2);
+				else if (opcode == 47) {
+					auto affected = [&](unit_id id) {
+						unit_t* unit = get_unit(id);
+						return unit && unit->owner == script.owner && is_in_bounds(unit->sprite->position, script.area);
+					};
+					auto clear = [&](a_vector<unit_id>& units) {
+						units.erase(std::remove_if(units.begin(), units.end(), affected), units.end());
+					};
+					clear(ai.attack_party);
+					clear(ai.attacking);
+					clear(ai.transport_passengers);
+					ai.defending.erase(std::remove_if(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return affected(defender.unit); }), ai.defending.end());
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || ut_worker(unit) || ut_building(unit) || !is_in_bounds(unit->sprite->position, script.area)) continue;
+						if (unit->order_type->id == Orders::AttackMove || unit->order_type->id == Orders::AttackUnit) set_unit_order(unit, unit->unit_type->return_to_idle);
+					}
+				}
 				else if (opcode == 56) ai.campaign = true;
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
 			}
@@ -19186,13 +19259,13 @@ struct state_functions {
 		for (int owner = 0; owner != 8; ++owner) if (st.campaign_ai[owner].town_active) progress_campaign_ai_town(owner);
 	}
 
-	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0) {
+	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0, bool allow_transport = false) {
 		return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), [&](const unit_t* enemy) {
 			if (enemy->owner >= 8 || enemy->owner == owner || st.alliances[owner][enemy->owner] || unit_dying(enemy) || ut_turret(enemy)) return false;
 			if (region != ~(size_t)0 && get_region_at(enemy->sprite->position)->index != region) return false;
 			for (unit_id id : party) {
 				unit_t* unit = get_unit(id);
-				if (unit && !unit_dying(unit) && unit->owner == owner && unit_target_weapon(unit, enemy) && (u_flying(unit) || is_reachable(unit, enemy))) return true;
+				if (unit && !unit_dying(unit) && unit->owner == owner && unit_target_weapon(unit, enemy) && (u_flying(unit) || is_reachable(unit, enemy) || allow_transport)) return true;
 			}
 			return false;
 		});
@@ -19201,16 +19274,67 @@ struct state_functions {
 	void launch_campaign_ai_attack(int owner) {
 		auto& ai = st.campaign_ai.at(owner);
 		ai.attack_launched = true;
-		unit_t* target = campaign_ai_attack_target(owner, ai.attack_party);
+		unit_t* target = campaign_ai_attack_target(owner, ai.attack_party, ~(size_t)0, st.players[owner].race == race_t::terran);
 		if (!target) return;
 		ai.military_region = get_region_at(target->sprite->position)->index;
 		ai.military_target = get_unit_id(target);
 		for (unit_id id : ai.attack_party) {
 			unit_t* unit = get_unit(id);
 			if (!unit || unit_dying(unit) || unit->owner != owner) continue;
-			if (!u_flying(unit) && !is_reachable(unit, target)) continue;
-			issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
+			if (!u_flying(unit) && !is_reachable(unit, target)) {
+				if (st.players[owner].race != race_t::terran) continue;
+				if (std::find(ai.transport_passengers.begin(), ai.transport_passengers.end(), id) == ai.transport_passengers.end()) ai.transport_passengers.push_back(id);
+			} else issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
 			if (std::find(ai.attacking.begin(), ai.attacking.end(), id) == ai.attacking.end()) ai.attacking.push_back(id);
+		}
+	}
+
+	void progress_campaign_ai_transports(int owner) {
+		auto& ai = st.campaign_ai[owner];
+		ai.transport_flights.erase(std::remove_if(ai.transport_flights.begin(), ai.transport_flights.end(), [&](auto& flight) {
+			unit_t* transport = get_unit(flight.transport);
+			if (!transport || unit_dying(transport) || transport->owner != owner) return true;
+			if (flight.departing) {
+				if (loaded_units(transport).empty()) {
+					issue_order(transport, false, get_order_type(Orders::Move), {ai.home, nullptr});
+					return true;
+				}
+				return false;
+			}
+			bool waiting = false;
+			for (unit_id id : flight.passengers) {
+				unit_t* unit = get_unit(id);
+				if (unit && !unit_dying(unit) && unit->owner == owner && !us_hidden(unit)) waiting = true;
+			}
+			if (!waiting) {
+				if (loaded_units(transport).empty()) return true;
+				issue_order(transport, false, get_order_type(Orders::MoveUnload), {flight.destination, nullptr});
+				flight.departing = true;
+			}
+			return false;
+		}), ai.transport_flights.end());
+		ai.transport_passengers.erase(std::remove_if(ai.transport_passengers.begin(), ai.transport_passengers.end(), [&](unit_id id) {
+			unit_t* unit = get_unit(id);
+			return !unit || unit_dying(unit) || unit->owner != owner || us_hidden(unit);
+		}), ai.transport_passengers.end());
+		for (unit_t* transport : ptr(st.player_units[owner])) {
+			if (!unit_is(transport, UnitTypes::Terran_Dropship) || unit_dying(transport) || !u_completed(transport) || !loaded_units(transport).empty()) continue;
+			if (std::any_of(ai.transport_flights.begin(), ai.transport_flights.end(), [&](const auto& flight) { return flight.transport == get_unit_id(transport); })) continue;
+			state_base_copyable::campaign_ai_player::transport_flight flight;
+			flight.transport = get_unit_id(transport);
+			unit_t* target = get_unit(ai.military_target);
+			if (!target || unit_dying(target)) continue;
+			flight.destination = target->sprite->position;
+			int available = int(unit_space_left(transport));
+			for (unit_id id : ai.transport_passengers) {
+				unit_t* unit = get_unit(id);
+				if (unit->order_type->id == Orders::EnterTransport || available < int(unit->unit_type->space_required)) continue;
+				if (!unit_can_load_target(transport, unit)) continue;
+				issue_order(unit, false, get_order_type(Orders::EnterTransport), {transport->sprite->position, transport});
+				flight.passengers.push_back(id);
+				available -= unit->unit_type->space_required;
+			}
+			if (!flight.passengers.empty()) ai.transport_flights.push_back(std::move(flight));
 		}
 	}
 
@@ -19271,23 +19395,34 @@ struct state_functions {
 		if (ai.maximum_force) for (auto& region : ai.regions) for (int& needed : region.needed) needed = std::min(needed, ai.maximum_force);
 	}
 
+	size_t campaign_ai_unit_town(int owner, const unit_t* unit) const {
+		const auto& towns = st.campaign_ai.at(owner).area_towns;
+		for (size_t index = 0; index != towns.size(); ++index) if (is_in_bounds(unit->sprite->position, towns[index].area)) return index + 1;
+		return 0;
+	}
+
 	void progress_campaign_ai_town(int owner) {
 		if (st.current_frame % 8) return;
 		auto& ai = st.campaign_ai.at(owner);
 		if (!ai.campaign || ai.default_build || ai.minimum_force) error("unsupported non-campaign town policy");
 		update_campaign_ai_regions(owner);
 		type_indexed_array<int, UnitTypes> counts{};
+		type_indexed_array<int, UnitTypes> main_counts{};
 		type_indexed_array<int, UnitTypes> pending{};
 		auto worker_idle = [](const unit_t* unit) {
 			return unit->order_type == unit->unit_type->human_ai_idle || unit->order_type->id == Orders::Guard || unit->order_type->id == Orders::PlayerGuard || unit->order_type->id == Orders::ComputerAI || unit->order_type->id == Orders::Nothing;
 		};
 		for (unit_t* unit : ptr(st.player_units[owner])) {
 			if (unit_dying(unit) || ut_turret(unit)) continue;
+			if (us_hidden(unit) && !ut_worker(unit) && !ut_building(unit)) continue;
 			if (ut_worker(unit) && worker_idle(unit) && !unit->build_queue.empty() && ut_building(unit->build_queue.front())) build_queue_clear_single(unit);
 			++counts[unit->unit_type->id];
+			bool main_town = campaign_ai_unit_town(owner, unit) == 0;
+			if (main_town) ++main_counts[unit->unit_type->id];
 			for (const auto* type : unit->build_queue) {
 				int amount = ut_two_units_in_one_egg(type) ? 2 : 1;
 				counts[type->id] += amount;
+				if (main_town) main_counts[type->id] += amount;
 				pending[type->id] += amount;
 			}
 			if (unit->order_type->id == Orders::DroneStartBuild && unit->order_unit_type) ++counts[unit->order_unit_type->id];
@@ -19379,7 +19514,7 @@ struct state_functions {
 		if (ai.suicide) {
 			ai.attack_party.clear();
 			for (unit_t* unit : ptr(st.player_units[owner])) {
-				if (!ut_building(unit) && !ut_worker(unit) && u_completed(unit) && !unit_dying(unit) && !ut_turret(unit) && unit_can_attack(unit)) ai.attack_party.push_back(get_unit_id(unit));
+				if (!ut_building(unit) && !ut_worker(unit) && !us_hidden(unit) && u_completed(unit) && !unit_dying(unit) && !ut_turret(unit) && unit_can_attack(unit)) ai.attack_party.push_back(get_unit_id(unit));
 			}
 			launch_campaign_ai_attack(owner);
 			ai.attack_party.clear();
@@ -19396,6 +19531,7 @@ struct state_functions {
 				for (unit_id id : ai.attack_party) if (unit_is(get_unit(id), type)) ++selected;
 				while (selected < ai.attack_requests[type] && counts[type] - deployed[type] - selected > reserves[type]) {
 					unit_t* unit = find_nearest_unit(ai.home, map_bounds(), [&](const unit_t* unit) {
+						if (us_hidden(unit)) return false;
 						if (unit->order_target.unit && !unit_dying(unit->order_target.unit) && unit_target_is_enemy(unit, unit->order_target.unit)) return false;
 						if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit)) return false;
 						if (!u_flying(unit) && !is_reachable(unit->sprite->position, rally)) return false;
@@ -19412,15 +19548,16 @@ struct state_functions {
 			ai.attack_ready = ready || st.current_frame >= ai.attack_deadline;
 			if (ai.attack_ready) launch_campaign_ai_attack(owner);
 		}
+		progress_campaign_ai_transports(owner);
 		for (unit_t* worker : ptr(st.player_units[owner])) {
 			if (!ut_worker(worker) || !u_completed(worker) || unit_dying(worker)) continue;
 			if (!worker_idle(worker)) continue;
 			unit_t* gas = find_nearest_unit(worker->sprite->position, map_bounds(), [&](const unit_t* resource) {
-				return resource->owner == owner && unit_is_refinery(resource) && u_completed(resource) && !unit_dying(resource);
+				return resource->owner == owner && unit_is_refinery(resource) && u_completed(resource) && !unit_dying(resource) && is_reachable(worker, resource);
 			});
 			int gas_workers = 0;
 			if (gas) for (unit_t* other : ptr(st.player_units[owner])) if (ut_worker(other) && other->order_target.unit == gas) ++gas_workers;
-			unit_t* resource = gas && gas_workers < 3 ? gas : find_nearest_unit(worker->sprite->position, map_bounds(), [&](const unit_t* resource) { return unit_is_mineral_field(resource) && !unit_dying(resource); });
+			unit_t* resource = gas && gas_workers < 3 ? gas : find_nearest_unit(worker->sprite->position, map_bounds(), [&](const unit_t* resource) { return unit_is_mineral_field(resource) && !unit_dying(resource) && is_reachable(worker, resource); });
 			if (resource) issue_order(worker, false, get_order_type(unit_is_refinery(resource) ? Orders::MoveToGas : Orders::MoveToMinerals), {resource->sprite->position, resource});
 		}
 		for (size_t tech_id = 0; tech_id != ai.tech_requests.size(); ++tech_id) {
@@ -19439,7 +19576,8 @@ struct state_functions {
 				break;
 			}
 		}
-		a_vector<std::pair<int, UnitTypes>> requests;
+		struct production_request { int priority; UnitTypes type; size_t town; };
+		a_vector<production_request> requests;
 		for (size_t type_id = 0; type_id != 228; ++type_id) {
 			UnitTypes id = (UnitTypes)type_id;
 			int desired = ai.build_requests[id].first;
@@ -19449,22 +19587,50 @@ struct state_functions {
 				priority = std::max(priority, 80);
 			}
 			if (defense_build[id] > pending[id]) { desired = std::max(desired, counts[id] + defense_build[id] - pending[id]); priority = std::max(priority, 60); }
-			if (desired > counts[id]) requests.push_back({priority, id});
+			int owned = ut_building(get_unit_type(id)) || ut_worker(get_unit_type(id)) ? main_counts[id] : counts[id];
+			if (desired > owned) requests.push_back({priority, id, 0});
 		}
-		if (!has_available_supply_for(owner, get_unit_type(UnitTypes::Zerg_Drone), false) && counts[UnitTypes::Zerg_Overlord] == st.unit_counts[owner][UnitTypes::Zerg_Overlord]) requests.push_back({200, UnitTypes::Zerg_Overlord});
-		std::stable_sort(requests.begin(), requests.end(), [](const auto& left, const auto& right) { return left.first > right.first; });
-		for (const auto& request : requests) campaign_ai_produce(owner, get_unit_type(request.second));
+		for (size_t town = 0; town != ai.area_towns.size(); ++town) {
+			type_indexed_array<int, UnitTypes> local_counts{};
+			for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (unit_dying(unit) || ut_turret(unit) || campaign_ai_unit_town(owner, unit) != town + 1) continue;
+				++local_counts[unit->unit_type->id];
+				for (const auto* type : unit->build_queue) local_counts[type->id] += ut_two_units_in_one_egg(type) ? 2 : 1;
+			}
+			for (size_t type = 0; type != 228; ++type) {
+				const auto& request = ai.area_towns[town].build_requests[(UnitTypes)type];
+				if (request.first > local_counts[(UnitTypes)type]) requests.push_back({request.second, (UnitTypes)type, town + 1});
+			}
+		}
+		UnitTypes worker_type = st.players[owner].race == race_t::terran ? UnitTypes::Terran_SCV : UnitTypes::Zerg_Drone;
+		UnitTypes supply_type = st.players[owner].race == race_t::terran ? UnitTypes::Terran_Supply_Depot : UnitTypes::Zerg_Overlord;
+		if (!has_available_supply_for(owner, get_unit_type(worker_type), false) && counts[supply_type] == st.unit_counts[owner][supply_type]) requests.push_back({200, supply_type, 0});
+		int transport_space = 0;
+		for (unit_id id : ai.transport_passengers) transport_space += get_unit(id)->unit_type->space_required;
+		if (transport_space && counts[UnitTypes::Terran_Dropship] < std::min(3, (transport_space + 7) / 8)) requests.push_back({90, UnitTypes::Terran_Dropship, 0});
+		std::stable_sort(requests.begin(), requests.end(), [](const auto& left, const auto& right) { return left.priority > right.priority; });
+		for (const auto& request : requests) campaign_ai_produce(owner, get_unit_type(request.type), request.town);
 	}
 
-	bool campaign_ai_produce(int owner, const unit_type_t* type) {
+	bool campaign_ai_produce(int owner, const unit_type_t* type, size_t town = 0) {
 		if (!has_available_resources_for(owner, type, false)) return false;
 		for (unit_t* producer : ptr(st.player_units[owner])) {
-			if (unit_dying(producer) || !u_completed(producer) || !producer->build_queue.empty()) continue;
+			if (unit_dying(producer) || !u_completed(producer) || !producer->build_queue.empty() || campaign_ai_unit_town(owner, producer) != town) continue;
 			if (ut_building(type)) {
-				if (!unit_is(producer, UnitTypes::Zerg_Drone)) continue;
-				const auto* order = get_order_type(Orders::DroneStartBuild);
+				if (ut_addon(type)) {
+					if (!ut_building(producer) || unit_is_building_addon(producer)) continue;
+					const auto* order = get_order_type(Orders::PlaceAddon);
+					if (!unit_build_order_valid(producer, order, type, owner)) continue;
+					xy position = producer->sprite->position - producer->unit_type->placement_size / 2 + type->addon_position + type->placement_size / 2;
+					if (!can_place_building(producer, owner, type, position, false, false)) continue;
+					place_building(producer, order, type, producer->sprite->position);
+					return true;
+				}
+				if (!unit_is(producer, UnitTypes::Zerg_Drone) && !unit_is(producer, UnitTypes::Terran_SCV)) continue;
+				if (producer->order_type->id == Orders::ConstructingBuilding || producer->order_type->id == Orders::PlaceBuilding || producer->order_type->id == Orders::Repair) continue;
+				const auto* order = get_order_type(unit_is(producer, UnitTypes::Terran_SCV) ? Orders::PlaceBuilding : Orders::DroneStartBuild);
 				if (!unit_build_order_valid(producer, order, type, owner)) continue;
-				xy home = st.campaign_ai[owner].home / 32 * 32;
+				xy home = (town ? st.campaign_ai[owner].area_towns.at(town - 1).home : st.campaign_ai[owner].home) / 32 * 32;
 				for (int radius = 0; radius <= 12; ++radius) {
 					for (int vertical = -radius; vertical <= radius; ++vertical) for (int horizontal = -radius; horizontal <= radius; ++horizontal) {
 						if (std::abs(horizontal) != radius && std::abs(vertical) != radius) continue;
@@ -19477,6 +19643,10 @@ struct state_functions {
 			} else if (unit_is(producer, UnitTypes::Zerg_Larva)) {
 				if (!unit_can_build(producer, type) || !build_queue_push(producer, type)) continue;
 				set_unit_order(producer, get_order_type(Orders::ZergUnitMorph));
+				return true;
+			} else if (ut_building(producer)) {
+				if (!unit_can_build(producer, type) || !build_queue_push(producer, type)) continue;
+				set_secondary_order(producer, get_order_type(Orders::Train));
 				return true;
 			}
 		}
@@ -19690,7 +19860,7 @@ struct state_functions {
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 26: case 28: case 30: case 31:
+		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 26: case 28: case 30: case 31:
 		case 32: case 38: case 39: case 42: case 43: case 47:
 			return true;
 		default:
@@ -22576,7 +22746,7 @@ struct game_load_functions : state_functions {
 			read_triggers(r, game_st.triggers);
 			for (auto& t : game_st.triggers) {
 				for (int i = 0; i != 8; ++i) {
-					if (st.players[i].controller != player_t::controller_occupied && st.players[i].controller != player_t::controller_computer_game) continue;
+					if (!player_slot_active(i)) continue;
 					if (!t.enabled[i] && !t.enabled.at(17 + st.players[i].force) && !t.enabled[17]) continue;
 					st.running_triggers[i].emplace_back();
 					auto& rt = st.running_triggers[i].back();

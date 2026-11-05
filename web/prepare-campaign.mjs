@@ -11,6 +11,7 @@ const missions = {
   terran02: { title: 'Backwater Station', order: 2, scenarioHash: 'd8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce', units: 98, triggers: 15, sounds: 21 },
   terran03: { title: 'Desperate Alliance', order: 3, scenarioHash: '9d83a8bde18c38ee12f54f4c5253bed5466027fc612141e9a7415c94d3346737', units: 199, triggers: 10, sounds: 16 },
   terran04: { title: 'The Jacobs Installation', order: 4, scenarioHash: 'a48e1d1682f0a6e68eeec4ef0fc82efc48e70a11b4315de8c091079c68e10601', units: 100, triggers: 36, sounds: 17 },
+  terran05: { title: 'Revolution', order: 5, scenarioHash: '35cd98bc0590c0f36e5d8f75e41a29b254db2d6cf8dec5480e6ffd7602609829', units: 172, triggers: 17, sounds: 17 },
 };
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -372,7 +373,8 @@ async function extractSource(source, request, directory, output) {
   assert.equal(wasi.start(instance), 0, 'Campaign extraction failed');
 }
 
-async function prepareAi() {
+async function prepareAi(missionId = 'terran03') {
+  assert.ok(Object.hasOwn(missions, missionId), 'Unsupported AI audit mission');
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
   const temporary = resolve(directory, 'aiscript.bin.tmp');
@@ -380,8 +382,18 @@ async function prepareAi() {
     await extractSource(resolve(root, 'web/data/patch_rt.mpq'), '--ai-script', directory, basename(temporary));
     const bytes = readFileSync(temporary);
     assert.equal(sha256(bytes), '635433e546998e05529a9d6acc806c06b528c7ce5075a206f6f2c8de44ffed6e', 'Patched AI binary changed');
-    const audit = auditAiScript(bytes);
-    writeFileSync(resolve(directory, 'terran03.ai.audit.json'), `${JSON.stringify(audit, null, 2)}\n`);
+    let scripts = ['Ter3', 'Suic'];
+    if (missionId !== 'terran03') {
+      const read = readPlainMissionPack(readFileSync(resolve(directory, `${missionId}.mpq`)));
+      const scenario = auditScenario(read('staredit/scenario.chk'));
+      scripts = [...new Set(scenario.gameplay.records.flatMap(record => record.actions.filter(action => action.type === 15 || action.type === 16).map(action => {
+        const id = Buffer.alloc(4);
+        id.writeUInt32LE(action.amount);
+        return id.toString('ascii');
+      })))];
+    }
+    const audit = auditAiScript(bytes, scripts);
+    writeFileSync(resolve(directory, `${missionId}.ai.audit.json`), `${JSON.stringify(audit, null, 2)}\n`);
     renameSync(temporary, resolve(directory, 'aiscript.bin'));
     console.log(JSON.stringify({ bytes: audit.bytes, sha256: audit.sha256, entryCount: audit.entryCount, scripts: audit.scripts.map(script => ({ id: script.id, offset: script.offset, instructionCount: script.instructions.length, commands: [...new Set(script.instructions.map(instruction => instruction.name))].sort() })) }, null, 2));
   } finally {
@@ -436,6 +448,6 @@ async function prepare(missionId = 'terran01') {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv[2] === '--test') testAudit();
-  else if (process.argv[2] === '--audit-ai') await prepareAi();
+  else if (process.argv[2] === '--audit-ai') await prepareAi(process.argv[3]);
   else await prepare(process.argv[2]);
 }

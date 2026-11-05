@@ -1023,6 +1023,84 @@ static void jacobs_mission_cases(data_loading::data_files_loader<>& load_data_fi
 	}
 }
 
+static void revolution_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+		require(st.current_minerals[0] == 300 && st.current_gas[0] == 300, "original Revolution trigger grants 300 minerals and gas");
+		unit_t* kerrigan = nullptr;
+		unit_t* raynor = nullptr;
+		for (int owner : {0, 2}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan) kerrigan = unit;
+			if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture) raynor = unit;
+		}
+		require(kerrigan && raynor, "original Revolution hero actors");
+		if (scenario == 6) {
+			unit_t* marine = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) {
+				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+				if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+			}
+			const auto& approach = st.locations.at(17).area;
+			functions.move_unit(marine, (approach.from + approach.to) / 2);
+			for (int tick = 0; tick != 4000; ++tick) functions.next_frame();
+			unit_t* command_center = nullptr;
+			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center && functions.campaign_ai_unit_town(6, unit) == 1) command_center = unit;
+			require(command_center != nullptr, "original Confederate satellite Command Center");
+			functions.kill_unit(command_center);
+			bool rebuilt = false;
+			for (int tick = 0; tick != 6000 && !rebuilt; ++tick) {
+				functions.next_frame();
+				for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center && !functions.unit_dying(unit) && functions.u_completed(unit) && functions.campaign_ai_unit_town(6, unit) == 1) rebuilt = true;
+			}
+			require(rebuilt && !st.players[0].victory_state, "Te5H replaces its lost Command Center through a local SCV without inventing victory");
+			printf("Revolution original satellite reconstruction passed.\n");
+			continue;
+		}
+		if (scenario == 5) {
+			a_vector<unit_t*> wraiths;
+			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Wraith) wraiths.push_back(unit);
+			require(wraiths.size() >= 2, "original Confederate aircraft for location-scoped combat clearing");
+			unit_id inside = functions.get_unit_id(wraiths[0]);
+			unit_id outside = functions.get_unit_id(wraiths[1]);
+			auto& ai = st.campaign_ai[6];
+			ai.attacking = {inside, outside};
+			ai.attack_party = {inside, outside};
+			functions.start_campaign_ai_script(6, 1131572291, functions.square_at(wraiths[0]->sprite->position, 1));
+			functions.progress_campaign_ai_scripts();
+			require(ai.attacking.size() == 1 && ai.attacking[0] == outside && ai.attack_party.size() == 1 && ai.attack_party[0] == outside, "ClrC clears only military assignments inside its original script location");
+			printf("Revolution location-scoped clear combat passed.\n");
+			continue;
+		}
+		if (scenario == 1) functions.kill_unit(kerrigan);
+		if (scenario == 2) functions.kill_unit(raynor);
+		if (scenario == 3 || scenario == 4) {
+			a_vector<unit_t*> units;
+			for (unit_t* unit : ptr(st.player_units[scenario == 3 ? 0 : 6])) {
+				if (scenario == 3 || functions.ut_building(unit)) units.push_back(unit);
+			}
+			for (unit_t* unit : units) functions.kill_unit(unit);
+		}
+		for (int tick = 0; tick != 3000 && !st.players[0].victory_state; ++tick) functions.next_frame();
+		if (scenario == 0) require(!st.players[0].victory_state && st.unit_counts[0][UnitTypes::Terran_Marine] == 8 && st.unit_counts[3][UnitTypes::Terran_Command_Center] == 1, "idle original Revolution does not grant the base or invent an outcome");
+		if (scenario >= 1 && scenario <= 3) require(st.players[0].victory_state == 2, "original Revolution hero/squad loss predicate reaches defeat");
+		if (scenario == 4) require(st.players[0].victory_state >= 3, "destroying every original Confederate building reaches the authored victory");
+		printf("Revolution original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1032,6 +1110,7 @@ int main(int argc, char** argv) {
 	bool backwater = campaign && argc > 4 && !strcmp(argv[4], "terran02");
 	bool desperate = campaign && argc > 4 && !strcmp(argv[4], "terran03");
 	bool jacobs = campaign && argc > 4 && !strcmp(argv[4], "terran04");
+	bool revolution = campaign && argc > 4 && !strcmp(argv[4], "terran05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1046,6 +1125,89 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (revolution) {
+			player.st().strict_triggers = true;
+			require(player.st().players[0].controller == player_t::controller_occupied, "Revolution preserves the original human slot zero");
+			for (int tick = 0; tick != 32; ++tick) player.next_frame();
+			require(!player.st().players[0].victory_state, "Revolution does not invent an opening outcome");
+			printf("Revolution normal initialization passed.\n");
+			state_functions functions(player.st());
+			unit_t* kerrigan = nullptr;
+			unit_t* marine = nullptr;
+			for (int owner : {0, 2}) for (unit_t* unit : ptr(player.st().player_units[owner])) if (unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan) kerrigan = unit;
+			for (unit_t* unit : ptr(player.st().player_units[0])) {
+				if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			}
+			require(kerrigan && marine && kerrigan->owner == 2, "original Revolution Kerrigan awaits separate proximity rescue");
+			xy previous_position = marine->sprite->position;
+			functions.move_unit(marine, kerrigan->sprite->position + xy(48, 0));
+			kerrigan->main_order_timer = 0;
+			functions.order_RescuePassive(kerrigan);
+			require(kerrigan->owner == 0, "native proximity rescues the original Kerrigan actor");
+			require(functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Personnel_Cloaking)) && functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Lockdown)), "original Kerrigan has native hero cloak and Lockdown eligibility without research grants");
+			functions.move_unit(marine, previous_position);
+			functions.u_set_status_flag(kerrigan, unit_t::status_flag_invincible);
+			const auto& beacon = player.st().locations.at(0).area;
+			functions.move_unit(kerrigan, (beacon.from + beacon.to) / 2);
+			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 4000 && !player.st().players[0].victory_state; ++tick) player.next_frame();
+			require(player.st().unit_counts[0][UnitTypes::Terran_Command_Center] == 1, "original Kerrigan beacon sequence rescues the neutral base through native rescue");
+			printf("Revolution original base rescue passed.\n");
+			const auto& ai = player.st().campaign_ai[6];
+			require(ai.area_towns.size() == 1 && ai.build_requests[UnitTypes::Terran_SCV].first == 3 && ai.area_towns[0].build_requests[UnitTypes::Terran_SCV].first == 4, "Ter5 and Te5H retain independent main and satellite worker requests");
+			int satellite_workers = 0;
+			for (unit_t* unit : ptr(player.st().player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_SCV && functions.campaign_ai_unit_town(6, unit) == 1 && functions.u_completed(unit)) ++satellite_workers;
+			require(satellite_workers >= 4, "satellite town trains its fourth SCV through its own Command Center");
+			require(functions.player_has_completed_unit(6, UnitTypes::Terran_Machine_Shop) && functions.player_has_completed_unit(6, UnitTypes::Terran_Control_Tower), "original Ter5 requests complete native Factory and Starport add-ons");
+			unit_t* combat_target = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[0])) {
+				functions.u_unset_status_flag(unit, unit_t::status_flag_invincible);
+				if (unit->unit_type->id == UnitTypes::Terran_Command_Center) combat_target = unit;
+			}
+			require(combat_target != nullptr, "original rescued base provides the native combat target");
+			functions.u_unset_status_flag(combat_target, unit_t::status_flag_invincible);
+			bool ground_attack = false;
+			bool air_attack = false;
+			bool weapon_fire = false;
+			bool ground_weapon_fire = false;
+			int maximum_party = 0;
+			const int first_air_budget = 6000 + 4500 + 3000 + 6000 + 3000 + 5 * (500 + 180 * 15);
+			for (int tick = 0; tick != first_air_budget; ++tick) {
+				functions.set_unit_hp(combat_target, combat_target->unit_type->hitpoints);
+				for (unit_t* unit : ptr(player.st().player_units[0])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+				}
+				player.next_frame();
+				maximum_party = std::max(maximum_party, int(player.st().campaign_ai[6].attack_party.size()));
+				for (unit_id id : player.st().campaign_ai[6].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit)) continue;
+					require(!functions.u_in_bunker(unit), "campaign waves do not recruit bunker occupants");
+					if (functions.us_hidden(unit)) continue;
+					if (functions.u_flying(unit)) {
+						air_attack = true;
+						if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) weapon_fire = true;
+					}
+					else if (functions.is_reachable(unit, combat_target)) {
+						ground_attack = true;
+						if (unit->ground_weapon_cooldown) ground_weapon_fire = true;
+					}
+				}
+				if (ground_attack && air_attack && weapon_fire && ground_weapon_fire) break;
+			}
+			if (!ground_attack || !air_attack || !weapon_fire || !ground_weapon_fire) {
+				const auto& current_ai = player.st().campaign_ai[6];
+				printf("Revolution combat diagnostic: ground=%d air=%d fire=%d frame=%d outcome=%d preparing=%d launched=%d party=%d max_party=%d attacking=%d firebat_request=%d firebats=%d minerals=%d gas=%d alliance=%d target=%d,%d\n", ground_attack, air_attack, weapon_fire, player.st().current_frame, player.st().players[0].victory_state, current_ai.attack_preparing, current_ai.attack_launched, int(current_ai.attack_party.size()), maximum_party, int(current_ai.attacking.size()), current_ai.attack_requests[UnitTypes::Terran_Firebat], player.st().unit_counts[6][UnitTypes::Terran_Firebat], player.st().current_minerals[6], player.st().current_gas[6], player.st().alliances[6][0], combat_target->sprite->position.x, combat_target->sprite->position.y);
+				for (const auto& script : player.st().campaign_ai_scripts) if (script.owner == 6) printf("Revolution script diagnostic: pc=%d wait=%d town=%d\n", int(script.position), script.wait, int(script.town));
+				for (unit_t* unit : ptr(player.st().player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Firebat && !functions.us_hidden(unit)) printf("Revolution Firebat diagnostic: pos=%d,%d order=%d reachable=%d weapon=%d target=%d auto=%d\n", unit->sprite->position.x, unit->sprite->position.y, int(unit->order_type->id), functions.is_reachable(unit, combat_target), functions.unit_target_weapon(unit, combat_target) != nullptr, unit->order_target.unit != nullptr, unit->auto_target_unit != nullptr);
+			}
+			require(ground_attack && air_attack && weapon_fire && ground_weapon_fire, "original Ter5 schedule transports ground parties to the target island and fires native ground and air weapons");
+			printf("Revolution original ground/air campaign attacks passed.\n");
+			revolution_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (jacobs) {
 			player.st().strict_triggers = true;
 			require(player.st().players[0].controller == player_t::controller_occupied, "Jacobs Installation keeps its original human slot zero");

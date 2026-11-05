@@ -1243,9 +1243,8 @@ struct play_ui : ui_functions {
 			if (u_burrowed(u)) card.push_back({'u', "Unburrow", C_UNBURROW, U::None});
 			else card.push_back({'u', "Burrow", C_BURROW, U::None});
 		}
-		// Cloak: Wraith / Ghost with the matching tech researched.
-		bool cloakable = (id == U::Terran_Wraith && player_has_researched(my_player, TechTypes::Cloaking_Field)) ||
-		                 (id == U::Terran_Ghost && player_has_researched(my_player, TechTypes::Personnel_Cloaking));
+		bool cloakable = (unit_is_wraith(u) && unit_can_use_tech(u, get_tech_type(TechTypes::Cloaking_Field), my_player)) ||
+		                 (unit_is_ghost(u) && unit_can_use_tech(u, get_tech_type(TechTypes::Personnel_Cloaking), my_player));
 		if (cloakable) {
 			if (u_cloaked(u)) card.push_back({'c', "Decloak", C_DECLOAK, U::None});
 			else card.push_back({'c', "Cloak", C_CLOAK, U::None});
@@ -1260,9 +1259,9 @@ struct play_ui : ui_functions {
 		// energy is short. The canonical key falls back to auto-assign on a collision.
 		size_t nsp; const spell_t* sp = spells(nsp);
 		for (size_t i = 0; i != nsp; ++i) {
-			if (sp[i].caster != id) continue;
 			bool have_energy;
 			if (sp[i].tech == TechTypes::None) {
+				if (sp[i].caster != id) continue;
 				// Nuclear Strike isn't a real tech: any Ghost can call in a built missile.
 				if (!player_has_completed_unit(my_player, U::Terran_Nuclear_Missile)) continue;
 				have_energy = true;

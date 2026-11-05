@@ -2154,7 +2154,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {
