@@ -1498,6 +1498,89 @@ static void big_push_mission_cases(data_loading::data_files_loader<>& load_data_
 	}
 }
 
+static void finish_gettysburg_opening(state& st, state_functions& functions) {
+	int budget = 64;
+	for (const auto& action : st.game->triggers.at(2).actions) {
+		if (!action.type) break;
+		if (action.type == 4 || action.type == 7) {
+			int duration = action.type == 7 ? functions.trigger_transmission_duration(action) : action.time_n;
+			budget += (std::max(42, duration) + 41) / 42 + 3;
+		}
+	}
+	for (int tick = 0; tick != budget && (st.scripted_pause || !st.campaign_ai[1].town_active); ++tick) functions.next_frame();
+	require(!st.scripted_pause && st.campaign_ai[1].town_active && st.campaign_ai[3].town_active, "original paused opening completes and starts the original town scripts");
+}
+
+static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+		unit_t* kerrigan = nullptr;
+		for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			if (unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan) kerrigan = unit;
+		}
+		require(kerrigan && kerrigan->owner == 0 && kerrigan->sprite->owner == 2, "original Kerrigan is naturally rescued with her original display color");
+		finish_gettysburg_opening(st, functions);
+		require(st.current_minerals[0] == 250 && st.current_gas[0] == 150, "original New Gettysburg resources");
+		if (scenario == 1) functions.kill_unit(kerrigan);
+		if (scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[0])) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		}
+		if (scenario == 3) {
+			unit_t* zerg_building = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (unit->unit_type->id == UnitTypes::Zerg_Hydralisk_Den) zerg_building = unit;
+			require(zerg_building != nullptr, "original Zerg building for the authored survival constraint");
+			functions.kill_unit(zerg_building);
+		}
+		if (scenario == 4 || scenario == 5) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.ut_building(unit) && (scenario == 4 || unit->sprite->position.y > 2000)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		}
+		int outcome_budget = 64;
+		for (int index : {0, 3, 5}) for (const auto& action : st.game->triggers.at(index).actions) {
+			if (!action.type) break;
+			if (action.type == 4 || action.type == 7) {
+				int duration = action.type == 7 ? functions.trigger_transmission_duration(action) : action.time_n;
+				outcome_budget += (std::max(42, duration) + 41) / 42 + 3;
+			}
+		}
+		bool ending_reinforcements = false;
+		bool repeated_reinforcements = false;
+		int first_ending_zerglings = -1;
+		for (int tick = 0; tick != outcome_budget && !st.players[0].victory_state; ++tick) {
+			functions.next_frame();
+			if (st.trigger_switches[9]) {
+				ending_reinforcements = true;
+				if (first_ending_zerglings == -1) first_ending_zerglings = st.unit_counts[3][UnitTypes::Zerg_Zergling];
+				else if (st.unit_counts[3][UnitTypes::Zerg_Zergling] >= first_ending_zerglings + 5) repeated_reinforcements = true;
+			}
+		}
+		if (scenario == 0 || scenario == 5) require(!st.players[0].victory_state, "idle or partial Protoss destruction cannot satisfy original victory");
+		if (scenario >= 1 && scenario <= 3) require(st.players[0].victory_state == 2, "original Kerrigan, force or Zerg-building loss reaches defeat");
+		if (scenario == 4) {
+			require(st.players[0].victory_state >= 3 && ending_reinforcements, "original Protoss-building victory retains its authored ending waves");
+			require(repeated_reinforcements, "preserved original ending trigger repeats its five-Zergling reinforcements before victory completes");
+		}
+		printf("New Gettysburg original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1511,6 +1594,7 @@ int main(int argc, char** argv) {
 	bool norad = campaign && argc > 4 && !strcmp(argv[4], "terran06");
 	bool trump = campaign && argc > 4 && !strcmp(argv[4], "terran07");
 	bool big_push = campaign && argc > 4 && !strcmp(argv[4], "terran08");
+	bool gettysburg = campaign && argc > 4 && !strcmp(argv[4], "terran09");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1525,6 +1609,65 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (gettysburg) {
+			player.st().strict_triggers = true;
+			require(player.st().players[0].controller == player_t::controller_occupied, "New Gettysburg preserves original human slot zero");
+			state_functions functions(player.st());
+			for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+			require(!player.st().players[0].victory_state, "New Gettysburg does not invent an opening outcome");
+			printf("New Gettysburg normal initialization passed.\n");
+			for (int owner : {0, 3}) for (unit_t* unit : ptr(player.st().player_units[owner])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			finish_gettysburg_opening(player.st(), functions);
+			unit_t* stargate = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[1])) if (unit->unit_type->id == UnitTypes::Protoss_Stargate && unit->sprite->position.y > 2000) stargate = unit;
+			require(stargate && player.st().campaign_ai[1].area_towns.size() == 1, "original lower Protoss Stargate and area town");
+			functions.kill_unit(stargate);
+			bool rebuilt = false;
+			int rebuild_budget = 2 * functions.get_unit_type(UnitTypes::Protoss_Stargate)->build_time + 1000;
+			for (int tick = 0; tick != rebuild_budget && !rebuilt; ++tick) {
+				functions.next_frame();
+				for (unit_t* unit : ptr(player.st().player_units[1])) if (unit->unit_type->id == UnitTypes::Protoss_Stargate && !functions.unit_dying(unit) && functions.u_completed(unit) && functions.campaign_ai_unit_town(1, unit) == 1) rebuilt = true;
+			}
+			require(rebuilt, "original lower Protoss town rebuilds its Stargate through a native Probe");
+			printf("New Gettysburg original Protoss reconstruction passed.\n");
+			std::array<bool, 2> ground_fire{};
+			std::array<bool, 2> air_fire{};
+			const int combat_budget = 16500 + 7500 + 6000 + 6000 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time;
+			for (int tick = 0; tick != combat_budget; ++tick) {
+				for (int owner : {0, 3}) for (unit_t* unit : ptr(player.st().player_units[owner])) {
+					functions.u_set_status_flag(unit, unit_t::status_flag_invincible, unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan);
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+				}
+				functions.next_frame();
+				for (int index = 0; index != 2; ++index) for (unit_id id : player.st().campaign_ai[index ? 3 : 1].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire[index] = true;
+						else ground_fire[index] = true;
+					}
+				}
+				if (ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1]) break;
+			}
+			if (!ground_fire[0] || !ground_fire[1] || !air_fire[0] || !air_fire[1]) {
+				printf("Gettysburg combat diagnostic: frame=%d outcome=%d proto_ground=%d proto_air=%d zerg_ground=%d zerg_air=%d scouts=%d pylons=%d proto_minerals=%d proto_gas=%d\n", player.st().current_frame, player.st().players[0].victory_state, ground_fire[0], air_fire[0], ground_fire[1], air_fire[1], player.st().unit_counts[1][UnitTypes::Protoss_Scout], player.st().unit_counts[1][UnitTypes::Protoss_Pylon], player.st().current_minerals[1], player.st().current_gas[1]);
+				printf("Gettysburg combat loss: kerrigan=%d human_units=%d\n", player.st().unit_counts[0][UnitTypes::Hero_Sarah_Kerrigan], count_units(player.st(), 0));
+				for (size_t type = 0; type != 228; ++type) if (player.st().dead_unit_counts[3][(UnitTypes)type] && (functions.get_unit_type((UnitTypes)type)->group_flags & GroupFlags::Building)) printf("Gettysburg lost Zerg building: type=%zu deaths=%d\n", type, player.st().dead_unit_counts[3][(UnitTypes)type]);
+				for (const auto& script : player.st().campaign_ai_scripts) printf("Gettysburg AI state: owner=%d position=%zu wait=%d town=%zu\n", script.owner, script.position, script.wait, script.town);
+			}
+			require(ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1], "original Protoss and Zerg scripts each deploy weapon-firing ground and air parties");
+			require(functions.player_has_completed_unit(1, UnitTypes::Protoss_Scout), "original Protoss air request completes through native Stargate training");
+			printf("New Gettysburg original Protoss/Zerg ground and air combat passed.\n");
+			functions.start_campaign_ai_script(3, 1382643027);
+			functions.progress_campaign_ai_scripts();
+			bool random_target = false;
+			for (unit_t* unit : ptr(player.st().player_units[3])) if (unit->order_target.unit && functions.unit_target_is_enemy(unit, unit->order_target.unit) && unit->order_type->targets_enemies) random_target = true;
+			require(random_target && !player.st().campaign_ai[3].suicide, "original SuiR assigns native hostile targets without substituting strategic suicide");
+			printf("New Gettysburg original random-suicide script passed.\n");
+			gettysburg_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (big_push) {
 			player.st().strict_triggers = true;
 			state_functions functions(player.st());

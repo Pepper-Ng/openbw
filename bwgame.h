@@ -19171,6 +19171,38 @@ struct state_functions {
 		error("unknown campaign AI script %d", id);
 	}
 
+	void campaign_ai_random_suicide(int owner) {
+		auto& ai = st.campaign_ai.at(owner);
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit_dying(unit) || ut_turret(unit) || us_hidden(unit) || unit_is_disabled(unit) || !u_completed(unit)) continue;
+			if (unit_is(unit, UnitTypes::Zerg_Larva) || unit_is(unit, UnitTypes::Terran_Nuclear_Missile)) continue;
+			bool armed = unit_can_attack(unit);
+			if (!armed && !unit_can_move(unit)) continue;
+			if (unit->order_target.unit && unit_target_is_enemy(unit, unit->order_target.unit) && unit_can_attack_target(unit, unit->order_target.unit)) continue;
+			a_vector<int> enemies;
+			for (int player = 0; player != 8; ++player) if (player != owner && !st.alliances[owner][player] && !st.player_units[player].empty()) enemies.push_back(player);
+			if (enemies.empty()) continue;
+			size_t first = lcg_rand(8) % enemies.size();
+			unit_t* target = nullptr;
+			for (size_t offset = 0; offset != enemies.size() && !target; ++offset) {
+				int enemy = enemies[(first + offset) % enemies.size()];
+				target = find_nearest_unit(unit, map_bounds(), [&](const unit_t* candidate) {
+					return candidate->owner == enemy && !unit_dying(candidate) && !ut_turret(candidate) && !us_hidden(candidate) && (!armed || unit_can_attack_target(unit, candidate));
+				});
+			}
+			if (!target) continue;
+			unit_id id = get_unit_id(unit);
+			auto detach = [&](a_vector<unit_id>& units) { units.erase(std::remove(units.begin(), units.end(), id), units.end()); };
+			detach(ai.attack_party);
+			detach(ai.attacking);
+			detach(ai.transport_passengers);
+			ai.defending.erase(std::remove_if(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.unit == id; }), ai.defending.end());
+			const order_type_t* order = get_order_type(Orders::Move);
+			if (armed) order = unit->unit_type->attack_unit;
+			issue_order(unit, false, order, {target->sprite->position, target});
+		}
+	}
+
 	void progress_campaign_ai_scripts() {
 		const auto& bytes = st.global->ai_script;
 		if (st.campaign_ai_scripts.empty()) return;
@@ -19261,8 +19293,10 @@ struct state_functions {
 					ai.defenses.push_back({opcode - 19, amount, type->id});
 				} else if (opcode == 16) ai.expand_defense = true;
 				else if (opcode == 31) {
-					if (read(1) != 0) error("unsupported random suicide AI");
-					ai.suicide = true;
+					int mode = read(1);
+					if (mode == 0) ai.suicide = true;
+					else if (mode == 1) campaign_ai_random_suicide(script.owner);
+					else error("unsupported suicide AI mode %d", mode);
 				} else if (opcode == 34) ai.minimum_force = read(1);
 				else if (opcode == 35) ai.default_build = false;
 				else if (opcode == 36) script.position = 0;
@@ -19684,8 +19718,8 @@ struct state_functions {
 				if (request.first > local_counts[(UnitTypes)type]) requests.push_back({request.second, (UnitTypes)type, town + 1});
 			}
 		}
-		UnitTypes worker_type = st.players[owner].race == race_t::terran ? UnitTypes::Terran_SCV : UnitTypes::Zerg_Drone;
-		UnitTypes supply_type = st.players[owner].race == race_t::terran ? UnitTypes::Terran_Supply_Depot : UnitTypes::Zerg_Overlord;
+		UnitTypes worker_type = st.players[owner].race == race_t::protoss ? UnitTypes::Protoss_Probe : st.players[owner].race == race_t::terran ? UnitTypes::Terran_SCV : UnitTypes::Zerg_Drone;
+		UnitTypes supply_type = st.players[owner].race == race_t::protoss ? UnitTypes::Protoss_Pylon : st.players[owner].race == race_t::terran ? UnitTypes::Terran_Supply_Depot : UnitTypes::Zerg_Overlord;
 		if (!has_available_supply_for(owner, get_unit_type(worker_type), false) && counts[supply_type] == st.unit_counts[owner][supply_type]) requests.push_back({200, supply_type, 0});
 		int transport_space = 0;
 		for (unit_id id : ai.transport_passengers) transport_space += get_unit(id)->unit_type->space_required;
@@ -19708,9 +19742,9 @@ struct state_functions {
 					place_building(producer, order, type, producer->sprite->position);
 					return true;
 				}
-				if (!unit_is(producer, UnitTypes::Zerg_Drone) && !unit_is(producer, UnitTypes::Terran_SCV)) continue;
-				if (producer->order_type->id == Orders::ConstructingBuilding || producer->order_type->id == Orders::PlaceBuilding || producer->order_type->id == Orders::Repair) continue;
-				const auto* order = get_order_type(unit_is(producer, UnitTypes::Terran_SCV) ? Orders::PlaceBuilding : Orders::DroneStartBuild);
+				if (!unit_is(producer, UnitTypes::Zerg_Drone) && !unit_is(producer, UnitTypes::Terran_SCV) && !unit_is(producer, UnitTypes::Protoss_Probe)) continue;
+				if (producer->order_type->id == Orders::ConstructingBuilding || producer->order_type->id == Orders::PlaceBuilding || producer->order_type->id == Orders::PlaceProtossBuilding || producer->order_type->id == Orders::Repair) continue;
+				const auto* order = get_order_type(unit_is(producer, UnitTypes::Protoss_Probe) ? Orders::PlaceProtossBuilding : unit_is(producer, UnitTypes::Terran_SCV) ? Orders::PlaceBuilding : Orders::DroneStartBuild);
 				if (!unit_build_order_valid(producer, order, type, owner)) continue;
 				xy home = (town ? st.campaign_ai[owner].area_towns.at(town - 1).home : st.campaign_ai[owner].home) / 32 * 32;
 				for (int radius = 0; radius <= 12; ++radius) {

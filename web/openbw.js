@@ -1776,17 +1776,16 @@ async function boot(session) {
       const mIco = ri[0] ? `<img class="cico" src="${ri[0]}">` : '';
       const gIco = ri[1] ? `<img class="cico" src="${ri[1]}">` : '';
       const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-      // Popup on hover: what it does (for upgrades/research/abilities) above the cost; a grayed
-      // build instead shows the prerequisite it's waiting on.
+      // Popup on hover: description, missing prerequisite and price, including unavailable commands.
       const desc = f.length > 8 ? f[8] : '';
       const costInner = (minC || gasC)
         ? `<b class="m">${mIco}${minC}</b>${gasC ? ` <b class="g">${gIco}${gasC}</b>` : ''}`
         : '';
-      const cost = (desc || costInner)
-        ? `<span class="cost"><div class="d">${esc(label)}</div>${desc ? `<div class="d">${esc(desc)}</div>` : ''}${costInner ? `<div>${costInner}</div>` : ''}</span>`
-        : '';
       const req = f.length > 7 ? f[7] : '';
-      const popup = off && req ? `<span class="req">Requires ${esc(req)}</span>` : cost;
+      const requirement = off && req ? `<div class="d">Requires ${esc(req)}</div>` : '';
+      const popup = (desc || costInner || requirement)
+        ? `<span class="cost"><div class="d">${esc(label)}</div>${desc ? `<div class="d">${esc(desc)}</div>` : ''}${requirement}${costInner ? `<div>${costInner}</div>` : ''}</span>`
+        : '';
       // Light up the button matching the unit's current order (Move while moving, etc.).
       const active = f.length > 9 && f[9] === '1' ? ' active' : '';
       // Wrap the label in one span so the flex `gap` on .cmd spaces only the icon from
@@ -2169,7 +2168,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {

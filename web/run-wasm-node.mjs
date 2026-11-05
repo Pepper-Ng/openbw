@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -181,6 +181,17 @@ function testCampaign() {
     x.openbw_out_clear();
     assert.equal(x.openbw_mission_countdown(), -1, 'The Big Push has no survival countdown');
     console.log('The Big Push initialization checks passed.');
+  } else if (missionId === 'terran09') {
+    assert.equal(mission.humanSlot, 0, 'Keep the original New Gettysburg human slot');
+    assert.equal(human.length, 18, 'Original Terran force and naturally rescued Kerrigan');
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 6);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 2);
+    assert.equal(human.filter(unit => unit[1] === 'Dropship').length, 1);
+    assert.ok(human.some(unit => unit[1] === 'Sarah Kerrigan'), 'Kerrigan is naturally rescued at the original base');
+    assert.ok(units.some(unit => unit[1] === 'Nexus' && unit[2] === '1'), 'Original Protoss bases remain intact');
+    assert.ok(units.some(unit => unit[1] === 'Hive' && unit[2] === '3'), 'Original Zerg buildings remain intact');
+    assert.equal(x.openbw_mission_countdown(), -1, 'New Gettysburg has no survival countdown');
+    console.log('New Gettysburg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -202,8 +213,9 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250}[missionId], 'Preserve original mission minerals');
   if (missionId === 'terran08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Big Push trigger grants 100 gas');
+  if (missionId === 'terran09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original New Gettysburg trigger grants 150 gas');
   if (missionId === 'terran03') assert.equal(x.openbw_mission_countdown(), 1800, 'Original thirty-minute countdown');
   if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   if (missionId === 'terran05') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 300, 'Original Revolution trigger grants gas');
