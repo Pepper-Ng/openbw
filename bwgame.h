@@ -216,6 +216,7 @@ struct state_base_copyable {
 	std::array<type_indexed_array<int, UnitTypes>, 12> unit_counts;
 	std::array<type_indexed_array<int, UnitTypes>, 12> completed_unit_counts;
 	std::array<type_indexed_array<int, UnitTypes>, 12> killed_unit_counts;
+	std::array<type_indexed_array<int, UnitTypes>, 12> dead_unit_counts;
 
 	std::array<int, 12> factory_counts;
 	std::array<int, 12> building_counts;
@@ -270,6 +271,7 @@ struct state_base_copyable {
 		unit_id military_target{};
 		type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
 		type_indexed_array<int, TechTypes> tech_requests{};
+		type_indexed_array<std::pair<int, int>, UpgradeTypes> upgrade_requests{};
 		type_indexed_array<int, UnitTypes> attack_requests{};
 		struct area_town {
 			rect area;
@@ -2685,6 +2687,7 @@ struct state_functions {
 	}
 
 	void kill_unit(unit_t* u) {
+		if (u->order_type->id != Orders::Die && !ut_turret(u) && !u_hallucination(u)) ++st.dead_unit_counts[u->owner][u->unit_type->id];
 		drop_carried_items(u);
 		while (!u->order_queue.empty()) {
 			remove_queued_order(u, &u->order_queue.front());
@@ -6719,6 +6722,16 @@ struct state_functions {
 			queue_order(std::next(u->order_queue.begin()), u, get_order_type(Orders::ZergUnitMorph), {});
 			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
 			order_done(u);
+		} else if (st.players[u->owner].controller == player_t::controller_computer_game && !u->main_order_timer && !unit_is_disabled(u)) {
+			u->main_order_timer = 15;
+			int range = unit_target_acquisition_range(u) * 32;
+			unit_t* target = find_nearest_unit(u, square_at(u->sprite->position, range), [&](unit_t* candidate) {
+				return unit_target_is_enemy(u, candidate) && unit_can_attack_target(u, candidate) && unit_can_see_target(u, candidate) && unit_target_in_range(u, candidate, range) && is_reachable(u, candidate);
+			});
+			if (!target) return;
+			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+			set_unit_order(u, get_order_type(Orders::Unburrowing));
+			queue_order_back(u, u->unit_type->attack_unit, {target->sprite->position, target});
 		}
 	}
 
@@ -19165,6 +19178,10 @@ struct state_functions {
 					int priority = read(1);
 					if (script.town) ai.area_towns.at(script.town - 1).build_requests[type->id] = {amount, priority};
 					else ai.build_requests[type->id] = {amount, priority};
+				} else if (opcode == 7) {
+					int level = read(1);
+					const auto* upgrade = get_upgrade_type((UpgradeTypes)read(2));
+					ai.upgrade_requests[upgrade->id] = {level, read(1)};
 				} else if (opcode == 8) {
 					const auto* tech = get_tech_type((TechTypes)read(2));
 					ai.tech_requests[tech->id] = read(1);
@@ -19576,6 +19593,23 @@ struct state_functions {
 				break;
 			}
 		}
+		for (size_t upgrade_id = 0; upgrade_id != ai.upgrade_requests.size(); ++upgrade_id) {
+			UpgradeTypes id = (UpgradeTypes)upgrade_id;
+			if (ai.upgrade_requests[id].first <= player_upgrade_level(owner, id) || st.upgrade_upgrading[owner][id]) continue;
+			const auto* upgrade = get_upgrade_type(id);
+			for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (!unit_can_upgrade(unit, upgrade, owner) || !has_available_resources_for(owner, upgrade, false)) continue;
+				st.current_minerals[owner] -= upgrade_mineral_cost(owner, upgrade);
+				st.current_gas[owner] -= upgrade_gas_cost(owner, upgrade);
+				unit->building.upgrading_type = upgrade;
+				unit->building.upgrade_research_time = upgrade_time_cost(owner, upgrade);
+				unit->building.upgrading_level = player_upgrade_level(owner, id) + 1;
+				st.upgrade_upgrading[owner][id] = true;
+				sprite_run_anim(unit->sprite, iscript_anims::IsWorking);
+				set_unit_order(unit, get_order_type(Orders::Upgrade));
+				break;
+			}
+		}
 		struct production_request { int priority; UnitTypes type; size_t town; };
 		a_vector<production_request> requests;
 		for (size_t type_id = 0; type_id != 228; ++type_id) {
@@ -19671,16 +19705,18 @@ struct state_functions {
 				return trigger_count_comparison(c, amount);
 			}
 		case 5:
+		case 15:
 			{
 				int count = 0;
 				for (int player : trigger_players(owner, c.group)) {
-					if (c.unit_id < 228) count += st.killed_unit_counts[player].at((UnitTypes)c.unit_id);
+					const auto& counters = c.type == 15 ? st.dead_unit_counts[player] : st.killed_unit_counts[player];
+					if (c.unit_id < 228) count += counters.at((UnitTypes)c.unit_id);
 					else {
 						if (c.unit_id < 229 || c.unit_id > 232) error("invalid Kills unit group %d", c.unit_id);
 						for (size_t type = 0; type != 228; ++type) {
 							auto flags = get_unit_type((UnitTypes)type)->group_flags;
 							if (c.unit_id == 229 || (c.unit_id == 230 && (flags & GroupFlags::Men)) || (c.unit_id == 231 && (flags & GroupFlags::Building)) || (c.unit_id == 232 && (flags & GroupFlags::Factory))) {
-								count += st.killed_unit_counts[player][(UnitTypes)type];
+								count += counters[(UnitTypes)type];
 							}
 						}
 					}
@@ -19704,7 +19740,11 @@ struct state_functions {
 	}
 
 	void apply_creation_properties(unit_t* unit, const unit_creation_properties& properties) {
-		if (properties.state_flags & properties.valid_state_flags & 7) error("unsupported cloaked/burrowed/in-transit creation properties");
+		if (properties.state_flags & properties.valid_state_flags & 5) error("unsupported cloaked/in-transit creation properties");
+		if (properties.state_flags & properties.valid_state_flags & 2) {
+			if (!ut_can_burrow(unit)) error("burrowed creation requires a burrow-capable unit");
+			set_unit_order(unit, get_order_type(Orders::Burrowing));
+		}
 		if ((properties.valid_data_flags & 32) && properties.hangar_count) error("unsupported creation hangar count");
 		if (properties.valid_data_flags & 2) {
 			using extended_hp = fixed_point<32, 8, true>;
@@ -19854,7 +19894,7 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 11 || type == 12 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 11 || type == 12 || type == 15 || type == 22;
 	}
 
 	static bool campaign_action_supported(int type) {
@@ -19869,7 +19909,7 @@ struct state_functions {
 	}
 
 	static bool campaign_briefing_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 6 || type == 8;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 6 || type == 7 || type == 8;
 	}
 
 	int trigger_transmission_duration(const trigger::action& action) {
@@ -20865,6 +20905,7 @@ struct game_load_functions : state_functions {
 		st.unit_counts = {};
 		st.completed_unit_counts = {};
 		st.killed_unit_counts = {};
+		st.dead_unit_counts = {};
 		st.campaign_ai_scripts.clear();
 		st.campaign_ai = {};
 		st.countdown_timer = 0;

@@ -7,7 +7,7 @@ import { argv } from 'node:process';
 
 const campaign = argv[2] === '--test-campaign';
 const missionId = campaign ? argv[3] || 'terran01' : null;
-if (campaign && !['terran01', 'terran02', 'terran03', 'terran04', 'terran05'].includes(missionId)) throw new Error('Unsupported test mission');
+if (campaign && !['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06'].includes(missionId)) throw new Error('Unsupported test mission');
 const map = campaign ? `/data/campaign/${missionId}.mpq` : argv[2] || '/maps/Benzene.scx';
 
 const wasi = new WASI({

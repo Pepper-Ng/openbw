@@ -1618,6 +1618,7 @@ async function boot(session) {
   }
   let briefingPlaying = false, briefingIndex = 0, briefingClock = 0, briefingUntil = 0, briefingLast = 0;
   let briefingActions = [];
+  let briefingTalkingUntil = 0;
   const briefingPortraits = new Map();
   function showBriefingPortrait(slot) {
     const unit = briefingPortraits.get(slot);
@@ -1629,6 +1630,7 @@ async function boot(session) {
     if (!briefingActive || !briefingPlaying) return;
     if (!document.hidden) briefingClock += Math.min(100, Math.max(0, now - briefingLast));
     briefingLast = now;
+    if (briefingClock >= briefingTalkingUntil) $('briefing-portrait').dataset.talking = 'false';
     while (briefingPlaying && briefingClock >= briefingUntil && briefingIndex < briefingActions.length) {
       const [type, text, sound, time, slot, amount, modifier, unit] = briefingActions[briefingIndex++];
       if (type === 1) briefingUntil = briefingClock + Math.max(0, time);
@@ -1637,6 +1639,11 @@ async function boot(session) {
       if (type === 4) $('briefing-objectives').textContent = missionString(text);
       if (type === 5) { briefingPortraits.set(slot, unit); showBriefingPortrait(slot); }
       if (type === 6) { briefingPortraits.delete(slot); showBriefingPortrait(slot); }
+      if (type === 7) {
+        showBriefingPortrait(slot);
+        briefingTalkingUntil = briefingClock + Math.max(0, time);
+        $('briefing-portrait').dataset.talking = 'true';
+      }
       if (type === 8) {
         showBriefingPortrait(slot);
         briefingUntil = briefingClock + x.openbw_mission_transmission_time(time, amount, modifier);
@@ -2154,7 +2161,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {

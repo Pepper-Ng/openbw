@@ -6,7 +6,7 @@
 - Branch: `campaign`, based on `dev` at `9958fa5034ceb9f6ab1d05c9d240e031020732cb`.
 - The local Wasteland prototype has mission loading, briefing, narration, objectives, rescue, triggers, outcomes, retry, and progression. A normal-control browser victory and the automated Wasteland gates passed. Physical iPhone acceptance remains open; this is not support for the full campaign.
 - First playable milestone: the original Terran mission Wasteland, from briefing through actual victory or defeat, using its original scenario rather than a scripted recreation.
-- Follow-up missions: Backwater Station, Desperate Alliance, The Jacobs Installation, and Revolution. Completing one mission does not establish support for all campaign maps.
+- Follow-up missions: Backwater Station, Desperate Alliance, The Jacobs Installation, Revolution, and Norad II. Completing one mission does not establish support for all campaign maps.
 - Keep the working melee sandbox, optional bots, multiplayer, mobile controls, and command regressions intact.
 - Use shared cached game data and mission-at-a-time downloads. Do not require the entire campaign/CD archive before the first mission starts.
 - Do not commit proprietary archives, mission data, dialogue, videos, or generated packs. Local development assets remain under ignored `web/data/`.
@@ -15,6 +15,8 @@
 - Desperate Alliance is available as a source-backed campaign milestone. Its original scripts drive production and ground/air attacks; native regions govern defense and military coordination. Normal-control victory and exact classic balance remain unverified. Defer UI/mobile optimization, onboarding, and linked mission progression.
 - The Jacobs Installation is available through the existing selector. The user playtested it and requested the Attack-input and camera corrections recorded below, followed by a signed personal milestone commit. Exact classic fidelity remains open.
 - Revolution's original hero/base rescue, Terran production, scripted ground/air attacks, transport drops and outcome fixtures pass. On 2026-11-05 the user authorized its signed milestone commit and push, then implementation and publication of mission 6. Normal-control playtesting and classic comparison of both missions are deferred until both milestones are finished.
+- Revolution is published as signed commit `7ac8955051d1a7cfecb6e271146c8bf85e5e9577`. Recent master through `a3fb4ea` was integrated in signed merge `46804a791d20f438d805d4e29be159585b4c1fc6`, preserving its retirement of the legacy Pages workflow. Both were verified on the live campaign branch.
+- Norad II's original rescue win/loss conditions, Deaths-driven script activation, native upgrades, combat, authored burrowed reinforcements and flagship repair fixtures pass. Its signed milestone commit/push is authorized; normal-control and classic playtesting remain deferred.
 - On 2026-11-04 the user completed Backwater Station and accepted it as the next playable milestone. The user authorized its commit and continuation to Desperate Alliance; exact classic behavior remains subject to comparison.
 - Backwater's accepted milestone is personal signed commit `928ef119265bde9632626ecb3fdda127bb343ac0`. Its history remains intact. On 2026-11-04 the user authorized committing and pushing the improved Desperate Alliance milestone on `campaign`; this does not authorize merging or deploying to `dev`/`master` or publishing proprietary assets.
 - On 2026-11-04 the user authorized web-informed, narrowly reasoned behavior assumptions, followed by a classic StarCraft comparison and revision pass. Record inferences explicitly rather than blocking all implementation on an original-game trace.
@@ -486,6 +488,32 @@ node web/run-wasm-node.mjs --test-commands
 ```
 
 ## Reusable Implementation Lessons
+
+### Norad II Evidence
+
+The sixth mission retains its original scenario and scripts. The new engine work supports the additional operations it actually exercises. User playtesting of Revolution and Norad II will follow publication; the automated fixtures do not claim exact classic acceptance.
+
+- Original CHK SHA-256: `80dd42e4d4540d0340113b92aae02120b9919a5dac359b010607ec7c26e72ead`. The audited scenario has 221 UNIT records, 20 gameplay triggers, one briefing and 24 WAVs. The 25-entry pack round-trips at 6,846,575 bytes, decoded content 6,845,119 bytes, SHA-256 `c72cf55d039b17ece9b170ebad301652e942fa72403fd6dc058e8af40370efa6`.
+- Human slot 0 starts four Marines, one Firebat and two SCVs; Raynor's enhanced Vulture is naturally rescued. The crashed Norad II is the original special unit 126, not the flying hero unit 29, and remains separately rescuable. The opening trigger gives 75 minerals and no gas.
+- `Ter6` and `Te6b` each have 94 reachable instructions and run for the two original Zerg owners. Rscu retains native rescue-controller behavior. The existing preparation command audits all required IDs from the verified pack; no original binary or wave request was modified.
+- Condition 15 now reads victim-owned Deaths separately from credited kills. Specific types and the original Buildings group use existing comparison/player-group logic. The shared fixture checks scripted deaths, lethal victim counts and repeated Die requests without double-counting.
+- AI opcode 7 retains requested upgrade levels and executes native paid Upgrade orders, including cost, prerequisites, construction time and completion. Both original Zerg scripts start and complete their requested first upgrade; their script-driven attacking units fire native weapons in the sustained combat fixture.
+- Original Create Unit property records at the crash site request burrowed Zergling/Hydralisk reinforcements. The runtime enters native Burrowing and uses native visibility, attack eligibility, acquisition range and Unburrowing/attack orders for computer emergence. A fixture applies the original UPRP record and verifies state and emergence. No Backwater placement restoration, acquisition-range increase or replacement wave was added.
+- Briefing action 7 identifies the existing portrait slot as speaking in the static portrait fallback without blocking the original briefing clock. Animated portraits remain deferred. The browser-module fixture validates the full original briefing action set and real packed narration.
+- Fresh-map fixtures cover idle, Raynor with zero or one Dropship, the original paused victory with Raynor plus two Dropships, Raynor loss, flagship loss, squad loss, authored reinforcements, and native flagship rescue/repair. The repair workflow mines original minerals, constructs a Refinery, harvests actual gas, and pays native repair costs; the original rescued base contains an Engineering Bay rather than an existing Refinery.
+- Native and browser-module suites for missions 1-6 and the complete command suite pass on the merged baseline. Only existing compiler warnings remain. Protected outcome/combat fixtures isolate semantics, not normal-control victory or exact classic balance.
+
+Publication order remains: signed Norad II milestone first, then a separate live campaign-delivery fix. The deployed container currently omits ignored campaign manifests/packs and therefore returns 404; a container revision alone does not publish those assets. The user reports a 5-7 minute rollout delay after campaign pushes. Original archives, dialogue, mission packs, generated WASM and temporary signature trust files stay uncommitted.
+
+```powershell
+node web/prepare-campaign.mjs terran06
+node web/prepare-campaign.mjs --audit-ai terran06
+& .\web\build-wasm.ps1 -SimulationTest
+node web/run-sim.mjs --test-campaign terran06
+& .\web\build-wasm.ps1
+node web/run-wasm-node.mjs --test-campaign terran06
+node web/run-wasm-node.mjs --test-commands
+```
 
 Apply these lessons to later missions. The evidence above records what was tested; it does not establish support for untested scenarios or operations. Update this section when another mission changes a reusable rule.
 

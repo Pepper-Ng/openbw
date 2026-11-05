@@ -12,6 +12,7 @@ const missions = {
   terran03: { title: 'Desperate Alliance', order: 3, scenarioHash: '9d83a8bde18c38ee12f54f4c5253bed5466027fc612141e9a7415c94d3346737', units: 199, triggers: 10, sounds: 16 },
   terran04: { title: 'The Jacobs Installation', order: 4, scenarioHash: 'a48e1d1682f0a6e68eeec4ef0fc82efc48e70a11b4315de8c091079c68e10601', units: 100, triggers: 36, sounds: 17 },
   terran05: { title: 'Revolution', order: 5, scenarioHash: '35cd98bc0590c0f36e5d8f75e41a29b254db2d6cf8dec5480e6ffd7602609829', units: 172, triggers: 17, sounds: 17 },
+  terran06: { title: 'Norad II', order: 6, scenarioHash: '80dd42e4d4540d0340113b92aae02120b9919a5dac359b010607ec7c26e72ead', units: 221, triggers: 20, sounds: 24 },
 };
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 

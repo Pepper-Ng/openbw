@@ -301,6 +301,14 @@ static void campaign_checks(state& st) {
 	condition.group = 4;
 	condition.count_n = 0;
 	require(functions.test_trigger_condition(condition, 1), "victim player does not receive kill credit");
+	condition.type = 15;
+	condition.count_n = 3;
+	require(functions.test_trigger_condition(condition, 1), "victim Deaths include enemy and scripted deaths independently of kills");
+	functions.kill_unit(killed_units[2]);
+	require(functions.test_trigger_condition(condition, 1), "repeated kill of a dying actor does not double-count Deaths");
+	condition.unit_id = 231;
+	condition.count_n = 1;
+	require(functions.test_trigger_condition(condition, 1), "Deaths supports the original Buildings group");
 	printf("Campaign credited-kill checks passed.\n");
 	trigger::action vision{};
 	vision.type = 15;
@@ -1101,6 +1109,138 @@ static void revolution_mission_cases(data_loading::data_files_loader<>& load_dat
 	}
 }
 
+static void norad_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 9; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		state& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		unit_t* raynor = nullptr;
+		unit_t* flagship = nullptr;
+		for (int owner : {0, 2}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture) raynor = unit;
+			if (unit->unit_type->id == UnitTypes::Special_Crashed_Norad_II) flagship = unit;
+		}
+		require(raynor && flagship, "original Norad II Raynor and crashed flagship actors");
+		if (scenario == 8) {
+			functions.u_set_status_flag(flagship, unit_t::status_flag_invincible);
+			for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+			unit_t* worker = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_SCV) worker = unit;
+			require(worker != nullptr, "original SCV for flagship rescue and repair");
+			functions.u_set_status_flag(worker, unit_t::status_flag_invincible);
+			unit_t* base = nullptr;
+			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center) base = unit;
+			require(base != nullptr, "original base for refinery resources needed by flagship repair");
+			functions.move_unit(worker, base->sprite->position + xy(48, 0));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			unit_t* refinery = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Refinery) refinery = unit;
+			if (!refinery) {
+				unit_t* mineral = functions.find_nearest_unit(worker, functions.map_bounds(), [&](unit_t* unit) { return functions.unit_is_mineral_field(unit) && functions.is_reachable(worker, unit); });
+				require(mineral != nullptr, "original base minerals for native Refinery construction");
+				functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToMinerals), mineral);
+				for (int tick = 0; tick != 2000 && st.current_minerals[0] < 125; ++tick) functions.next_frame();
+				require(st.current_minerals[0] >= 125, "original SCV gathers actual minerals before building a Refinery");
+				unit_t* geyser = functions.find_nearest_unit(worker, functions.map_bounds(), [&](unit_t* unit) { return unit->unit_type->id == UnitTypes::Resource_Vespene_Geyser && functions.is_reachable(worker, unit); });
+				require(geyser != nullptr, "original geyser for native Refinery placement");
+				functions.place_building(worker, functions.get_order_type(Orders::PlaceBuilding), functions.get_unit_type(UnitTypes::Terran_Refinery), geyser->sprite->position);
+				for (int tick = 0; tick != 2000 && !refinery; ++tick) {
+					functions.next_frame();
+					for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Refinery && functions.u_completed(unit)) refinery = unit;
+				}
+			}
+			require(refinery != nullptr, "original worker completes native Refinery construction");
+			functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToGas), refinery);
+			for (int tick = 0; tick != 1200 && !st.current_gas[0]; ++tick) functions.next_frame();
+			require(st.current_gas[0] > 0, "original SCV mines actual refinery gas for native repair costs");
+			functions.move_unit(worker, flagship->sprite->position + xy(48, 0));
+			flagship->main_order_timer = 0;
+			functions.order_RescuePassive(flagship);
+			require(flagship->owner == 0, "native proximity rescues the original crashed flagship");
+			functions.u_set_status_flag(flagship, unit_t::status_flag_invincible);
+			functions.set_unit_hp(flagship, flagship->unit_type->hitpoints / 2);
+			auto previous_hp = flagship->hp;
+			functions.set_unit_order(worker, functions.get_order_type(Orders::Repair), flagship);
+			for (int tick = 0; tick != 120; ++tick) functions.next_frame();
+			if (flagship->hp <= previous_hp) printf("Norad repair diagnostic: hp=%d previous=%d worker_order=%d state=%d mechanical=%d completed=%d race=%d reachable=%d minerals=%d gas=%d\n", flagship->hp.integer_part(), previous_hp.integer_part(), int(worker->order_type->id), worker->order_state, functions.ut_mechanical(flagship), functions.u_completed(flagship), int(functions.unit_race(flagship)), functions.is_reachable(worker, flagship), st.current_minerals[0], st.current_gas[0]);
+			require(flagship->hp > previous_hp && !st.players[0].victory_state, "original SCV repairs the rescued flagship without satisfying rescue victory alone");
+			printf("Norad II original flagship rescue and repair passed.\n");
+			continue;
+		}
+		if (scenario == 7) {
+			unit_t* marine = nullptr;
+			for (int owner : {0, 2}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+				if (unit->owner == 0 && unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+			}
+			const auto& area = st.locations.at(1).area;
+			unit_t* reinforcement = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Zerg_Hydralisk), (area.from + area.to) / 2 - xy(64, 0), 4);
+			require(marine && reinforcement, "original crash-site burrowed reinforcement fixture");
+			functions.apply_creation_properties(reinforcement, st.game->unit_properties.at(0));
+			functions.u_set_status_flag(reinforcement, unit_t::status_flag_invincible);
+			for (int tick = 0; tick != 120; ++tick) functions.next_frame();
+			require(functions.u_burrowed(reinforcement), "original Norad II creation property reaches native Burrowed state");
+			functions.u_unset_status_flag(marine, unit_t::status_flag_invincible);
+			functions.move_unit(marine, reinforcement->sprite->position + xy(48, 0));
+			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 240 && functions.u_burrowed(reinforcement); ++tick) {
+				functions.set_sprite_visibility(marine->sprite, 0xff);
+				functions.next_frame();
+			}
+			require(!functions.u_burrowed(reinforcement), "authored burrowed reinforcement emerges for a nearby visible enemy");
+			printf("Norad II authored burrowed reinforcement passed.\n");
+			continue;
+		}
+		if (scenario >= 1 && scenario <= 3) {
+			for (unit_t* unit : ptr(st.player_units[0])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			functions.u_set_status_flag(flagship, unit_t::status_flag_invincible);
+			const auto& destination = st.locations.at(1).area;
+			xy center = (destination.from + destination.to) / 2;
+			functions.move_unit(raynor, center - xy(48, 0));
+			raynor->main_order_timer = 0;
+			functions.order_RescuePassive(raynor);
+			if (raynor->owner != 0) {
+				unit_t* marine = nullptr;
+				for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
+				functions.move_unit(marine, raynor->sprite->position + xy(48, 0));
+				functions.order_RescuePassive(raynor);
+			}
+			functions.set_unit_order(raynor, functions.get_order_type(Orders::HoldPosition));
+			for (int count = 0; count < scenario - 1; ++count) {
+				unit_t* transport = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Dropship), center + xy(0, count * 32), 0);
+				require(transport != nullptr, "native Dropship for original rescue predicate fixture");
+				functions.u_set_status_flag(transport, unit_t::status_flag_invincible);
+			}
+		}
+		if (scenario == 4) functions.kill_unit(raynor);
+		if (scenario == 5) functions.kill_unit(flagship);
+		if (scenario == 6) {
+			a_vector<unit_t*> units;
+			for (unit_t* unit : ptr(st.player_units[0])) units.push_back(unit);
+			for (unit_t* unit : units) functions.kill_unit(unit);
+		}
+		bool paused = false;
+		for (int tick = 0; tick != 4000 && !st.players[0].victory_state; ++tick) {
+			functions.next_frame();
+			if (st.scripted_pause) paused = true;
+		}
+		if (scenario <= 2) require(!st.players[0].victory_state, "idle or fewer than two Dropships cannot satisfy the original Norad II rescue victory");
+		if (scenario == 3) require(st.players[0].victory_state >= 3 && paused, "Raynor plus two Dropships completes the original paused rescue victory");
+		if (scenario >= 4) require(st.players[0].victory_state == 2, "original Raynor, flagship or squad loss reaches defeat");
+		printf("Norad II original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1111,6 +1251,7 @@ int main(int argc, char** argv) {
 	bool desperate = campaign && argc > 4 && !strcmp(argv[4], "terran03");
 	bool jacobs = campaign && argc > 4 && !strcmp(argv[4], "terran04");
 	bool revolution = campaign && argc > 4 && !strcmp(argv[4], "terran05");
+	bool norad = campaign && argc > 4 && !strcmp(argv[4], "terran06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1125,6 +1266,50 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (norad) {
+			player.st().strict_triggers = true;
+			require(player.st().players[0].controller == player_t::controller_occupied, "Norad II preserves the original human slot zero");
+			for (int tick = 0; tick != 32; ++tick) player.next_frame();
+			require(!player.st().players[0].victory_state, "Norad II does not invent an opening outcome");
+			printf("Norad II normal initialization passed.\n");
+			state_functions functions(player.st());
+			unit_t* worker = nullptr;
+			unit_t* base = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[0])) {
+				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+				if (unit->unit_type->id == UnitTypes::Terran_SCV) worker = unit;
+			}
+			for (unit_t* unit : ptr(player.st().player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center) base = unit;
+			require(worker && base && player.st().current_minerals[0] == 75, "original Norad II workers, neutral base and opening minerals");
+			functions.move_unit(worker, base->sprite->position + xy(48, 0));
+			functions.set_unit_order(worker, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 1500; ++tick) player.next_frame();
+			require(player.st().unit_counts[0][UnitTypes::Terran_Command_Center] == 1 && player.st().trigger_switches[10], "original base rescue activates both Zerg campaign scripts");
+			for (int owner : {1, 4}) {
+				require(player.st().campaign_ai[owner].upgrade_requests[(UpgradeTypes)26].first == 1, "both original Zerg scripts retain their requested upgrade level");
+				require(player.st().upgrade_upgrading[owner][(UpgradeTypes)26] || functions.player_upgrade_level(owner, (UpgradeTypes)26) >= 1, "scripted Zerg upgrade starts or completes through native research");
+			}
+			printf("Norad II original base rescue passed.\n");
+			std::array<bool, 2> fired{};
+			for (int tick = 0; tick != 16000; ++tick) {
+				for (int owner : {0, 2}) for (unit_t* unit : ptr(player.st().player_units[owner])) {
+					functions.u_unset_status_flag(unit, unit_t::status_flag_invincible);
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+				}
+				player.next_frame();
+				for (int index = 0; index != 2; ++index) for (unit_id id : player.st().campaign_ai[index ? 4 : 1].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (unit && !functions.unit_dying(unit) && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+				}
+				if (fired[0] && fired[1]) break;
+			}
+			require(fired[0] && fired[1], "both original Norad II Zerg scripts launch native attacking units that fire weapons");
+			for (int owner : {1, 4}) require(functions.player_upgrade_level(owner, (UpgradeTypes)26) >= 1, "both original Zerg owners complete their scripted native upgrade");
+			printf("Norad II original Zerg combat and upgrades passed.\n");
+			norad_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (revolution) {
 			player.st().strict_triggers = true;
 			require(player.st().players[0].controller == player_t::controller_occupied, "Revolution preserves the original human slot zero");
