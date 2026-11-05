@@ -16,7 +16,7 @@ async function verifySource(file, source) {
   assert.equal(hash.digest('hex'), source.sha256, 'Campaign source checksum mismatch');
 }
 
-export async function ensureSource(directory, source = campaignSource) {
+export async function ensureSource(directory, source = campaignSource, stallTimeout = 60000) {
   assert.equal(basename(source.file), source.file, 'Invalid campaign source filename');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const file = resolve(directory, source.file);
@@ -26,13 +26,22 @@ export async function ensureSource(directory, source = campaignSource) {
   }
   const temporary = `${file}.download`;
   rmSync(temporary, { force: true });
+  const controller = new AbortController();
+  let watchdog;
+  const progress = () => {
+    clearTimeout(watchdog);
+    watchdog = setTimeout(() => controller.abort(new Error('Campaign source download stalled')), stallTimeout);
+    watchdog.unref();
+  };
   try {
-    const response = await fetch(source.url, { signal: AbortSignal.timeout(15 * 60 * 1000) });
+    progress();
+    const response = await fetch(source.url, { signal: controller.signal });
     assert.ok(response.ok && response.body, `Campaign source HTTP ${response.status}`);
     let bytes = 0;
     const hash = createHash('sha256');
     const meter = new Transform({
       transform(chunk, encoding, callback) {
+        progress();
         bytes += chunk.length;
         if (bytes > source.bytes) return callback(new Error('Campaign source exceeds expected size'));
         hash.update(chunk);
@@ -45,6 +54,7 @@ export async function ensureSource(directory, source = campaignSource) {
     renameSync(temporary, file);
     return file;
   } finally {
+    clearTimeout(watchdog);
     rmSync(temporary, { force: true });
   }
 }
@@ -80,6 +90,17 @@ async function testSource() {
   const server = createServer((request, response) => {
     requests++;
     if (request.url === '/missing') { response.writeHead(404); response.end(); return; }
+    if (request.url === '/stalled') { response.write(bytes.subarray(0, 4)); return; }
+    if (request.url === '/slow') {
+      let offset = 0;
+      const interval = setInterval(() => {
+        response.write(bytes.subarray(offset, offset + 4));
+        offset += 4;
+        if (offset >= bytes.length) response.end();
+      }, 100);
+      response.on('close', () => clearInterval(interval));
+      return;
+    }
     response.end(request.url === '/truncated' ? bytes.subarray(0, 4) : request.url === '/large' ? Buffer.concat([bytes, bytes]) : request.url === '/wrong' ? Buffer.alloc(bytes.length) : bytes);
   });
   await new Promise(resolveReady => server.listen(0, '127.0.0.1', resolveReady));
@@ -90,17 +111,20 @@ async function testSource() {
     assert.deepEqual(readFileSync(file), bytes);
     await ensureSource(resolve(directory, 'good'), source);
     assert.equal(requests, 1, 'Validated private source must be reused without downloading again');
-    for (const name of ['missing', 'truncated', 'large', 'wrong']) {
+    const slow = await ensureSource(resolve(directory, 'slow'), { ...source, url: `${url}/slow` }, 500);
+    assert.deepEqual(readFileSync(slow), bytes, 'Advancing downloads may exceed the stall interval overall');
+    for (const name of ['missing', 'truncated', 'large', 'wrong', 'stalled']) {
       const output = resolve(directory, name);
-      await assert.rejects(() => ensureSource(output, { ...source, url: `${url}/${name}` }), /HTTP|size|checksum/);
+      await assert.rejects(() => ensureSource(output, { ...source, url: `${url}/${name}` }, 500), /HTTP|size|checksum|stalled|aborted/);
       assert.equal(existsSync(resolve(output, source.file)), false);
       assert.equal(existsSync(resolve(output, `${source.file}.download`)), false);
     }
     writeFileSync(file, Buffer.alloc(bytes.length));
     await assert.rejects(() => ensureSource(resolve(directory, 'good'), source), /checksum/);
     assert.deepEqual(readFileSync(file), Buffer.alloc(bytes.length), 'An invalid existing user source must not be overwritten');
-    console.log('Campaign source download, bounds, checksum, cache and cleanup checks passed.');
+    console.log('Campaign source progress, stall timeout, bounds, checksum, cache and cleanup checks passed.');
   } finally {
+    server.closeAllConnections();
     await new Promise(resolveClosed => server.close(resolveClosed));
     rmSync(directory, { recursive: true, force: true });
   }
