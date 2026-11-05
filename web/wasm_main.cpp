@@ -335,6 +335,7 @@ OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mous
 	xy minimap_position;
 	if (g_ui->minimap_point(mouse_x, mouse_y, minimap_position)) return 1;
 	unit_t* target = g_ui->select_get_unit_at(g_ui->screen_to_map(mouse_x, mouse_y));
+	if (g_ui->touch_repair_target(target)) return 3;
 	if (target && !g_ui->unit_hidden_by_fog(target) && target->owner == g_ui->my_player) return 1;
 	return 3;
 }

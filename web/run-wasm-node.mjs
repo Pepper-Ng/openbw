@@ -148,6 +148,15 @@ function testCampaign() {
     assert.equal(human.filter(unit => unit[1] === 'Science Vessel').length, 1);
     assert.ok(human.some(unit => unit[1] === 'Sarah Kerrigan'), 'Kerrigan is naturally rescued during startup');
     assert.equal(x.openbw_mission_countdown(), -1, 'The Trump Card has no countdown');
+    for (const [producer, expansionUnit] of [['Barracks', 'Medic'], ['Starport', 'Valkyrie']]) {
+      const building = human.find(unit => unit[1] === producer);
+      assert.ok(building, `Original ${producer} for retail unit restrictions`);
+      x.openbw_debug_select(Number(building[0]), 0);
+      x.openbw_render(0);
+      assert.equal(read(x.openbw_card()).split('\n').some(line => line.split('\t')[1] === expansionUnit), false, `${expansionUnit} must not appear in the original campaign production card`);
+    }
+    x.openbw_debug_select(0, 0);
+    x.openbw_out_clear();
     console.log('The Trump Card initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
@@ -226,6 +235,80 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId === 'terran06') {
+    const currentUnits = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+    const word = value => [value & 255, value >> 8 & 255];
+    const send = (unit, order, mapX, mapY) => {
+      const selection = [9, 1, ...word(Number(unit[0]))];
+      const command = [21, ...word(mapX), ...word(mapY), 0, 0, 228, 0, order, 0];
+      const bytes = Uint8Array.from([...word(selection.length), ...selection, ...word(command.length), ...command]);
+      const pointer = x.openbw_in_ptr(bytes.length);
+      new Uint8Array(memory.buffer).set(bytes, pointer);
+      x.openbw_apply(mission.humanSlot, bytes.length);
+    };
+    const raynor = currentUnits().find(unit => unit[1] === 'Jim Raynor' && unit[2] === '0');
+    const base = currentUnits().find(unit => unit[1] === 'Command Center' && unit[2] === '6');
+    assert.ok(raynor && base, 'Original hero and neutral base for mobile Norad repair');
+    send(raynor, 14, Number(base[3]), Number(base[4]));
+    for (let tick = 0; tick < 2000 && !currentUnits().some(unit => unit[1] === 'Command Center' && unit[2] === '0'); tick++) x.openbw_step();
+    assert.ok(currentUnits().some(unit => unit[1] === 'Command Center' && unit[2] === '0'), 'Normal hero movement rescues the original base');
+    for (let tick = 0; tick < 2000 && !currentUnits().some(unit => unit[1].includes('Norad') && unit[2] === '0'); tick++) x.openbw_step();
+    const flagship = currentUnits().find(unit => unit[1].includes('Norad') && unit[2] === '0');
+    assert.ok(flagship, 'Original crash-site actors naturally rescue Norad II');
+    const worker = currentUnits().filter(unit => unit[1] === 'SCV' && unit[2] === '0').sort((first, second) => Math.hypot(+first[3] - +flagship[3], +first[4] - +flagship[4]) - Math.hypot(+second[3] - +flagship[3], +second[4] - +flagship[4]))[0];
+    assert.ok(worker, 'Original crash-site SCV');
+    x.openbw_set_touch_controls(1);
+    x.openbw_debug_select(Number(worker[0]), 0);
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const cameraX = Math.max(0, Math.min(Number(flagship[3]) - 640, x.openbw_map_w() * 32 - 1280));
+    const cameraY = Math.max(0, Math.min(Number(flagship[4]) - 400, x.openbw_map_h() * 32 - 800));
+    x.openbw_pan(cameraX - Number(camera[1]), cameraY - Number(camera[2]));
+    x.openbw_debug_set_life(Number(flagship[0]), 150, -1);
+    x.openbw_render(0);
+    const screenX = Number(flagship[3]) - cameraX;
+    const screenY = Number(flagship[4]) - cameraY;
+    const repair = button => {
+      x.openbw_out_clear();
+      x.openbw_mouse_move(screenX, screenY);
+      x.openbw_mouse_button(1, button, screenX, screenY, 1);
+      x.openbw_mouse_button(0, button, screenX, screenY, 1);
+      x.openbw_render(0);
+      const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      let repairOrder;
+      for (let offset = 0; offset < bytes.length;) {
+        const length = bytes[offset] | bytes[offset + 1] << 8;
+        offset += 2;
+        if (bytes[offset] === 21) repairOrder = bytes.slice(offset, offset + length);
+        offset += length;
+      }
+      assert.equal(repairOrder?.[9], 34, 'Mobile Norad targeting must emit Repair, not Move or selection');
+      assert.equal(repairOrder[5] | repairOrder[6] << 8, Number(flagship[0]), 'Repair targets the original crashed Norad II');
+      const pointer = x.openbw_in_ptr(bytes.length);
+      new Uint8Array(memory.buffer).set(bytes, pointer);
+      x.openbw_apply(mission.humanSlot, bytes.length);
+      x.openbw_out_clear();
+    };
+    assert.equal(x.openbw_touch_button(screenX, screenY), 3, 'Plain SCV tap prioritizes repairing the downed flagship');
+    const flagshipLife = () => {
+      x.openbw_debug_select(Number(flagship[0]), 0);
+      const life = Number(read(x.openbw_wires()).split('\t')[2]);
+      x.openbw_debug_select(Number(worker[0]), 0);
+      x.openbw_render(0);
+      return life;
+    };
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original mission has no gas before harvesting');
+    repair(x.openbw_touch_button(screenX, screenY));
+    for (let tick = 0; tick < 240; tick++) x.openbw_step();
+    assert.ok(flagshipLife() <= 150, 'An emitted Repair order cannot bypass the original gas cost');
+    x.openbw_debug_resources(1000, 1000);
+    for (const button of [x.openbw_touch_button(screenX, screenY), 3]) {
+      x.openbw_debug_set_life(Number(flagship[0]), 150, -1);
+      repair(button);
+      for (let tick = 0; tick < 240; tick++) x.openbw_step();
+      assert.ok(flagshipLife() > 150, 'Affordable tap and long-press Repair each increase the burning flagship HP');
+    }
+    console.log('Norad II mobile tap/long-press targeting and actual repair passed.');
+  }
   if (missionId === 'terran05') {
     const raynor = human.find(unit => unit[1] === 'Jim Raynor');
     const kerrigan = units.find(unit => unit[1] === 'Sarah Kerrigan');
@@ -405,7 +488,7 @@ function testCommands() {
     x.openbw_mouse_button(0, 1, 500, 350, 1);
     if (!releaseBeforeClick) x.openbw_key(0, 97, 4);
     x.openbw_render(0);
-    assert.ok(records().some(record => record[0] === 21), 'Immediate A and left click must issue Attack without an intervening render');
+    assert.equal(records().find(record => record[0] === 21)?.[9], 14, 'Immediate A and ground click must issue AttackMove, not Move, without an intervening render');
   }
 
   for (const [before, after] of [[0, 1], [1, 0]]) {
@@ -420,7 +503,7 @@ function testCommands() {
     x.openbw_mouse_button(1, 1, 500, 350, 1);
     x.openbw_mouse_button(0, 1, 500, 350, 1);
     x.openbw_render(0);
-    assert.ok(records().some(record => record[0] === 21), 'The first click after a pointer-mode change issues Attack');
+    assert.equal(records().find(record => record[0] === 21)?.[9], 14, 'The first click after a pointer-mode change must issue AttackMove, not Move');
   }
   x.openbw_set_touch_controls(0);
   x.openbw_out_clear();
@@ -711,6 +794,32 @@ function testCommands() {
   assert.match(read(x.openbw_card()), /Nuclear Strike/);
 
   x.openbw_set_touch_controls(1);
+  x.openbw_debug_select(Number(worker[0]), 1);
+  for (const queued of [false, true]) {
+    x.openbw_out_clear();
+    x.openbw_key(queued ? 1 : 0, 0, 225);
+    press(97);
+    x.openbw_render(0);
+    let point;
+    for (const [screenX, screenY] of [[1000, 200], [1000, 400], [800, 200], [400, 200]]) {
+      x.openbw_mouse_move(screenX, screenY);
+      x.openbw_render(0);
+      if (x.openbw_cursor() === 1) { point = [screenX, screenY]; break; }
+    }
+    assert.ok(point, 'Empty ground for grouped Attack');
+    assert.equal(x.openbw_touch_button(...point), 1, 'Armed Attack must not become a contextual touch order');
+    x.openbw_mouse_button(1, 1, ...point, 1);
+    x.openbw_mouse_button(0, 1, ...point, 1);
+    x.openbw_render(0);
+    assert.equal(records().find(record => record[0] === 9)?.[1], 2, 'Attack retains the selected unit group');
+    const attack = records().find(record => record[0] === 21);
+    assert.equal(attack?.[9], 14, 'Grouped mobile Attack emits AttackMove rather than Move');
+    assert.equal(attack[10], Number(queued), 'Grouped Attack preserves ordinary versus queued ordering');
+    x.openbw_key(0, 0, 225);
+    x.openbw_render(0);
+  }
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  x.openbw_out_clear();
   const combatCommands = read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t')[1]);
   assert.ok(combatCommands.includes('Hold'));
   assert.equal(combatCommands.includes('Patrol'), true);
@@ -741,7 +850,18 @@ function testCommands() {
   x.openbw_debug_select(Number(worker[0]), 0);
   const buildingScreenX = Number(building[3]) - Math.max(0, Math.min(Number(building[3]) - 640, x.openbw_map_w() * 32 - 1280));
   const buildingScreenY = Number(building[4]) - Math.max(0, Math.min(Number(building[4]) - 400, x.openbw_map_h() * 32 - 800));
-  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 1, 'Unarmed friendly tap must remain selection');
+  x.openbw_debug_select(Number(ghost[0]), 0);
+  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 1, 'Without an SCV, a friendly damaged building remains selectable');
+  x.openbw_debug_select(Number(worker[0]), 1);
+  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 3, 'A mixed group containing an SCV retains repair-first tapping');
+  x.openbw_debug_select(Number(worker[0]), 0);
+  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 3, 'SCV tap must repair a damaged friendly mechanical target before selecting it');
+  x.openbw_out_clear();
+  const repairButton = x.openbw_touch_button(buildingScreenX, buildingScreenY);
+  x.openbw_mouse_button(1, repairButton, buildingScreenX, buildingScreenY, 1);
+  x.openbw_mouse_button(0, repairButton, buildingScreenX, buildingScreenY, 1);
+  x.openbw_render(0);
+  assert.equal(records().find(record => record[0] === 21)?.[9], 34, 'A plain SCV tap must emit the native Repair order');
   const targetBuilding = (symbol, shift = false) => {
     x.openbw_out_clear();
     x.openbw_key(shift ? 1 : 0, 0, 225);
@@ -767,6 +887,7 @@ function testCommands() {
   x.openbw_render(0);
   assert.equal(records().find(record => record[0] === 21)[9], 34, 'Default mobile orders must retain smart repair without a Move button');
   x.openbw_debug_set_life(Number(building[0]), 1500, -1);
+  assert.equal(x.openbw_touch_button(buildingScreenX, buildingScreenY), 1, 'Healthy friendly targets remain selectable with an SCV selected');
   x.openbw_out_clear();
   press(109);
   x.openbw_mouse_button(1, 1, buildingScreenX, buildingScreenY, 1);

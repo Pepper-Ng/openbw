@@ -1135,6 +1135,7 @@ struct play_ui : ui_functions {
 		race_t race = unit_race(u);
 		for (size_t i = 0; i != game_st.unit_types.vec.size(); ++i) {
 			UnitTypes id = (UnitTypes)i;
+			if (!game_st.unit_type_allowed[u->owner][id]) continue;
 			const unit_type_t* t = get_unit_type(id);
 			bool tb = ut_building(t), addon = ut_addon(t);
 			// Producer cards list units plus their addons (addons are buildings, but the
@@ -2026,6 +2027,17 @@ struct play_ui : ui_functions {
 		return true;
 	}
 
+	bool touch_repair_target(unit_t* target) {
+		if (!target || unit_hidden_by_fog(target) || !st.alliances[my_player][target->owner] ||
+		    unit_race(target) != race_t::terran || !ut_mechanical(target) || !u_completed(target) ||
+		    target->hp >= target->unit_type->hitpoints || target->stasis_timer || u_loaded(target)) return false;
+		for (unit_id id : current_selection) {
+			unit_t* selected = get_unit(id);
+			if (selected && unit_can_receive_order(selected, get_order_type(Orders::Repair), my_player)) return true;
+		}
+		return false;
+	}
+
 	void issue_target(xy pos) {
 		unit_t* target = select_get_unit_at(pos);
 		if (target && unit_hidden_by_fog(target)) target = nullptr;   // can't target through fog
@@ -2044,11 +2056,7 @@ struct play_ui : ui_functions {
 		// is the classic use), as in the original.
 		case T_MOVE:
 			if (touch_controls) {
-				unit_t* selected = primary_selected();
-				bool repair = selected && unit_is(selected, UnitTypes::Terran_SCV) && target &&
-				              st.alliances[my_player][target->owner] && unit_race(target) == race_t::terran &&
-				              ut_mechanical(target) && u_completed(target) && target->hp < target->unit_type->hitpoints;
-				if (repair) cmd_order(Orders::Repair, pos, target, q);
+				if (touch_repair_target(target)) cmd_order(Orders::Repair, pos, target, q);
 				else cmd_default_order(pos, target, q);
 			} else cmd_order(target ? Orders::Follow : Orders::Move, pos, target, q);
 			break;

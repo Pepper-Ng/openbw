@@ -1682,7 +1682,9 @@ async function boot(session) {
     $('briefing-return').onclick = returnToStartup;
   }
 
+  let cardPointer = null;
   const updateCard = () => {
+    if (cardPointer !== null) return;
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
     const mobile = coarsePointer();
@@ -1798,9 +1800,15 @@ async function boot(session) {
   };
 
   cardEl.addEventListener('pointerdown', event => {
+    cardPointer = event.pointerId;
     buildPointerX = event.clientX;
     buildDragged = false;
   });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    window.addEventListener(type, event => {
+      if (cardPointer === event.pointerId) cardPointer = null;
+    }, { capture: true });
+  }
   cardEl.addEventListener('pointermove', event => {
     if (coarsePointer() && cardEl.classList.contains('building-menu') && Math.abs(event.clientX - buildPointerX) > 8)
       buildDragged = true;

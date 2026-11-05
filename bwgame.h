@@ -3276,7 +3276,7 @@ struct state_functions {
 		return true;
 	}
 
-	bool trigger_give_unit_to(unit_t* u, int new_owner) {
+	bool trigger_give_unit_to(unit_t* u, int new_owner, bool preserve_color = false) {
 		if (u_hallucination(u)) return false;
 		if (unit_is_mineral_field(u)) return false;
 		if (unit_is(u, UnitTypes::Resource_Vespene_Geyser)) return false;
@@ -3289,40 +3289,40 @@ struct state_functions {
 				if (!us_hidden(n)) continue;
 				if (n->order_type->id != Orders::HarvestGas) continue;
 				if (n->order_target.unit != u) continue;
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 				break;
 			}
 		}
-		give_unit_to(u, new_owner);
+		give_unit_to(u, new_owner, preserve_color);
 		if (unit_provides_space(u)) {
 			for (unit_t* n : loaded_units(u)) {
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 			}
 		}
 		if (unit_is_carrier(u)) {
 			for (unit_t* n : ptr(u->carrier.inside_units)) {
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 			}
 			for (unit_t* n : ptr(u->carrier.outside_units)) {
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 			}
 		} else if (unit_is_reaver(u)) {
 			for (unit_t* n : ptr(u->reaver.inside_units)) {
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 			}
 			for (unit_t* n : ptr(u->reaver.outside_units)) {
-				give_unit_to(n, new_owner);
+				give_unit_to(n, new_owner, preserve_color);
 			}
 		}
 		if (u_grounded_building(u)) {
-			if (u->building.addon) give_unit_to(u->building.addon, new_owner);
-			if (unit_is_building_addon(u)) give_unit_to(u->current_build_unit, new_owner);
-			if (unit_is_nydus(u) && u->building.nydus.exit) give_unit_to(u->building.nydus.exit, new_owner);
+			if (u->building.addon) give_unit_to(u->building.addon, new_owner, preserve_color);
+			if (unit_is_building_addon(u)) give_unit_to(u->current_build_unit, new_owner, preserve_color);
+			if (unit_is_nydus(u) && u->building.nydus.exit) give_unit_to(u->building.nydus.exit, new_owner, preserve_color);
 		}
 		return true;
 	}
 
-	void give_unit_to(unit_t* u, int new_owner) {
+	void give_unit_to(unit_t* u, int new_owner, bool preserve_color = false) {
 		bool any_upgrades_granted = false;
 		auto grant_tech = [&](TechTypes id) {
 			if (!player_has_researched(new_owner, id)) st.tech_researched[new_owner][id] = true;
@@ -3490,7 +3490,7 @@ struct state_functions {
 			u->secondary_order_state = 0;
 		}
 		set_unit_owner(u, new_owner, true);
-		if (new_owner < 8) set_sprite_owner(u, new_owner);
+		if (new_owner < 8 && !preserve_color) set_sprite_owner(u, new_owner);
 		if (any_upgrades_granted) apply_upgrades_to_player_units(new_owner);
 		bool idle = u_completed(u);
 		if (u_loaded(u)) idle = false;
@@ -7835,8 +7835,8 @@ struct state_functions {
 			for (unit_t* candidate : ptr(st.player_units[u->owner])) {
 				if (candidate->sprite && candidate->order_type->id != Orders::Die) rescued.push_back(candidate);
 			}
-			for (unit_t* candidate : rescued) trigger_give_unit_to(candidate, recipient);
-		} else trigger_give_unit_to(u, recipient);
+			for (unit_t* candidate : rescued) trigger_give_unit_to(candidate, recipient, true);
+		} else trigger_give_unit_to(u, recipient, true);
 	}
 
 	void order_Neutral(unit_t* u) {
@@ -22620,7 +22620,8 @@ struct game_load_functions : state_functions {
 			auto player_uses_global_default = r.get_vec<std::array<uint8_t, 228>>(12);
 			for (size_t player = 0; player != 12; ++player) {
 				for (size_t unit = 0; unit != 228; ++unit) {
-					game_st.unit_type_allowed[player][(UnitTypes)unit] = !!(!!player_uses_global_default[player][unit] ? global_available[unit] : player_available[player][unit]);
+					bool available = !!(player_uses_global_default[player][unit] ? global_available[unit] : player_available[player][unit]);
+					game_st.unit_type_allowed[player][(UnitTypes)unit] = available && (version != 59 || !get_unit_type((UnitTypes)unit)->is_broodwar);
 				}
 			}
 		};
