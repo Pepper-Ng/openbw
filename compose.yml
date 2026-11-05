@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: openbw:latest
+    pull_policy: build
     container_name: openbw
     restart: unless-stopped
     volumes:
