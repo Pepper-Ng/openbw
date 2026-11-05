@@ -219,6 +219,10 @@
   #mp button:disabled { opacity: .5; cursor: default; }
   #mp-out, #mp-in-invite { font-variant-numeric: tabular-nums; }
   #mp-expires { color: #aebac2; font-size: 12px; min-height: 20px; }
+  #mp .load-status { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; font-size: 11px; color: #aebac2; min-height: 18px; }
+  #mp .load-status span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #mp .load-status progress { width: 110px; height: 7px; accent-color: #85c89c; }
+  #mp-load-retry[hidden] { display: none !important; }
   @media (max-width: 480px) { #mp .slot { grid-template-columns: minmax(0, 1fr) 70px; } #mp .slot select { grid-column: 1; grid-row: 2; } #mp .slot .ready-state { grid-column: 2; grid-row: 1 / 3; } }
   #mp .ginfo > div { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0;
     font-size: 12px; }
@@ -703,9 +707,9 @@
         <div class="lobby">
           <div class="slots">
             <div class="slot" id="mp-s0"><span class="nm" id="mp-n0">Player 1</span>
-              <select id="mp-r0" aria-label="Player 1 race"></select><span id="mp-ready-0" class="ready-state">Not ready</span></div>
+              <select id="mp-r0" aria-label="Player 1 race"></select><span id="mp-ready-0" class="ready-state">Not ready</span><div class="load-status"><span id="mp-load-0">Waiting for files</span><progress id="mp-load-progress-0" max="100" value="0" aria-label="Player 1 download progress"></progress></div></div>
             <div class="slot" id="mp-s1"><span class="nm" id="mp-n1">Open</span>
-              <select id="mp-r1" aria-label="Player 2 race"></select><span id="mp-ready-1" class="ready-state">Not ready</span></div>
+              <select id="mp-r1" aria-label="Player 2 race"></select><span id="mp-ready-1" class="ready-state">Not ready</span><div class="load-status"><span id="mp-load-1">Waiting for files</span><progress id="mp-load-progress-1" max="100" value="0" aria-label="Player 2 download progress"></progress></div></div>
           </div>
           <div class="ginfo">
             <div><label>Type</label><span>Melee</span></div>
@@ -714,6 +718,7 @@
           </div>
         </div>
         <div class="row"><label id="mp-ready-label"><input id="mp-ready" type="checkbox">Ready</label><button id="mp-start" disabled><i data-lucide="play"></i>Start Game</button></div>
+        <button id="mp-load-retry" type="button" hidden><i data-lucide="rotate-cw"></i>Retry Download</button>
       </div>
 
       <div id="mp-status"></div>

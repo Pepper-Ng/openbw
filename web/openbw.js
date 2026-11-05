@@ -77,11 +77,9 @@ const MAP_REMOTE = '';
 // Fetched map bytes, kept so the lobby can hash a map without re-downloading it.
 const mapCache = new Map();
 let mapProbesStarted = false;
-async function fetchMap(file) {
-  if (mapCache.has(file)) return mapCache.get(file);
-  const r = await fetch(file);
-  if (!r.ok) throw new Error('Map not available: ' + file);
-  const bytes = new Uint8Array(await r.arrayBuffer());
+async function fetchMap(file, onProgress = null, signal = null) {
+  if (mapCache.has(file)) { onProgress?.(1); return mapCache.get(file); }
+  const bytes = new Uint8Array(await fetchWithProgress(file, 0, onProgress || (() => {}), signal));
   mapCache.set(file, bytes);
   return bytes;
 }
@@ -150,6 +148,8 @@ async function fetchWithProgress(url, expected, onProgress, signal) {
     if (expected && got > expected) { await reader.cancel(); throw new Error('Download exceeds expected size.'); }
     if (total) onProgress(got / total);
   }
+  if (expected && got !== expected) throw new Error('Download size did not match the expected file.');
+  onProgress(1);
   const buf = new Uint8Array(got);
   let o = 0;
   for (const c of chunks) { buf.set(c, o); o += c.length; }
@@ -175,7 +175,7 @@ async function loadMissionPack(manifest, db, signal) {
   return new Uint8Array(bytes);
 }
 
-async function loadAssets(mapFile = MAP_LOCAL, mission = null, signal) {
+async function loadAssets(mapFile = MAP_LOCAL, mission = null, signal, onProgress = null) {
   const db = await idbOpen().catch(error => { console.warn('[assets] cache unavailable', error); return null; });
   const out = new Array(MPQS.length);
 
@@ -186,26 +186,32 @@ async function loadAssets(mapFile = MAP_LOCAL, mission = null, signal) {
   const totalBytes = MPQS.reduce((s, m) => s + m.size, 0);
   const got = new Array(MPQS.length).fill(0);
   const MPQ_SPAN = MPQS.length / (MPQS.length + 1);
-  const renderBar = () =>
-    setBar(Math.min(1, got.reduce((a, b) => a + b, 0) / totalBytes) * MPQ_SPAN);
-  setMsg(`Downloading game data (${(totalBytes / 1e6) | 0} MB)…`);
+  const renderBar = () => {
+    const fraction = Math.min(1, got.reduce((a, b) => a + b, 0) / totalBytes);
+    if (onProgress) onProgress('Game files', fraction);
+    else setBar(fraction * MPQ_SPAN);
+  };
+  if (onProgress) onProgress('Game files', 0);
+  else setMsg(`Downloading game data (${(totalBytes / 1e6) | 0} MB)…`);
 
   await Promise.all(MPQS.map(async ({ key, local, url, size }, i) => {
     let buf = db ? await idbGet(db, key).catch(() => null) : null;
+    if (buf && buf.byteLength !== size) buf = null;
     if (!buf) {
       // Same-origin local mirror is a dev convenience; production hosts no game
       // files, so this 404s and the archive.org URL is used.
       let mirror = null;
-      try { const r = await fetch(local, { signal }); if (r.ok) mirror = await r.arrayBuffer(); } catch (error) { if (signal?.aborted) throw error; }
+      try { mirror = await fetchWithProgress(local, size, fraction => { got[i] = fraction * size; renderBar(); }, signal); } catch (error) { if (signal?.aborted) throw error; }
       if (!mirror && DEV) throw new Error('Missing local game data: ' + local);
       buf = mirror || await fetchWithProgress(url, size, (frac) => { got[i] = frac * size; renderBar(); }, signal);
       if (db) await idbPut(db, key, buf).catch(error => console.warn('[assets] cache write unavailable', error));
     }
     got[i] = size; renderBar();
     out[i] = new Uint8Array(buf);
-  }));
+  })).catch(error => { db?.close(); throw error; });
 
-  setMsg('Loading map…');
+  if (onProgress) onProgress('Map', 0);
+  else setMsg('Loading map…');
   if (mission) {
     out.push(await loadMissionPack(mission, db, signal));
     if (db) db.close();
@@ -214,12 +220,13 @@ async function loadAssets(mapFile = MAP_LOCAL, mission = null, signal) {
   }
   // fetchMap memoises, so a map the lobby already hashed isn't downloaded twice.
   let mapBytes = null;
-  try { mapBytes = await fetchMap(mapFile); } catch {}
+  try { mapBytes = await fetchMap(mapFile, fraction => onProgress?.('Map', fraction), signal); } catch (error) { if (signal?.aborted) { db?.close(); throw error; } }
   if (!mapBytes && MAP_REMOTE) mapBytes = new Uint8Array(await (await fetch(MAP_REMOTE)).arrayBuffer());
-  if (!mapBytes) throw new Error('No map available — set MAP_REMOTE to a hosted .scx URL.');
+  if (!mapBytes) { db?.close(); throw new Error('No map available — set MAP_REMOTE to a hosted .scx URL.'); }
   out.push(mapBytes);
   if (db) db.close();
-  setBar(1);
+  if (onProgress) onProgress('Map', 1);
+  else setBar(1);
   return out;
 }
 
@@ -718,7 +725,8 @@ function wireInput(canvas, x) {
 
 // ---------------------------------------------------------------------------
 // Boot
-async function instantiateWasm(moduleName, imports, identify = false) {
+async function instantiateWasm(moduleName, imports, identify = false, prepared = null) {
+  if (prepared) return { module: prepared, instance: await WebAssembly.instantiate(prepared, imports) };
   const url = './' + moduleName + (DEV ? '?t=' + Date.now() : '?v=' + BUILD);
   const response = await fetch(url, DEV ? { cache: 'no-store' } : {});
   if (!response.ok) {
@@ -841,7 +849,7 @@ async function boot(session) {
   const hb = (stage) => { try { localStorage.setItem('openbw-heartbeat', stage + ' @' + new Date().toISOString()); } catch {} };
   hb('boot:start');
 
-  const assets = await loadAssets(session.mapFile || MAP_LOCAL, session.mission, session.signal);
+  const assets = session.prepared?.assets || await loadAssets(session.mapFile || MAP_LOCAL, session.mission, session.signal);
   session.signal?.throwIfAborted();
   hb('boot:assets-loaded');
 
@@ -936,7 +944,7 @@ async function boot(session) {
   // each exports the same surface plus openbw_bot_*, so everything else is identical.
   const wasmName = session.bot ? session.bot.module : 'openbw.wasm';
   hb('boot:wasm-fetch');
-  const { instance, engineHash } = await instantiateWasm(wasmName, imports, !!session.mission);
+  const { instance, engineHash } = await instantiateWasm(wasmName, imports, !!session.mission, session.prepared?.module);
   const x = instance.exports;
   memory = x.memory;
   const saveCompatibility = session.mission ? { mission: session.mission.id, packHash: session.mission.pack.sha256, engineHash, assetHashes: assets.slice(0, 3).map(cyrb53) } : null;
@@ -2609,6 +2617,7 @@ const mp = {
   cancel: $('mp-cancel'), expires: $('mp-expires'),
   lobby: $('mp-lobby'), start: $('mp-start'), status: $('mp-status'),
   ready: $('mp-ready'), readyStates: [$('mp-ready-0'), $('mp-ready-1')],
+  loadLabels: [$('mp-load-0'), $('mp-load-1')], loadBars: [$('mp-load-progress-0'), $('mp-load-progress-1')], loadRetry: $('mp-load-retry'),
   s: [$('mp-s0'), $('mp-s1')], n: [$('mp-n0'), $('mp-n1')], r: [$('mp-r0'), $('mp-r1')],
   giMap: $('mp-gi-map'), giSpeed: $('mp-gi-speed'),
 };
@@ -2648,6 +2657,8 @@ let mpRoom = null, mpConnected = false, mpExpiryTimer = 0, mpConnectionTimer = 0
 let mpCountdownTimer = 0, mpCountingDown = false;
 let mpSetupGeneration = 0;
 const mpReadyFlags = [false, false], mpRaceRevisions = [0, 0];
+const mpLoadStates = [{ phase: 'Waiting', percent: 0, stagePercent: 0, ready: false }, { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false }];
+let mpPrepared = null, mpLoadController = null, mpExpectedMapHash = '';
 
 // Choosing a role is one-way until it fails or the game starts. Without this, clicking
 // Host and Join in any order left both flows' panels on screen at once.
@@ -2677,6 +2688,8 @@ function mpSetRole(role) {
 }
 function mpResetRole() {                    // let the user try again after a failure
   mpSetupGeneration++;
+  mpLoadController?.abort(); mpLoadController = null; mpPrepared = null;
+  for (let index = 0; index < 2; index++) mpLoadStates[index] = { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false };
   clearInterval(mpExpiryTimer); clearTimeout(mpConnectionTimer);
   clearTimeout(mpCountdownTimer); mpCountingDown = false;
   mpRoom?.close(); mpRoom = null;
@@ -2701,8 +2714,9 @@ function mpResetRole() {                    // let the user try again after a fa
 const mpNet = () => import('./net.js?v=' + BUILD);
 
 const mpBoot = (slots, mySlot) => {
+  if (!mpAllLoaded()) { mpCancelCountdown(true); return; }
   $('controls').style.display = 'none';
-  boot({ slots, mySlot, link: mpLink, delay: MP_DELAY, isHost: mpRole === 'host', mapFile: mpMap })
+  boot({ slots, mySlot, link: mpLink, delay: MP_DELAY, isHost: mpRole === 'host', mapFile: mpMap, prepared: mpPrepared })
     .catch((err) => { setMsg('Error: ' + err.message); console.error(err); });
 };
 
@@ -2729,20 +2743,76 @@ function mpEnterLobby() {
   for (const el of mp.s) el.classList.remove('open');
   mpUpdateLobby();
   mpSay('Connected.', 'ok');
+  mpPreloadDependencies();
+}
+function mpAllLoaded() {
+  const peer = mpLoadStates[mpTheirs()];
+  return !!mpPrepared && mpLoadStates.every(state => state.ready) && peer.mapHash === mpPrepared.mapHash && peer.engineHash === mpPrepared.engineHash && JSON.stringify(peer.assetHashes) === JSON.stringify(mpPrepared.assetHashes);
 }
 function mpUpdateLobby() {
   mp.giSpeed.textContent = 'Fastest';
   for (let index = 0; index < 2; index++) {
     mp.readyStates[index].textContent = mpReadyFlags[index] ? 'Ready' : 'Not ready';
     mp.readyStates[index].classList.toggle('is-ready', mpReadyFlags[index]);
+    const load = mpLoadStates[index];
+    mp.loadLabels[index].textContent = load.ready ? 'Loaded' : load.phase === 'Failed' ? 'Download failed' : `${load.phase}: ${load.stagePercent}%`;
+    mp.loadBars[index].value = load.percent;
   }
   mp.ready.checked = mpReadyFlags[mpMine()];
-  mp.ready.disabled = !mpConnected || mpLocked;
+  mp.ready.disabled = !mpConnected || mpLocked || !mpLoadStates[mpMine()].ready;
   mp.r[mpMine()].disabled = !mpConnected || mpLocked || mpReadyFlags[mpMine()];
   mp.r[mpTheirs()].disabled = true;
-  mp.start.disabled = !mpConnected || !mpReadyFlags.every(Boolean) || mpCountingDown;
+  mp.start.disabled = !mpConnected || !mpAllLoaded() || !mpReadyFlags.every(Boolean) || mpCountingDown;
   mp.cancel.disabled = mpLocked;
+  mp.loadRetry.hidden = mpLoadStates[mpMine()].phase !== 'Failed';
 }
+
+async function mpPreloadDependencies() {
+  if (!mpConnected) return;
+  mpLoadController?.abort();
+  const controller = mpLoadController = new AbortController();
+  const generation = mpSetupGeneration;
+  mpPrepared = null;
+  mpReadyFlags[mpMine()] = false;
+  mpLink.sendControl({ t: 'ready', ready: false, revisions: mpRaceRevisions.slice() });
+  let last = '';
+  const report = (phase, fraction, ready = false, hashes = {}) => {
+    if (generation !== mpSetupGeneration || controller !== mpLoadController) return;
+    if (controller.signal.aborted && phase !== 'Failed') return;
+    const stagePercent = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+    const percent = ready ? 100 : phase === 'Game files' ? Math.floor(stagePercent * .8) : phase === 'Map' ? 80 + Math.floor(stagePercent * .1) : phase === 'Engine' ? 90 + Math.floor(stagePercent * .09) : phase === 'Verifying' ? 99 : 0;
+    const signature = `${phase}:${stagePercent}:${ready}`;
+    if (signature === last) return;
+    last = signature;
+    const state = { phase, percent, stagePercent, ready, ...hashes };
+    mpLoadStates[mpMine()] = state;
+    mpLink?.sendControl({ t: 'loading', ...state });
+    mpUpdateLobby();
+  };
+  try {
+    const assets = await loadAssets(mpMap, null, controller.signal, report);
+    const mapHash = cyrb53(assets[3]);
+    if (mapHash !== mpExpectedMapHash) throw new Error('Map differs from the host. Both players need the same map data.');
+    report('Engine', 0);
+    const url = './openbw.wasm' + (DEV ? '?t=' + Date.now() : '?v=' + BUILD);
+    const bytes = new Uint8Array(await fetchWithProgress(url, 0, fraction => report('Engine', fraction), controller.signal));
+    report('Verifying', 1);
+    const module = await WebAssembly.compile(bytes);
+    const engineHash = await missionDigest(bytes);
+    const assetHashes = assets.slice(0, 3).map(cyrb53);
+    if (generation !== mpSetupGeneration || controller !== mpLoadController) return;
+    mpPrepared = { assets, module, map: mpMap, mapHash, engineHash, assetHashes };
+    report('Loaded', 1, true, { mapHash, engineHash, assetHashes });
+    if (mpLoadStates[mpTheirs()].ready && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
+  } catch (error) {
+    if (controller.signal.aborted || generation !== mpSetupGeneration) return;
+    controller.abort();
+    report('Failed', 0);
+    mpCancelCountdown(true);
+    mpSay(error.message, 'err');
+  }
+}
+mp.loadRetry.onclick = mpPreloadDependencies;
 
 // Races may change freely in the lobby; both sides mirror each other until the lock.
 const mpSendRace = () => {
@@ -2765,6 +2835,7 @@ function mpCancelCountdown(notify = false) {
   if (wasCountingDown) mpSay('Waiting for both players to be ready.');
 }
 mp.ready.onchange = () => {
+  if (!mpLoadStates[mpMine()].ready) { mp.ready.checked = false; return; }
   mpReadyFlags[mpMine()] = mp.ready.checked;
   if (!mp.ready.checked) mpCancelCountdown(true);
   mpLink?.sendControl({ t: 'ready', ready: mp.ready.checked, revisions: mpRaceRevisions.slice() });
@@ -2772,7 +2843,7 @@ mp.ready.onchange = () => {
 };
 
 function mpCountdown(n) {
-  if (!mpConnected || !mpReadyFlags.every(Boolean)) { mpCancelCountdown(true); return; }
+  if (!mpConnected || !mpAllLoaded() || !mpReadyFlags.every(Boolean)) { mpCancelCountdown(true); return; }
   mpCountingDown = true;
   if (n <= LOCK_AT && !mpLocked) {
     mpLocked = true;
@@ -2801,6 +2872,15 @@ function mpCountdown(n) {
 // Lobby control messages, shared by the copy-paste (PeerLink) and relay (RelayLink)
 // transports since both are just a channel underneath.
 function mpOnControl(msg) {
+  if (msg.t === 'loading' && mpRole) {
+    if (!['Waiting', 'Game files', 'Map', 'Engine', 'Verifying', 'Loaded', 'Failed'].includes(msg.phase) || !Number.isInteger(msg.percent) || msg.percent < 0 || msg.percent > 100 || !Number.isInteger(msg.stagePercent) || msg.stagePercent < 0 || msg.stagePercent > 100) return;
+    const ready = msg.ready === true && msg.phase === 'Loaded' && msg.percent === 100 && /^[a-f0-9]{14}$/.test(msg.mapHash) && /^[a-f0-9]{64}$/.test(msg.engineHash) && Array.isArray(msg.assetHashes) && msg.assetHashes.length === 3 && msg.assetHashes.every(hash => /^[a-f0-9]{14}$/.test(hash));
+    mpLoadStates[mpTheirs()] = { phase: msg.phase, percent: msg.percent, stagePercent: msg.stagePercent, ready, mapHash: msg.mapHash, engineHash: msg.engineHash, assetHashes: msg.assetHashes };
+    if (!ready) { mpReadyFlags[mpTheirs()] = false; mpCancelCountdown(true); }
+    mpUpdateLobby();
+    if (ready && mpPrepared && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
+    return;
+  }
   if (msg.t === 'race') {
     if (!RACES.some(race => race.v === msg.race) || !Number.isInteger(msg.revision) || msg.revision < 0 || msg.revision > 1000000 || !mpRole) return;
     if (msg.revision < mpRaceRevisions[mpTheirs()]) return;
@@ -2812,14 +2892,14 @@ function mpOnControl(msg) {
     return;
   }
   if (msg.t === 'ready' && mpRole) {
-    mpReadyFlags[mpTheirs()] = msg.ready === true && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index]);
+    mpReadyFlags[mpTheirs()] = mpLoadStates[mpTheirs()].ready && msg.ready === true && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index]);
     if (!mpReadyFlags.every(Boolean)) mpCancelCountdown(true);
     mpUpdateLobby();
     return;
   }
   if (msg.t === 'cancel-start' && mpRole === 'join') { mpCancelCountdown(); return; }
   if (msg.t === 'tick' && mpRole === 'join' && Number.isInteger(msg.n) && msg.n >= 0 && msg.n <= COUNTDOWN) { mpCountdown(msg.n); return; }
-  if (msg.t === 'start' && mpRole === 'join' && mpReadyFlags.every(Boolean) && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index])) {
+  if (msg.t === 'start' && mpRole === 'join' && mpAllLoaded() && mpReadyFlags.every(Boolean) && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index])) {
     if (!Array.isArray(msg.slots) || msg.slots.length !== 2 || msg.slots.some(slot => !Number.isInteger(slot.slot) || slot.slot < 0 || slot.slot > 7 || ![0, 1, 2].includes(slot.race)) || msg.slots[0].slot === msg.slots[1].slot || !msg.slots.some(slot => slot.slot === msg.you)) return;
     mpBoot(msg.slots, msg.you); return;
   }
@@ -2854,6 +2934,7 @@ mp.host.onclick = async () => {
     mpSay('Preparing game code...');
     const hash = await mapHash(mpMap);
     if (room !== mpRoom) return;
+    mpExpectedMapHash = hash;
     mpLink = mpNewLink(net, () => { mpEnterLobby(); mpLink.sendControl({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] }); });
     const offer = await mpLink.createOffer({ race: START_RACE, map: mpMap, hash, build: BUILD });
     if (room !== mpRoom) return;
@@ -2912,10 +2993,8 @@ async function mpAcceptInvite(code) {
   if (!MAPS.some(map => map.file === mpMap)) throw new Error('The host selected an unsupported map.');
   mapSelect.value = mpMap;
   mapSelect.disabled = true;              // the host picks the map
-  const mine = await mapHash(mpMap).catch(() => null);
-  if (!mine || mine !== info.hash) {
-      throw new Error('Map differs from the host. Both players need the same map data.');
-  }
+  if (!/^[a-f0-9]{14}$/.test(info.hash)) throw new Error('Invalid host map fingerprint.');
+  mpExpectedMapHash = info.hash;
   mpPeerRace = info.race ?? 1;
   if (room !== mpRoom) return;
   mpLink = mpNewLink(net, () => { mpEnterLobby(); mpLink.sendControl({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] }); });
@@ -2941,7 +3020,7 @@ mp.accept.onclick = () => {
     mpResetRole(); mpSay(e.message, 'err');
   });
 };
-mp.start.onclick = () => { if (mpRole === 'host' && mpReadyFlags.every(Boolean) && !mpCountingDown) mpCountdown(COUNTDOWN); };
+mp.start.onclick = () => { if (mpRole === 'host' && mpAllLoaded() && mpReadyFlags.every(Boolean) && !mpCountingDown) mpCountdown(COUNTDOWN); };
 
 mp.copy.onclick = async () => {
   try { await navigator.clipboard.writeText(mp.out.value); mpSay('Copied to clipboard.', 'ok'); }

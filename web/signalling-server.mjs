@@ -34,7 +34,7 @@ function validSignal(value) {
   if (typeof value !== 'string' || value.length < 16 || value.length > 24000 || !/^[A-Za-z0-9_-]+$/.test(value)) return false;
   try {
     const signal = JSON.parse(gunzipSync(Buffer.from(value, 'base64url'), { maxOutputLength: 65536 }).toString('utf8'));
-    return signal?.v === 3 && typeof signal.sdp === 'string' && signal.sdp.startsWith('v=0') && signal.sdp.length <= 60000;
+    return signal?.v === 4 && typeof signal.sdp === 'string' && signal.sdp.startsWith('v=0') && signal.sdp.length <= 60000;
   } catch { return false; }
 }
 
@@ -159,12 +159,12 @@ export function createSignallingServer({ now = Date.now, maxRooms = 500, createL
 
 async function testServer() {
   const { RoomSetup, PROTOCOL } = await import('./net.js');
-  assert.equal(PROTOCOL, 3, 'Room validation matches the client protocol');
+  assert.equal(PROTOCOL, 4, 'Room validation matches the client protocol');
   let clock = 1000;
   const server = createSignallingServer({ now: () => clock });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const signal = gzipSync(JSON.stringify({ v: 3, sdp: 'v=0\r\na=ice-ufrag:local\r\n' })).toString('base64url');
+  const signal = gzipSync(JSON.stringify({ v: 4, sdp: 'v=0\r\na=ice-ufrag:local\r\n' })).toString('base64url');
   const call = async (path, method = 'GET', value = null, token = null) => {
     const response = await fetch(base + path, { method, headers: { ...(value ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: value ? JSON.stringify(value) : undefined });
     return { status: response.status, value: await response.json() };

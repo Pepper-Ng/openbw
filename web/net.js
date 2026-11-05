@@ -17,7 +17,7 @@
 // be on different deploys, and a version mismatch must fail loudly instead of desyncing.
 // v2: map hash changed from SHA-256 (crypto.subtle) to cyrb53 (pure JS) — a v1 peer would
 // compute a different hash and fail the terrain check, so the version bump rejects the pair.
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 
 const EMPTY = new Uint8Array(0);
 

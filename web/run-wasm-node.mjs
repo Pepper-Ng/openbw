@@ -13,13 +13,16 @@ import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 if (process.argv[2] === '--test-lobby') {
   const source = readFileSync('web/openbw.js', 'utf8');
   const extract = name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
-  const functions = ['mpUpdateLobby', 'mpCancelCountdown', 'mpCountdown', 'mpOnControl'].map(extract);
+  const functions = ['mpAllLoaded', 'mpUpdateLobby', 'mpCancelCountdown', 'mpCountdown', 'mpOnControl'].map(extract);
   assert.ok(functions.every(Boolean), 'Actual ready/countdown lobby functions exist');
   const make = new Function('assert', `${functions.join('\n')}
     let mpRole = 'host', mpConnected = true, mpLocked = false, mpCountingDown = false, mpCountdownTimer = 0;
     const mpReadyFlags = [false, false], mpRaceRevisions = [0, 0], sent = [], started = [];
+    const hashes = { mapHash: 'a'.repeat(14), engineHash: 'b'.repeat(64), assetHashes: Array(3).fill('c'.repeat(14)) };
+    const mpPrepared = { ...hashes };
+    const mpLoadStates = [{ ready: true, phase: 'Loaded', percent: 100, stagePercent: 100, ...hashes }, { ready: true, phase: 'Loaded', percent: 100, stagePercent: 100, ...hashes }];
     const field = () => ({ value: '1', disabled: false, checked: false, textContent: '', classList: { toggle() {} } });
-    const mp = { r: [field(), field()], readyStates: [field(), field()], ready: field(), start: field(), cancel: field(), giSpeed: field() };
+    const mp = { r: [field(), field()], readyStates: [field(), field()], loadLabels: [field(), field()], loadBars: [field(), field()], loadRetry: field(), ready: field(), start: field(), cancel: field(), giSpeed: field() };
     const mpLink = { sendControl: message => sent.push(message) };
     const mpMine = () => mpRole === 'host' ? 0 : 1, mpTheirs = () => mpRole === 'host' ? 1 : 0;
     const mpSlots = () => mp.r.map((race, index) => ({ slot: index, race: Number(race.value) }));
@@ -31,6 +34,18 @@ if (process.argv[2] === '--test-lobby') {
     const setTimeout = () => 1, clearTimeout = () => {};
     mpCountdown(5);
     assert.equal(sent.length, 0, 'Host cannot count down without both ready');
+    mpReadyFlags.fill(true);
+    mpOnControl({ t: 'loading', phase: 'Game files', percent: 40, stagePercent: 50, ready: false });
+    assert.equal(mpLoadStates[1].percent, 40, 'Peer download progress is retained');
+    assert.equal(mpReadyFlags[1], false, 'A downloading peer cannot remain ready');
+    assert.equal(mp.start.disabled, true, 'Peer progress cannot enable premature Start');
+    mpOnControl({ t: 'loading', phase: 'Loaded', percent: 100, stagePercent: 100, ready: true, ...hashes });
+    assert.equal(mpAllLoaded(), true, 'Matching verified completion restores the dependency gate');
+    mpReadyFlags.fill(true); mpLoadStates[1].ready = false; mpCountdown(5);
+    assert.equal(sent.length, 0, 'Host cannot count down while the peer is downloading');
+    mpLoadStates[1].ready = true; mpLoadStates[1].engineHash = 'd'.repeat(64); mpCountdown(5);
+    assert.equal(sent.length, 0, 'Different preloaded engines cannot start');
+    mpLoadStates[1].engineHash = hashes.engineHash;
     mpReadyFlags.fill(true); mpCountdown(5);
     assert.equal(mpCountingDown, true); assert.equal(mp.start.disabled, true);
     mpOnControl({ t: 'ready', ready: false, revisions: [0, 0] });
@@ -50,6 +65,11 @@ if (process.argv[2] === '--test-lobby') {
     mpOnControl(start); assert.equal(started.length, 1, 'Ready consensus permits a valid start');
   `);
   make(assert);
+  const preparedBoot = source.match(/async function instantiateWasm\([^]*?\n\}/)?.[0];
+  assert.ok(preparedBoot, 'Actual prepared engine boot function exists');
+  const instantiate = new Function('fetch', 'DEV', 'BUILD', 'missionDigest', `${preparedBoot}\nreturn instantiateWasm;`)(() => { throw new Error('Unexpected fetch after Start'); }, true, 'test', () => {});
+  const prepared = await WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  assert.ok((await instantiate('openbw.wasm', {}, false, prepared)).instance instanceof WebAssembly.Instance, 'Prepared engine starts without a network fetch');
   console.log('Lobby readiness, race revision, countdown cancellation and start authority checks passed.');
   process.exit(0);
 }
