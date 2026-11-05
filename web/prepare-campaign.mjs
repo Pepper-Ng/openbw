@@ -13,6 +13,7 @@ const missions = {
   terran04: { title: 'The Jacobs Installation', order: 4, scenarioHash: 'a48e1d1682f0a6e68eeec4ef0fc82efc48e70a11b4315de8c091079c68e10601', units: 100, triggers: 36, sounds: 17 },
   terran05: { title: 'Revolution', order: 5, scenarioHash: '35cd98bc0590c0f36e5d8f75e41a29b254db2d6cf8dec5480e6ffd7602609829', units: 172, triggers: 17, sounds: 17 },
   terran06: { title: 'Norad II', order: 6, scenarioHash: '80dd42e4d4540d0340113b92aae02120b9919a5dac359b010607ec7c26e72ead', units: 221, triggers: 20, sounds: 24 },
+  terran07: { title: 'The Trump Card', order: 7, source: 'terran08', scenarioHash: 'dab280d946f059845ba3084da11f159091bfbc24c4cd54eb2a352ff1a165f515', units: 213, triggers: 10, sounds: 16 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
@@ -422,7 +423,7 @@ export async function prepare(missionId = 'terran01') {
   const temporary = resolve(directory, `${missionId}.mpq.tmp`);
   const manifestTemporary = resolve(directory, `${missionId}.json.tmp`);
   try {
-    await extractSource(source, missionId, directory, basename(temporary));
+    await extractSource(source, mission.source ?? missionId, directory, basename(temporary));
     const bytes = readFileSync(temporary);
     const read = readPlainMissionPack(bytes);
     const scenario = read('staredit/scenario.chk');

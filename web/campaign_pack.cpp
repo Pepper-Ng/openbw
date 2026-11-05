@@ -141,7 +141,7 @@ static void write_output(const char* path, const a_vector<uint8_t>& bytes) {
 int main(int argc, char** argv) {
 	if (argc != 4) error("usage: campaign-pack SOURCE terran01 OUTPUT");
 	a_string mission = argv[2];
-	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "--ai-script") error("unsupported preparation request");
+	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "--ai-script") error("unsupported preparation request");
 	embedded_mpq_reader source(argv[1]);
 	paged_reader<embedded_mpq_reader> reader(source);
 	auto archive = make_mpq_archive_reader(reader);

@@ -2275,7 +2275,39 @@ struct state_functions {
 
 	void drop_carried_items(unit_t* u) {
 		if ((u->carrying_flags & ~3) == 0) return;
-		error("drop_carried_items: fixme");
+		if (!ut_worker(u) || (u->carrying_flags & ~7)) error("unsupported carried item flags");
+		unit_t* powerup = u->worker.powerup;
+		u->worker.powerup = nullptr;
+		u->carrying_flags &= 3;
+		destroy_carrying_images(u);
+		if (!powerup || unit_dying(powerup)) return;
+		move_unit(powerup, u->sprite->position);
+		show_unit(powerup);
+		set_unit_order(powerup, powerup->unit_type->return_to_idle);
+	}
+
+	void order_PowerupIdle(unit_t* powerup) {
+		unit_t* worker = nullptr;
+		for (unit_t* candidate : find_units(square_at(powerup->sprite->position, 24))) {
+			if (!ut_worker(candidate) || !u_completed(candidate) || unit_dying(candidate) || u_burrowed(candidate) || u_hallucination(candidate) || candidate->worker.powerup) continue;
+			if (unit_is(powerup, UnitTypes::Powerup_Flag) && candidate->owner == powerup->owner) continue;
+			worker = candidate;
+			break;
+		}
+		if (!worker) return;
+		destroy_carrying_images(worker);
+		worker->worker.resources_carried = 0;
+		hide_unit(powerup);
+		set_unit_order(powerup, get_order_type(Orders::Nothing));
+		powerup->user_action_flags |= 1;
+		worker->worker.powerup = powerup;
+		worker->carrying_flags = 4;
+		ImageTypes image = unit_is(powerup, UnitTypes::Powerup_Uraj_Crystal) ? ImageTypes::IMAGEID_Uraj : unit_is(powerup, UnitTypes::Powerup_Khalis_Crystal) ? ImageTypes::IMAGEID_Khalis : ImageTypes(int(ImageTypes::IMAGEID_Flag) + int(powerup->unit_type->id) - int(UnitTypes::Powerup_Flag));
+		if (image_t* overlay = create_image(get_image_type(image), worker->sprite, {}, image_order_above)) {
+			if (overlay->modifier == 14) overlay->modifier_data1 = powerup->owner;
+			i_set_flag(overlay, image_t::flag_uses_special_offset);
+			update_image_special_offset(overlay);
+		}
 	}
 
 	bool has_available_supply_for(int owner, const unit_type_t* unit_type, bool show_error = false) const {
@@ -8002,6 +8034,9 @@ struct state_functions {
 			break;
 		case Orders::UnusedNothing:
 			error("UnusedNothing");
+			break;
+		case Orders::PowerupIdle:
+			order_PowerupIdle(u);
 			break;
 		case Orders::UnusedPowerup:
 			error("UnusedPowerup");
@@ -19185,6 +19220,15 @@ struct state_functions {
 				} else if (opcode == 8) {
 					const auto* tech = get_tech_type((TechTypes)read(2));
 					ai.tech_requests[tech->id] = read(1);
+				} else if (opcode == 9) {
+					int amount = read(1);
+					const auto* type = get_unit_type((UnitTypes)read(2));
+					int count = 0;
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || unit->unit_type != type || campaign_ai_unit_town(script.owner, unit) != script.town) continue;
+						if (u_completed(unit)) ++count;
+					}
+					if (count < amount) { script.position = position; script.wait = 15; break; }
 				} else if (opcode == 11) {
 					ai.attack_requests = {};
 					ai.attack_party.clear();
@@ -19844,7 +19888,7 @@ struct state_functions {
 
 	bool unit_is_at_elevation_flags(const unit_t* u, int elevation_flags) const {
 		int ground_height = get_ground_height_at(u->sprite->position);
-		if (u_flying(u)) {
+		if (!u_flying(u)) {
 			if (ground_height == 0) return (elevation_flags & 1) == 0;
 			if (ground_height == 1) return (elevation_flags & 2) == 0;
 			if (ground_height == 2) return (elevation_flags & 4) == 0;

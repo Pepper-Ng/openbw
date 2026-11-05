@@ -1031,6 +1031,21 @@ static void jacobs_mission_cases(data_loading::data_files_loader<>& load_data_fi
 	}
 }
 
+static void activate_revolution_towns(state& st, state_functions& functions) {
+	require(!st.trigger_switches[6], "ground rescue does not activate the original air-only computer location");
+	unit_t* scout = nullptr;
+	for (unit_t* unit : ptr(st.player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_Wraith) scout = unit;
+	require(scout != nullptr, "original rescued Wraith for authored computer activation");
+	functions.u_set_status_flag(scout, unit_t::status_flag_invincible);
+	xy home = scout->sprite->position;
+	const auto& activation = st.locations.at(17).area;
+	functions.set_unit_order(scout, functions.get_order_type(Orders::Move), (activation.from + activation.to) / 2);
+	for (int tick = 0; tick != 1200 && !st.trigger_switches[6]; ++tick) functions.next_frame();
+	require(st.trigger_switches[6], "native flight activates the original Confederate town scripts");
+	functions.set_unit_order(scout, functions.get_order_type(Orders::Move), home);
+	for (int tick = 0; tick != 4000; ++tick) functions.next_frame();
+}
+
 static void revolution_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 7; ++scenario) {
 		game_player player(load_data_file);
@@ -1061,9 +1076,16 @@ static void revolution_mission_cases(data_loading::data_files_loader<>& load_dat
 				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
 				if (unit->unit_type->id == UnitTypes::Terran_Marine) marine = unit;
 			}
-			const auto& approach = st.locations.at(17).area;
-			functions.move_unit(marine, (approach.from + approach.to) / 2);
+			functions.move_unit(marine, kerrigan->sprite->position + xy(48, 0));
+			kerrigan->main_order_timer = 0;
+			functions.order_RescuePassive(kerrigan);
+			functions.u_set_status_flag(kerrigan, unit_t::status_flag_invincible);
+			const auto& beacon = st.locations.at(0).area;
+			functions.move_unit(kerrigan, (beacon.from + beacon.to) / 2);
+			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
 			for (int tick = 0; tick != 4000; ++tick) functions.next_frame();
+			require(st.unit_counts[0][UnitTypes::Terran_Command_Center] == 1, "original base rescue supplies the Wraith for satellite activation");
+			activate_revolution_towns(st, functions);
 			unit_t* command_center = nullptr;
 			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center && functions.campaign_ai_unit_town(6, unit) == 1) command_center = unit;
 			require(command_center != nullptr, "original Confederate satellite Command Center");
@@ -1241,6 +1263,108 @@ static void norad_mission_cases(data_loading::data_files_loader<>& load_data_fil
 	}
 }
 
+static void trump_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions game_load(player.st());
+		game_load.setup_info.victory_condition = 0;
+		game_load.setup_info.tournament_mode = 0;
+		game_load.setup_info.starting_units = 0;
+		game_load.setup_info.resource_type = 0;
+		game_load.setup_info.starting_minerals = 0;
+		game_load.setup_info.create_melee_units_for_player = {};
+		game_load.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		for (int tick = 0; tick != 32; ++tick) player.next_frame();
+		state_functions functions(st);
+		unit_t* carrier = nullptr;
+		unit_t* worker = nullptr;
+		unit_t* kerrigan = nullptr;
+		unit_t* vessel = nullptr;
+		for (unit_t* unit : ptr(st.player_units[0])) {
+			functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			if (unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan) kerrigan = unit;
+			if (unit->unit_type->id == UnitTypes::Terran_Science_Vessel) vessel = unit;
+			if (unit->unit_type->id == UnitTypes::Terran_SCV) {
+				if (unit->worker.powerup) carrier = unit;
+				else worker = unit;
+			}
+		}
+		require(carrier && worker && kerrigan && vessel, "original emitter SCV, worker, Kerrigan and Science Vessel");
+		require(functions.unit_is_at_elevation_flags(carrier, 56) && !functions.unit_is_at_elevation_flags(vessel, 56), "ground-only beacon admits workers and excludes flying units");
+		require(st.current_minerals[0] == 170 && st.current_gas[0] == 0, "original Trump Card opening resources");
+		unit_t* emitter = carrier->worker.powerup;
+		require(functions.us_hidden(emitter) && carrier->carrying_flags == 4, "emitter is a native hidden carried item");
+		require(functions.find_image(carrier->sprite, ImageTypes::IMAGEID_Psi_Emitter, ImageTypes::IMAGEID_Psi_Emitter), "native psi-emitter carry overlay");
+		const auto& beacon = st.locations.at(0).area;
+		xy destination = (beacon.from + beacon.to) / 2;
+		if (scenario == 7) {
+			unit_t* tower = nullptr;
+			for (unit_t* unit : ptr(st.player_units[4])) if (unit->unit_type->id == UnitTypes::Terran_Control_Tower) tower = unit;
+			require(tower && st.campaign_ai_scripts.size() == 1, "original Ter8 Control Tower and script for completion wait");
+			auto& script = st.campaign_ai_scripts.front();
+			require(st.global->ai_script.at(8704) == 9, "pinned original Ter8 wait_build instruction");
+			auto request = st.campaign_ai[4].build_requests[UnitTypes::Terran_Control_Tower];
+			script.position = 8704;
+			script.wait = 0;
+			functions.u_unset_status_flag(tower, unit_t::status_flag_completed);
+			functions.progress_campaign_ai_scripts();
+			require(script.position == 8704 && script.wait == 15, "wait_build remains blocked by unfinished construction");
+			require(st.campaign_ai[4].build_requests[UnitTypes::Terran_Control_Tower] == request, "wait_build does not create a build request");
+			functions.u_set_status_flag(tower, unit_t::status_flag_completed);
+			script.wait = 0;
+			functions.progress_campaign_ai_scripts();
+			require(script.position != 8704, "native building completion releases wait_build");
+			printf("The Trump Card AI completion wait passed.\n");
+			continue;
+		} else if (scenario == 6) {
+			unit_t* transport = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Dropship), carrier->sprite->position + xy(64, 0), 0);
+			require(transport != nullptr, "native transport for carried-emitter fixture");
+			functions.u_set_status_flag(transport, unit_t::status_flag_invincible);
+			functions.set_unit_order(carrier, functions.get_order_type(Orders::EnterTransport), transport);
+			for (int tick = 0; tick != 400 && !functions.us_hidden(carrier); ++tick) functions.next_frame();
+			require(functions.us_hidden(carrier) && carrier->worker.powerup == emitter, "native loading preserves the SCV's emitter");
+			functions.move_unit(transport, destination);
+			functions.set_unit_order(transport, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 96; ++tick) functions.next_frame();
+			require(!st.players[0].victory_state && !st.scripted_pause, "flying over the ground-only beacon with cargo cannot win");
+			functions.set_unit_order(transport, functions.get_order_type(Orders::MoveUnload), destination);
+			for (int tick = 0; tick != 400 && functions.us_hidden(carrier); ++tick) functions.next_frame();
+			require(!functions.us_hidden(carrier) && carrier->worker.powerup == emitter, "native unloading retains the original carried emitter");
+		} else if (scenario == 1 || scenario == 2) {
+			unit_t* target = scenario == 1 ? worker : carrier;
+			functions.move_unit(target, destination);
+			functions.set_unit_order(target, functions.get_order_type(Orders::HoldPosition));
+		} else if (scenario == 3) functions.kill_unit(kerrigan);
+		else if (scenario == 4) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[0])) if (!functions.ut_powerup(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		} else if (scenario == 5) {
+			xy dropped = carrier->sprite->position;
+			functions.kill_unit(carrier);
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(!functions.unit_dying(emitter) && !functions.us_hidden(emitter), "carrier death drops the surviving original emitter");
+			require(emitter->sprite->position == dropped, "emitter drops at its carrier position");
+			functions.move_unit(worker, dropped + xy(64, 0));
+			functions.set_unit_order(worker, functions.get_order_type(Orders::HoldPosition));
+			functions.order_PowerupIdle(emitter);
+			require(!worker->worker.powerup, "worker outside native pickup area cannot collect the emitter");
+			functions.move_unit(worker, dropped);
+			functions.order_PowerupIdle(emitter);
+			require(worker->worker.powerup == emitter && functions.us_hidden(emitter), "another original SCV recovers the dropped emitter");
+			functions.move_unit(worker, destination);
+		}
+		for (int tick = 0; tick != 1400 && !st.players[0].victory_state; ++tick) functions.next_frame();
+		if (scenario <= 1) require(!st.players[0].victory_state, "idle or an empty worker at the beacon cannot win");
+		if (scenario == 2 || scenario == 5 || scenario == 6) require(st.players[0].victory_state >= 3, "carried original emitter satisfies the authored beacon victory");
+		if (scenario == 3 || scenario == 4) require(st.players[0].victory_state == 2, "original Kerrigan or force loss reaches defeat");
+		printf("The Trump Card original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1252,6 +1376,7 @@ int main(int argc, char** argv) {
 	bool jacobs = campaign && argc > 4 && !strcmp(argv[4], "terran04");
 	bool revolution = campaign && argc > 4 && !strcmp(argv[4], "terran05");
 	bool norad = campaign && argc > 4 && !strcmp(argv[4], "terran06");
+	bool trump = campaign && argc > 4 && !strcmp(argv[4], "terran07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1266,6 +1391,42 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (trump) {
+			player.st().strict_triggers = true;
+			require(player.st().players[0].controller == player_t::controller_occupied, "The Trump Card preserves original human slot zero");
+			for (int tick = 0; tick != 32; ++tick) player.next_frame();
+			require(!player.st().players[0].victory_state, "The Trump Card does not invent an opening outcome");
+			unit_t* carrier = nullptr;
+			for (unit_t* unit : ptr(player.st().player_units[0])) if (unit->unit_type->id == UnitTypes::Terran_SCV && unit->worker.powerup) carrier = unit;
+			require(carrier && carrier->worker.powerup->unit_type->id == UnitTypes::Powerup_Psi_Emitter, "original emitter creation is picked up by its native SCV");
+			printf("The Trump Card normal initialization passed.\n");
+			state_functions functions(player.st());
+			bool ground_fire = false;
+			bool air_fire = false;
+			int first_air_budget = 2 * functions.get_unit_type(UnitTypes::Terran_Control_Tower)->build_time + 3000 + 500 + 1500 + 500 + 2 * 180 * 15;
+			for (int tick = 0; tick != first_air_budget; ++tick) {
+				for (unit_t* unit : ptr(player.st().player_units[0])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+				}
+				functions.next_frame();
+				for (unit_id id : player.st().campaign_ai[4].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+				if (ground_fire && air_fire && functions.player_upgrade_level(4, (UpgradeTypes)7) >= 1) break;
+			}
+			require(functions.player_has_completed_unit(4, UnitTypes::Terran_Control_Tower), "Ter8 completes its requested native Control Tower before releasing the wait");
+			require(ground_fire && air_fire, "original Ter8 ground and air parties fire native weapons");
+			require(functions.player_upgrade_level(4, (UpgradeTypes)7) >= 1, "Ter8 completes its requested native infantry weapon upgrade");
+			printf("The Trump Card original construction, upgrades and ground/air attacks passed.\n");
+			trump_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (norad) {
 			player.st().strict_triggers = true;
 			require(player.st().players[0].controller == player_t::controller_occupied, "Norad II preserves the original human slot zero");
@@ -1339,6 +1500,7 @@ int main(int argc, char** argv) {
 			for (int tick = 0; tick != 4000 && !player.st().players[0].victory_state; ++tick) player.next_frame();
 			require(player.st().unit_counts[0][UnitTypes::Terran_Command_Center] == 1, "original Kerrigan beacon sequence rescues the neutral base through native rescue");
 			printf("Revolution original base rescue passed.\n");
+			activate_revolution_towns(player.st(), functions);
 			const auto& ai = player.st().campaign_ai[6];
 			require(ai.area_towns.size() == 1 && ai.build_requests[UnitTypes::Terran_SCV].first == 3 && ai.area_towns[0].build_requests[UnitTypes::Terran_SCV].first == 4, "Ter5 and Te5H retain independent main and satellite worker requests");
 			int satellite_workers = 0;
