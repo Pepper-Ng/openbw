@@ -12,12 +12,18 @@ INCS="-I${ROOT} -I${ROOT}/ui"
 FLAGS="-std=c++14 -O2 -fno-exceptions -mexec-model=reactor"
 LDFLAGS="-Wl,-z,stack-size=8388608"   # exports come from __attribute__((export_name))
 
+SOURCES=("${ROOT}/web/wasm_main.cpp" "${ROOT}/web/wasm_backend.cpp")
+if [[ "${CAMPAIGN_PACK:-0}" == "1" ]]; then
+	OUT="${ROOT}/web/campaign-pack.wasm"
+	FLAGS="-std=c++14 -O2 -fno-exceptions"
+	SOURCES=("${ROOT}/web/campaign_pack.cpp")
+fi
+
 echo "==> compiling wasm..."
 # Link to a temp file and rename: the rename is atomic, so a dev server never serves a
 # half-written wasm to a page that reloads mid-build (which froze the game at boot).
 "${WSDK}/bin/clang++" ${FLAGS} ${DEFS} ${INCS} ${LDFLAGS} \
-	"${ROOT}/web/wasm_main.cpp" \
-	"${ROOT}/web/wasm_backend.cpp" \
+	"${SOURCES[@]}" \
 	-o "${OUT}.tmp"
 mv -f "${OUT}.tmp" "${OUT}"
 

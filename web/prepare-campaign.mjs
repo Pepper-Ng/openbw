@@ -14,6 +14,13 @@ const missions = {
   terran05: { title: 'Revolution', order: 5, scenarioHash: '35cd98bc0590c0f36e5d8f75e41a29b254db2d6cf8dec5480e6ffd7602609829', units: 172, triggers: 17, sounds: 17 },
   terran06: { title: 'Norad II', order: 6, scenarioHash: '80dd42e4d4540d0340113b92aae02120b9919a5dac359b010607ec7c26e72ead', units: 221, triggers: 20, sounds: 24 },
 };
+export const campaignMissions = Object.freeze(Object.keys(missions));
+export const campaignSource = Object.freeze({
+  file: 'StarCraft.mpq',
+  bytes: 601389682,
+  sha256: 'ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d',
+  url: 'https://archive.org/download/sc-classic-installer_202311/StarCraft%20Portable.zip/Starcraft%20Brood%20War%2FStarCraft.mpq',
+});
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export function auditAiScript(bytes, scriptIds = ['Ter3', 'Suic']) {
@@ -402,14 +409,14 @@ async function prepareAi(missionId = 'terran03') {
   }
 }
 
-async function prepare(missionId = 'terran01') {
+export async function prepare(missionId = 'terran01') {
   assert.ok(Object.hasOwn(missions, missionId), 'Unsupported mission ID');
   const mission = missions[missionId];
-  const source = resolve(root, 'web/data/StarCraft.mpq');
-  assert.equal(statSync(source).size, 601389682, 'Unexpected source archive size');
+  const source = resolve(root, 'web/data', campaignSource.file);
+  assert.equal(statSync(source).size, campaignSource.bytes, 'Unexpected source archive size');
   const sourceHasher = createHash('sha256');
   for await (const chunk of createReadStream(source)) sourceHasher.update(chunk);
-  assert.equal(sourceHasher.digest('hex'), 'ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d', 'Source archive hash mismatch');
+  assert.equal(sourceHasher.digest('hex'), campaignSource.sha256, 'Source archive hash mismatch');
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
   const temporary = resolve(directory, `${missionId}.mpq.tmp`);

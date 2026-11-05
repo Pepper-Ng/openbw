@@ -13,12 +13,16 @@ COPY . .
 ENV WASI_SDK=/opt/wasi-sdk
 
 RUN bash web/build-wasm.sh \
+	&& CAMPAIGN_PACK=1 bash web/build-wasm.sh \
 	&& mkdir -p /site/vendor \
-	&& cp web/index.html web/openbw.js web/net.js web/openbw.wasm /site/ \
+	&& cp web/index.html web/manifest.webmanifest web/openbw.js web/net.js web/openbw.wasm /site/ \
 	&& cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE /site/vendor/ \
 	&& if compgen -G "web/maps/*.scx" > /dev/null; then mkdir -p /site/maps && cp web/maps/*.scx /site/maps/; fi \
 	&& build_id="$(date -u +%Y%m%d%H%M%S)" \
 	&& sed -i "s/__BUILD__/${build_id}/g" /site/index.html /site/openbw.js
 
 FROM nginx:alpine
+RUN apk add --no-cache nodejs
 COPY --from=wasm-build /site/ /usr/share/nginx/html/
+COPY --from=wasm-build /src/web/campaign-pack.wasm /src/web/prepare-campaign.mjs /src/web/prepare-campaigns.mjs /opt/openbw/web/
+CMD ["sh", "-c", "node /opt/openbw/web/prepare-campaigns.mjs && exec nginx -g 'daemon off;'"]

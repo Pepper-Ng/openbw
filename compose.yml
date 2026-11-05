@@ -6,5 +6,10 @@ services:
     image: openbw:latest
     container_name: openbw
     restart: unless-stopped
+    volumes:
+      - campaign-data:/opt/openbw/web/data
     ports:
       - "18082:80"
+
+volumes:
+  campaign-data:

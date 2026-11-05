@@ -503,7 +503,21 @@ The sixth mission retains its original scenario and scripts. The new engine work
 - Fresh-map fixtures cover idle, Raynor with zero or one Dropship, the original paused victory with Raynor plus two Dropships, Raynor loss, flagship loss, squad loss, authored reinforcements, and native flagship rescue/repair. The repair workflow mines original minerals, constructs a Refinery, harvests actual gas, and pays native repair costs; the original rescued base contains an Engineering Bay rather than an existing Refinery.
 - Native and browser-module suites for missions 1-6 and the complete command suite pass on the merged baseline. Only existing compiler warnings remain. Protected outcome/combat fixtures isolate semantics, not normal-control victory or exact classic balance.
 
-Publication order remains: signed Norad II milestone first, then a separate live campaign-delivery fix. The deployed container currently omits ignored campaign manifests/packs and therefore returns 404; a container revision alone does not publish those assets. The user reports a 5-7 minute rollout delay after campaign pushes. Original archives, dialogue, mission packs, generated WASM and temporary signature trust files stay uncommitted.
+Publication order remains: signed Norad II milestone first, then a separate live campaign-delivery fix. Norad II is published as `53048c051f20961598659c6230a65bb050b76781`. The previous container omitted ignored campaign manifests/packs and returned 404; a container revision alone did not publish those assets. The user reports a 5-7 minute rollout delay after campaign pushes. Original archives, dialogue, mission packs, generated WASM and temporary signature trust files stay uncommitted.
+
+### Private Container Campaign Delivery
+
+The container now builds the existing native campaign preparation module and runs verified preparation before starting Nginx. A named `campaign-data` volume holds the private owned source under `/opt/openbw/web/data`, outside the HTTP document root. The first deployment downloads the same pinned 601,389,682-byte source used in local preparation; later redeploys verify and reuse it. This is a one-time server-side download, not a full-archive browser download.
+
+Only the six supported mission manifests and their 3.6-6.8 MB packs are copied to `/usr/share/nginx/html/data/campaign`. The original source archive and generated audit files are not copied to the served directory. Browsers retain the existing selected-mission download and content-hash cache behavior. Owned-data preparation does not authorize redistribution outside this private test deployment.
+
+- The source download is streamed, bounded by the expected size, SHA-256 checked before atomic publication, and cleaned up on truncated, oversized, wrong-hash or HTTP-error responses. Invalid existing user source files are not silently overwritten.
+- `OPENBW_CAMPAIGN_SOURCE_URL` can select an HTTPS source with the same expected size/hash. Credentials are not accepted in the URL. The default is the previously used archive member, which responds successfully at verification time.
+- The shared shell build now supports campaign-packer mode using the same WASI flags. The Docker image includes Node and the private preparation tools, and preserves the existing HTTP port. It also includes the existing web-app manifest.
+- The startup path was executed against the owned local archive. All six packs round-tripped and the public output was independently verified as exactly six manifests and six matching packs, with no archive or audits. Synthetic source/cache/error/cleanup checks pass. The shell mode compiled successfully through the installed Git Bash/WASI SDK path; Docker is not installed locally, so the real container rollout remains the integration check.
+- First startup can take longer than the usual Git rollout while the private source downloads. Nginx starts only after the prepared files are ready, so it does not advertise missing mission manifests as a successful deployment. Keep the named volume across redeploys. Do not bake or commit game archives/packs into the source repository or public package builds.
+
+Verify the live Git revision and all manifest/pack hashes after the campaign push and rollout delay; then start the browser mission from `openbw.stefhermans.nl`. No Portainer credentials are stored in this repository.
 
 ```powershell
 node web/prepare-campaign.mjs terran06
