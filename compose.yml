@@ -1,0 +1,10 @@
+services:
+  openbw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openbw:latest
+    container_name: openbw
+    restart: unless-stopped
+    ports:
+      - "18082:80"
