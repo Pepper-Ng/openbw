@@ -76,6 +76,7 @@ const MAP_REMOTE = '';
 
 // Fetched map bytes, kept so the lobby can hash a map without re-downloading it.
 const mapCache = new Map();
+let mapProbesStarted = false;
 async function fetchMap(file) {
   if (mapCache.has(file)) return mapCache.get(file);
   const r = await fetch(file);
@@ -1123,24 +1124,24 @@ async function boot(session) {
   const RACE_NAME = ['Zerg', 'Terran', 'Protoss'];
   const PLAYER_COLORS = ['#f40404', '#0c48cc', '#2cb494', '#88409c', '#f88c14', '#703014', '#cce0d0', '#fcfc38'];
   let gameOverShown = false;
-  const toMainMenu = () => location.replace(location.origin + location.pathname + (session.mission ? '?campaign=1' : '?campaign=0'));
+  const toMainMenu = () => location.replace(location.origin + location.pathname + (session.mission ? campaignDebug ? '?campaign=1&campaign-debug=1' : '?campaign=1' : '?campaign=0'));
   const showGameOver = (title, won) => {
     if (gameOverShown) return;
     gameOverShown = true;
     if (session.mission) {
       stopNarration();
       $('mission-caption').hidden = true;
-      campaignSaves().then(storage => storage.deleteCampaignSave(`auto:${session.mission.id}`)).catch(() => {});
-      if (won) {
+      if (!campaignDebug) campaignSaves().then(storage => storage.deleteCampaignSave(`auto:${session.mission.id}`)).catch(() => {});
+      if (won && !campaignDebug) {
         const progress = campaignProgress();
-        if (!progress.completed.includes(session.mission.id)) progress.completed.push(session.mission.id);
-        try { localStorage.setItem(campaignProgressKey, JSON.stringify(progress)); $('go-progress').textContent = 'Mission complete.'; }
+        progress.victories[session.mission.id] = true;
+        try { localStorage.setItem(campaignProgressKey, JSON.stringify({ version: 2, victories: progress.victories })); $('go-progress').textContent = 'Mission complete.'; }
         catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
       }
       const next = campaignMissionIds[campaignMissionIds.indexOf(session.mission.id) + 1];
       $('go-next').hidden = !won || !next;
       $('go-next').disabled = !!next && !campaignUnlocked(next);
-      $('go-next').onclick = () => location.replace(`${location.origin}${location.pathname}?mission=${next}&autostart=1&fresh=1`);
+      $('go-next').onclick = () => location.replace(campaignAddress(next, null, true));
     }
     // openbw_stats returns a C-string pointer, not a JS string — read it out of wasm memory.
     const ptr = x.openbw_stats();
@@ -1178,6 +1179,7 @@ async function boot(session) {
     address.searchParams.set('mission', session.mission.id);
     address.searchParams.set('autostart', '1');
     address.searchParams.set('fresh', '1');
+    if (campaignDebug) address.searchParams.set('campaign-debug', '1');
     location.replace(address);
   };
 
@@ -2093,7 +2095,7 @@ async function boot(session) {
     try { renderFrame(); } catch (error) { failSession(error); }
   }
   async function saveCurrentGame(key) {
-    if (!session.mission || briefingActive || recovering || over || sessionFailed || x.openbw_outcome()) return;
+    if (!session.mission || campaignDebug || briefingActive || recovering || over || sessionFailed || x.openbw_outcome()) return;
     const camera = readCString(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
     const selection = readCString(x.openbw_wires()).trim().split('\n').filter(Boolean).map(line => Number(line.split('\t')[0]));
     const payload = {
@@ -2112,7 +2114,7 @@ async function boot(session) {
       throw error;
     }
   }
-  if (session.mission) {
+  if (session.mission && !campaignDebug) {
     $('campaign-save-controls').hidden = false;
     const saveButton = $('save-game');
     saveButton.onclick = async () => {
@@ -2296,29 +2298,38 @@ mapSelect.addEventListener('change', () => { renderMapInfo(); buildSlots(); });
 $('spectate').addEventListener('change', buildSlots);   // toggling swaps "You" for a 2nd bot
 renderMapInfo(); buildSlots();
 
-const campaignProgressKey = 'openbw-campaign-progress-v1';
+const campaignProgressKey = 'openbw-campaign-progress-v2';
+const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
+const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
 const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {
+  let value = null, legacy = null;
   try {
-    const value = JSON.parse(localStorage.getItem(campaignProgressKey) || 'null');
-    if (value?.version === 1 && Array.isArray(value.completed)) return { version: 1, completed: campaignMissionIds.filter(id => value.completed.includes(id)) };
+    const saved = localStorage.getItem(campaignProgressKey);
+    if (saved !== null) value = JSON.parse(saved);
+    else legacy = JSON.parse(localStorage.getItem(campaignLegacyProgressKey) || 'null');
   } catch {}
-  return { version: 1, completed: [] };
+  const victories = Object.fromEntries(campaignMissionIds.map(id => [id, value?.version === 2 ? value.victories?.[id] === true : legacy?.version === 1 && Array.isArray(legacy.completed) && legacy.completed.includes(id)]));
+  const completed = campaignMissionIds.filter(id => victories[id]);
+  if (!campaignDebug && legacy?.version === 1 && Array.isArray(legacy.completed)) {
+    try { localStorage.setItem(campaignProgressKey, JSON.stringify({ version: 2, victories })); } catch {}
+  }
+  return { version: 2, victories, completed };
 }
 function campaignUnlocked(missionId) {
   const index = campaignMissionIds.indexOf(missionId);
-  const completed = campaignProgress().completed;
-  return index >= 0 && campaignMissionIds.slice(0, index).every(id => completed.includes(id));
+  const victories = campaignProgress().victories;
+  return index >= 0 && (campaignDebug || campaignMissionIds.slice(0, index).every(id => victories[id] === true));
 }
 function selectGameMode(campaign) {
   if (!campaign) probeMeleeMaps();
   $('mode-sandbox').setAttribute('aria-selected', String(!campaign));
   $('mode-campaign').setAttribute('aria-selected', String(campaign));
   $('campaign-setup').hidden = !campaign;
-  $('overlay').classList.toggle('campaign-mode', campaign);
+  $('overlay').classList.add('menu-mode');
   for (const id of ['map-row', 'map-info', 'slots', 'spectate-row', 'lobby-hint', 'sandbox-start', 'mp']) $(id).hidden = campaign;
   if (campaign) loadSelectedMission();
 }
@@ -2364,11 +2375,15 @@ function renderCampaignSelection() {
     radio.disabled = !campaignUnlocked(radio.value);
     radio.checked = radio.value === $('mission-select').value;
     const state = radio.parentElement.querySelector('.mission-state');
-    state.textContent = radio.disabled ? 'Locked' : completed.includes(radio.value) ? 'Completed' : 'Available';
+    state.textContent = radio.disabled ? completed.includes(radio.value) ? 'Won (locked)' : 'Locked' : completed.includes(radio.value) ? 'Completed' : 'Available';
     state.classList.toggle('completed', !radio.disabled && completed.includes(radio.value));
   }
-  $('campaign-progress').querySelector('span').textContent = `${completed.length} of 10 completed`;
-  $('campaign-progress').querySelector('progress').value = completed.length;
+  let cleared = 0;
+  while (completed.includes(campaignMissionIds[cleared])) cleared++;
+  $('campaign-progress').hidden = campaignDebug;
+  $('campaign-tools').hidden = campaignDebug;
+  $('campaign-progress').querySelector('span').textContent = `${cleared} of 10 completed${completed.length > cleared ? ` - ${completed.length - cleared} later victories recorded` : ''}`;
+  $('campaign-progress').querySelector('progress').value = cleared;
 }
 function campaignAddress(mission, resume = null, fresh = false) {
   const address = new URL(location.origin + location.pathname);
@@ -2376,9 +2391,11 @@ function campaignAddress(mission, resume = null, fresh = false) {
   address.searchParams.set('autostart', '1');
   if (resume) address.searchParams.set('resume', resume);
   if (fresh) address.searchParams.set('fresh', '1');
+  if (campaignDebug) address.searchParams.set('campaign-debug', '1');
   return address;
 }
 async function refreshCampaignSaves(mission) {
+  if (campaignDebug) { $('campaign-resume').hidden = true; $('campaign-saves').replaceChildren(); return; }
   try {
     const storage = await campaignSaves();
     const summaries = await storage.listCampaignSaves();
@@ -2432,7 +2449,7 @@ function campaignFailure(error) {
   $('load-fresh').hidden = !campaignMissionIds.includes($('mission-select').value);
   setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : `Mission unavailable: ${error.message}`);
 }
-const returnToStartup = () => location.replace(location.origin + location.pathname);
+const returnToStartup = () => location.replace(location.origin + location.pathname + (campaignDebug ? '?campaign=1&campaign-debug=1' : '?campaign=1'));
 $('load-return').onclick = returnToStartup;
 $('load-fresh').onclick = () => location.replace(campaignAddress($('mission-select').value, null, true));
 $('load-retry').onclick = () => location.reload();
@@ -2455,7 +2472,7 @@ $('campaign-start').onclick = async () => {
     if (!campaignMissionIds.includes(missionId)) throw new Error('Unsupported mission selection.');
     if (!campaignUnlocked(missionId)) throw new Error('Complete the preceding missions first.');
     const parameters = new URLSearchParams(location.search);
-    const resumeKey = parameters.get('resume') || (parameters.get('autostart') === '1' && parameters.get('fresh') !== '1' ? `auto:${missionId}` : null);
+    const resumeKey = campaignDebug ? null : parameters.get('resume') || (parameters.get('autostart') === '1' && parameters.get('fresh') !== '1' ? `auto:${missionId}` : null);
     let resume = null;
     if (resumeKey) {
       try { resume = await (await campaignSaves()).readCampaignSave(resumeKey); }
@@ -2502,7 +2519,7 @@ $('campaign-reset').onclick = () => {
     $('mission-size').textContent = 'Confirm progress reset.';
     return;
   }
-  try { localStorage.removeItem(campaignProgressKey); $('mission-size').textContent = 'Campaign progress reset.'; }
+  try { localStorage.removeItem(campaignProgressKey); localStorage.removeItem(campaignLegacyProgressKey); $('mission-size').textContent = 'Campaign progress reset.'; }
   catch { $('mission-size').textContent = 'Campaign progress could not be reset.'; }
   delete button.dataset.confirm;
   button.title = button.ariaLabel = 'Reset campaign progress';
@@ -2516,6 +2533,8 @@ if (campaignMissionIds.includes(selectedMission)) {
 } else if (!location.search || new URLSearchParams(location.search).get('campaign') === '1') {
   $('mission-select').value = campaignMissionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || campaignMissionIds[0];
   selectGameMode(true);
+} else {
+  selectGameMode(false);
 }
 if (window.lucide) window.lucide.createIcons();
 
@@ -2612,7 +2631,6 @@ const mpShow = (el, on) => { el.style.display = on ? 'block' : 'none'; };
 // HEAD requests confirm — the UI is never empty and never offers a map that isn't there.
 mapSelect.add(new Option(MAPS[0].name, MAPS[0].file));
 for (const sel of mp.r) fillRaces(sel);
-let mapProbesStarted = false;
 function probeMeleeMaps() {
   if (mapProbesStarted) return;
   mapProbesStarted = true;

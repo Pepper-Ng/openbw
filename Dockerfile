@@ -16,6 +16,7 @@ RUN bash web/build-wasm.sh \
 	&& CAMPAIGN_PACK=1 bash web/build-wasm.sh \
 	&& mkdir -p /site/vendor \
 	&& cp web/index.html web/manifest.webmanifest web/openbw.js web/net.js web/campaign-saves.js web/openbw.wasm /site/ \
+	&& mkdir -p /site/debug && cp web/debug/index.html /site/debug/ \
 	&& cp web/vendor/lucide.min.js web/vendor/lucide-LICENSE /site/vendor/ \
 	&& if compgen -G "web/maps/*.scx" > /dev/null; then mkdir -p /site/maps && cp web/maps/*.scx /site/maps/; fi \
 	&& build_id="$(date -u +%Y%m%d%H%M%S)" \

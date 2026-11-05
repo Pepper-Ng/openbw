@@ -416,12 +416,19 @@
   #campaign-start, #load-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
   #campaign-tools { display: flex; gap: 8px; margin-top: 16px; }
   #campaign-tools button { width: 44px; height: 44px; padding: 10px; border-radius: 4px; }
-  #overlay.campaign-mode { background: linear-gradient(160deg, #171a1c, #080a0c 70%); }
-  #overlay.campaign-mode:has(#controls[style*="block"]) #bar, #overlay.campaign-mode:has(#controls[style*="block"]) #msg { display: none; }
+  #overlay.menu-mode { background: linear-gradient(160deg, #171a1c, #080a0c 70%); scrollbar-gutter: stable; }
+  #overlay.menu-mode:has(#controls[style*="block"]) #bar, #overlay.menu-mode:has(#controls[style*="block"]) #msg { display: none; }
   #play-modes button[aria-selected="false"] { background: #28353b; color: #aebac2; }
   #play-modes button[aria-selected="true"] { background: #d7bc83; color: #151a1d; }
-  #overlay.campaign-mode .card { box-sizing: border-box; width: min(680px, 100%); max-width: 680px; padding: 0 12px; }
+  #overlay.menu-mode .card { box-sizing: border-box; width: min(680px, 100%); max-width: 680px; padding: 0 12px; }
   #campaign-setup h2 { font-size: 19px; margin: 20px 0 4px; color: #e2e8f0; }
+  #overlay.menu-mode #map-row, #overlay.menu-mode #slots { display: grid; grid-template-columns: 100px minmax(0, 1fr); width: 100%; margin: 0; padding: 12px 8px; box-sizing: border-box; gap: 10px; border-bottom: 1px solid #30383c; }
+  #overlay.menu-mode #controls select, #overlay.menu-mode #mp .codeline input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; padding: 8px; border: 1px solid #49545c; border-radius: 4px; background: #161d22; color: #dce5e9; font: inherit; }
+  #overlay.menu-mode #load-wrap { position: static; grid-column: 2; margin: 0; transform: none; white-space: normal; }
+  #overlay.menu-mode #slots .you, #overlay.menu-mode #load-map { color: #d7bc83; }
+  #overlay.menu-mode #spectate-row { justify-content: flex-start !important; padding: 8px; text-align: left; }
+  #overlay.menu-mode #mp { border-color: #30383c; }
+  #overlay.menu-mode #mp h2 { font-size: 14px; text-align: left; color: #aebac2; }
   #campaign-progress { display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #aeb8bf; font-size: 12px; margin-bottom: 14px; }
   #campaign-progress progress { width: 140px; height: 7px; accent-color: #69b587; }
   #campaign-missions { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -434,11 +441,12 @@
   .mission-row .mission-state { font-size: 11px; color: #96a4ad; flex: 0 0 auto; }
   .mission-row .mission-state.completed { color: #85c89c; }
   #campaign-start, #campaign-resume { display: inline-flex; gap: 8px; align-items: center; min-height: 42px; }
-  #campaign-launch { position: sticky; top: -1px; z-index: 1; background: #141a1e; padding: 10px 0; border-bottom: 1px solid #49545c; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  #campaign-launch-info { flex: 1; min-width: 150px; }
-  #campaign-selected-name { display: block; font-size: 14px; color: #e2e8f0; overflow-wrap: anywhere; }
+  #campaign-launch, #sandbox-start { position: sticky; top: -1px; z-index: 1; background: #141a1e; padding: 10px 0; border-bottom: 1px solid #49545c; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; text-align: left; }
+  #campaign-launch-info, #sandbox-launch-info { flex: 1; min-width: 150px; }
+  #campaign-selected-name, #sandbox-title { display: block; font-size: 14px; color: #e2e8f0; overflow-wrap: anywhere; }
   #campaign-launch #mission-size { margin: 3px 0 0; font-size: 11px; }
-  #campaign-launch button { margin: 0; }
+  #campaign-launch button, #sandbox-start button { margin: 0; display: inline-flex; align-items: center; gap: 8px; min-height: 42px; }
+  #sandbox-start #map-info { margin: 3px 0 0; font-size: 11px; }
   #campaign-resume { background: #7bc79c; }
   #campaign-saves { border-top: 1px solid #30383c; margin-top: 22px; }
   #campaign-saves h3 { font-size: 14px; margin: 14px 0 6px; }
@@ -646,19 +654,21 @@
         <button id="campaign-reset" type="button" title="Reset campaign progress" aria-label="Reset campaign progress"><i data-lucide="rotate-ccw"></i></button>
       </div>
     </div>
+    <div id="sandbox-start">
+      <div id="sandbox-launch-info"><strong id="sandbox-title">Sandbox</strong><div id="map-info"></div></div>
+      <button id="start-game"><i data-lucide="play"></i>Start Game</button>
+    </div>
     <div id="map-row">
       <span class="lbl">Map</span>
       <select id="map-select"></select>
       <span id="load-wrap">or <label id="load-map" for="map-file">load map file</label></span>
       <input type="file" id="map-file" accept=".scx,.scm" hidden>
     </div>
-    <div id="map-info"></div>
     <div id="slots"></div>
     <label id="spectate-row" style="display:flex;align-items:center;gap:8px;justify-content:center;margin:10px 0;cursor:pointer">
       <input type="checkbox" id="spectate"> Bot vs Bot (spectate)
     </label>
     <div id="lobby-hint" class="hint"></div>
-    <p id="sandbox-start"><button id="start-game">Start Game</button></p>
     <div id="mp">
       <h2>or play a friend (1v1)</h2>
       <div class="row" id="mp-setup">
@@ -728,7 +738,6 @@
 
       <div id="mp-status"></div>
     </div>
-    <div class="hint">Or <a href="https://retroonline.net/Windows/StarCraft%3A%20Brood%20War" target="_blank" rel="noopener">play the original game</a></div>
   </div>
 </div></div>
 

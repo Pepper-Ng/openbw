@@ -10,6 +10,34 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 
+if (process.argv[2] === '--test-campaign-menu') {
+  const source = readFileSync('web/openbw.js', 'utf8');
+  const progress = source.match(/function campaignProgress\(\) \{[\s\S]*?\n\}/)?.[0];
+  const unlocked = source.match(/function campaignUnlocked\(missionId\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(progress && unlocked, 'Actual campaign progress functions exist');
+  const ids = Array.from({ length: 10 }, (value, index) => `terran${String(index + 1).padStart(2, '0')}`);
+  const stored = new Map();
+  const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+  const functions = debug => new Function('localStorage', 'campaignMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', `${progress}\n${unlocked}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked };`)(localStorage, ids, 'v2', 'v1', debug);
+  const normal = functions(false);
+  assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Fresh campaigns only unlock mission one');
+  assert.ok(Object.values(normal.progress().victories).every(value => value === false), 'Missing victory flags default false');
+  stored.set('v1', JSON.stringify({ version: 1, completed: ['terran04', 'terran05', 'terran09'] }));
+  assert.equal(normal.progress().completed.length, 3, 'Existing recorded victories are preserved');
+  assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Out-of-order wins cannot bypass missing prior victories');
+  assert.equal(normal.progress().victories.terran01, false, 'Migration does not fabricate skipped victories');
+  assert.equal(JSON.parse(stored.get('v2')).victories.terran09, true, 'Old win records migrate to explicit flags');
+  stored.set('v2', JSON.stringify({ version: 2, victories: { terran01: true, terran02: true, terran03: true, terran04: 'true' } }));
+  assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 4), 'Only true preceding victory flags unlock the next mission');
+  const beforeDebug = JSON.stringify([...stored]);
+  assert.deepEqual(ids.filter(functions(true).unlocked), ids, 'Debug loading exposes every implemented mission');
+  assert.equal(JSON.stringify([...stored]), beforeDebug, 'Debug unlocking does not write progress');
+  stored.set('v2', '{invalid');
+  assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Corrupt new progress cannot resurrect old win records');
+  console.log('Campaign menu victory flags, legacy migration, strict unlocks and debug isolation passed.');
+  process.exit(0);
+}
+
 const recoveryTest = process.argv[2] === '--test-campaign-save';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
