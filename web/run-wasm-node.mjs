@@ -7,8 +7,11 @@
 import { WASI } from 'node:wasi';
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 
-const campaign = process.argv[2] === '--test-campaign';
+const recoveryTest = process.argv[2] === '--test-campaign-save';
+const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
 if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
@@ -61,7 +64,18 @@ const instance = await WebAssembly.instantiate(module, {
 memory = instance.exports.memory;
 wasi.initialize(instance);   // reactor: runs ctors + libc init
 
-const x = instance.exports;
+const recordedTurns = [];
+let recordedTicks = 0, recording = false;
+const nativeExports = instance.exports;
+const x = recoveryTest ? {
+  ...nativeExports,
+  openbw_mission_begin() { nativeExports.openbw_mission_begin(); recording = true; },
+  openbw_step() { nativeExports.openbw_step(); if (recording) recordedTicks++; },
+  openbw_apply(owner, length) {
+    recordedTurns.push({ tick: recordedTicks, owner, bytes: new Uint8Array(memory.buffer, nativeExports.openbw_in_ptr(length), length).slice() });
+    nativeExports.openbw_apply(owner, length);
+  },
+} : nativeExports;
 if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
 else x.openbw_init(1280, 800, 1 /*terran*/, 0 /*slot*/);
 if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
@@ -85,8 +99,50 @@ if (out) {
   console.log(`wrote ${out} (${w}x${h})`);
 } else if (campaign) {
   testCampaign();
+  if (recoveryTest) {
+    const expectedChecksum = x.openbw_checksum();
+    const expectedUnits = readRecoveryString(x.openbw_debug_units());
+    const saved = validateCampaignSave(JSON.parse(JSON.stringify(sealCampaignSave({
+      mission: missionId, title: mission.title, ticks: recordedTicks, frame: x.openbw_frame(), checksum: expectedChecksum >>> 0, savedAt: Date.now(),
+      packHash: mission.pack.sha256, engineHash: createHash('sha256').update(readFileSync('web/openbw.wasm')).digest('hex'),
+      assetHashes: files.slice(0, 3).map(bytes => createHash('sha256').update(bytes).digest('hex').slice(0, 14)),
+      turns: recordedTurns.map(turn => ({ tick: turn.tick, bytes: Array.from(turn.bytes) })), view: { camera: [0, 0], selection: [] },
+    }))));
+    assert.throws(() => validateCampaignSave({ ...saved, checksum: saved.checksum ^ 1 }), /integrity|Invalid/, 'Corrupt save cannot load');
+    assert.throws(() => validateCampaignSave(saved, { ...saved, engineHash: '0'.repeat(64) }), /requires the engine/, 'Incompatible runtime cannot load');
+    const resumedWasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
+    const resumed = await WebAssembly.instantiate(module, { ...resumedWasi.getImportObject(), env });
+    memory = resumed.exports.memory;
+    resumedWasi.initialize(resumed);
+    const restored = resumed.exports;
+    restored.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
+    restored.openbw_mission_begin();
+    let turn = 0;
+    for (let tick = 0; tick < saved.ticks; tick++) {
+      while (saved.turns[turn]?.tick === tick) {
+        const command = saved.turns[turn++];
+        const input = restored.openbw_in_ptr(command.bytes.length);
+        new Uint8Array(memory.buffer).set(command.bytes, input);
+        restored.openbw_apply(mission.humanSlot, command.bytes.length);
+      }
+      restored.openbw_step();
+      const events = readRecoveryString(restored.openbw_mission_events()).trim();
+      if (events) restored.openbw_mission_ack(Number(events.split('\n').at(-1).split('\t')[1]));
+    }
+    assert.equal(turn, saved.turns.length, 'All saved command turns replay at their original service tick');
+    assert.equal(restored.openbw_checksum(), expectedChecksum, 'Recovered simulation checksum matches the saved game');
+    assert.equal(readRecoveryString(restored.openbw_debug_units()), expectedUnits, 'Recovered actors, ownership, positions and orders match');
+    console.log(`Campaign deterministic recovery passed: ${recordedTicks} service ticks, ${recordedTurns.length} command batches.`);
+  }
 } else {
   testCommands();
+}
+
+function readRecoveryString(pointer) {
+  const bytes = new Uint8Array(memory.buffer);
+  let end = pointer;
+  while (bytes[end]) end++;
+  return new TextDecoder().decode(bytes.subarray(pointer, end));
 }
 
 function testCampaign() {
@@ -283,7 +339,7 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
-  if (missionId === 'terran06') {
+  if (missionId === 'terran06' && !recoveryTest) {
     const currentUnits = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
     const word = value => [value & 255, value >> 8 & 255];
     const send = (unit, order, mapX, mapY) => {
@@ -404,7 +460,7 @@ function testCampaign() {
     assert.ok(buildChecks.every(check => check.flags & 1), 'Original mission permits SCVs to build Barracks');
     console.log('Campaign Barracks placement checks:', JSON.stringify(buildChecks));
   }
-  if (missionId === 'terran02') {
+  if (missionId === 'terran02' && !recoveryTest) {
     const raynor = human.find(unit => unit[1] === 'Jim Raynor');
     const marine = human.find(unit => unit[1] === 'Marine');
     assert.ok(raynor && marine, 'Original owned hero and Marine voice fixture');

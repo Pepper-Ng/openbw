@@ -267,13 +267,14 @@ export class Lockstep {
    * @param {number}  o.delay      input delay in frames (0 solo; a few frames for a peer)
    * @param {(msg:object)=>void} o.send
    */
-  constructor({ x, memory, slots, localSlot, delay = 0, send = () => {}, bot = null, shadow = null, bot2 = null, botDelay = BOT_LATENCY }) {
+  constructor({ x, memory, slots, localSlot, delay = 0, send = () => {}, bot = null, shadow = null, bot2 = null, botDelay = BOT_LATENCY, onTurn = null }) {
     this.x = x;
     this.memory = memory;
     this.slots = slots.slice();
     this.localSlot = localSlot;
     this.delay = delay;
     this.send = send;
+    this.onTurn = onTurn;
     // Command latency for bot-controlled slots (see BOT_LATENCY); only meaningful with a bot.
     this.botDelay = (bot || bot2) ? botDelay : 0;
     this.botSeeded = false;
@@ -400,6 +401,7 @@ export class Lockstep {
     // spectating, keeping them bit-identical.
     const m = this.turns.get(this.frame);
     for (const s of this.slots) {
+      if (this.onTurn && m.get(s)?.length) this.onTurn(this.frame, s, m.get(s));
       this.#apply(s, m.get(s), this.x, this.memory);
       if (this.shadow) this.#apply(s, m.get(s), this.shadow.x, this.shadow.memory);
     }

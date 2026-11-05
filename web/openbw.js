@@ -9,6 +9,8 @@
 
 // Build id — CI replaces the placeholder with the commit SHA for cache-busting.
 const BUILD = '__BUILD__';
+let campaignSaveModule;
+const campaignSaves = () => campaignSaveModule ||= import('./campaign-saves.js?v=' + (DEV ? Date.now() : BUILD));
 
 // Any build whose SHA wasn't stamped in by CI is a local/dev build. CI's stamp is a
 // GLOBAL sed of the placeholder, which also rewrites comparisons that spell it out —
@@ -715,7 +717,7 @@ function wireInput(canvas, x) {
 
 // ---------------------------------------------------------------------------
 // Boot
-async function instantiateWasm(moduleName, imports) {
+async function instantiateWasm(moduleName, imports, identify = false) {
   const url = './' + moduleName + (DEV ? '?t=' + Date.now() : '?v=' + BUILD);
   const response = await fetch(url, DEV ? { cache: 'no-store' } : {});
   if (!response.ok) {
@@ -725,11 +727,15 @@ async function instantiateWasm(moduleName, imports) {
   }
   if ((response.headers.get('content-type') || '').toLowerCase().includes('text/html'))
     throw new Error('Received an HTML page instead of ' + moduleName + '. Check the server URL and reload the page.');
+  const identity = identify ? response.clone() : null;
+  let result;
   try {
-    return await WebAssembly.instantiateStreaming(response.clone(), imports);
+    result = await WebAssembly.instantiateStreaming(response.clone(), imports);
   } catch {
-    return await WebAssembly.instantiate(await response.arrayBuffer(), imports);
+    result = await WebAssembly.instantiate(await response.arrayBuffer(), imports);
   }
+  if (identity) result.engineHash = await missionDigest(new Uint8Array(await identity.arrayBuffer()));
+  return result;
 }
 
 // A headless bot replica: its own memory + WASI over the shared assets, silent (the
@@ -765,6 +771,9 @@ async function boot(session) {
   let briefingActive = !!session.mission;
   let sessionFailed = false;
   let missionTicks = 0;
+  let recovering = !!session.resume;
+  let saveBeforeLeave = () => {};
+  const missionTurns = [];
   // Audio is created LAZILY on the first user gesture, never during boot. The constructor
   // is a synchronous IPC to Chrome's shared audio service; on a reload the old game's
   // context is being torn down in the same renderer, and constructing a new one in that
@@ -788,6 +797,7 @@ async function boot(session) {
   addEventListener('pointerdown', ensureAudio);
   addEventListener('keydown', ensureAudio);
   addEventListener('pagehide', () => {
+    saveBeforeLeave();
     sessionFailed = true;
     removeEventListener('pointerdown', ensureAudio);
     removeEventListener('keydown', ensureAudio);
@@ -878,7 +888,7 @@ async function boot(session) {
       return id;
     },
     js_sound_play(id, channel, volume) {
-      if (id < 0) return;
+      if (id < 0 || recovering) return;
       if (soundBuffers[id]) playBuffer(soundBuffers[id], channel, volume);
       else pendingPlay[id] = { channel, volume };   // decode still in flight
     },
@@ -925,9 +935,11 @@ async function boot(session) {
   // each exports the same surface plus openbw_bot_*, so everything else is identical.
   const wasmName = session.bot ? session.bot.module : 'openbw.wasm';
   hb('boot:wasm-fetch');
-  const { instance } = await instantiateWasm(wasmName, imports);
+  const { instance, engineHash } = await instantiateWasm(wasmName, imports, !!session.mission);
   const x = instance.exports;
   memory = x.memory;
+  const saveCompatibility = session.mission ? { mission: session.mission.id, packHash: session.mission.pack.sha256, engineHash, assetHashes: assets.slice(0, 3).map(cyrb53) } : null;
+  if (session.resume) (await campaignSaves()).validateCampaignSave(session.resume, saveCompatibility);
 
   const canvas = $('screen');
   const ctx = canvas.getContext('2d');
@@ -1111,19 +1123,24 @@ async function boot(session) {
   const RACE_NAME = ['Zerg', 'Terran', 'Protoss'];
   const PLAYER_COLORS = ['#f40404', '#0c48cc', '#2cb494', '#88409c', '#f88c14', '#703014', '#cce0d0', '#fcfc38'];
   let gameOverShown = false;
-  const toMainMenu = () => location.replace(location.origin + location.pathname);
+  const toMainMenu = () => location.replace(location.origin + location.pathname + (session.mission ? '?campaign=1' : '?campaign=0'));
   const showGameOver = (title, won) => {
     if (gameOverShown) return;
     gameOverShown = true;
     if (session.mission) {
       stopNarration();
       $('mission-caption').hidden = true;
+      campaignSaves().then(storage => storage.deleteCampaignSave(`auto:${session.mission.id}`)).catch(() => {});
       if (won) {
         const progress = campaignProgress();
         if (!progress.completed.includes(session.mission.id)) progress.completed.push(session.mission.id);
         try { localStorage.setItem(campaignProgressKey, JSON.stringify(progress)); $('go-progress').textContent = 'Mission complete.'; }
         catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
       }
+      const next = campaignMissionIds[campaignMissionIds.indexOf(session.mission.id) + 1];
+      $('go-next').hidden = !won || !next;
+      $('go-next').disabled = !!next && !campaignUnlocked(next);
+      $('go-next').onclick = () => location.replace(`${location.origin}${location.pathname}?mission=${next}&autostart=1&fresh=1`);
     }
     // openbw_stats returns a C-string pointer, not a JS string — read it out of wasm memory.
     const ptr = x.openbw_stats();
@@ -1153,12 +1170,14 @@ async function boot(session) {
   $('go-replay').onclick = (e) => saveReplay(e.currentTarget);
   $('go-close').onclick = () => { x.openbw_reveal_map(); $('gameover').classList.remove('show'); };
   $('go-new').onclick = toMainMenu;
+  $('go-new').textContent = session.mission ? 'Campaign Menu' : 'New game';
   $('go-replay').hidden = !!session.mission;
   $('go-retry').hidden = !session.mission;
   $('go-retry').onclick = () => {
     const address = new URL(location.origin + location.pathname);
     address.searchParams.set('mission', session.mission.id);
     address.searchParams.set('autostart', '1');
+    address.searchParams.set('fresh', '1');
     location.replace(address);
   };
 
@@ -1264,6 +1283,10 @@ async function boot(session) {
     send: (msg) => { if (link && msg.t === 'turn') link.sendTurn(msg.f, msg.d); },
     bot: session.bot || null,
     shadow, bot2,   // set only when spectating a bot-vs-bot match
+    onTurn: session.mission ? (tick, owner, bytes) => {
+      if (owner !== mySlot) throw new Error('Unexpected campaign input owner.');
+      missionTurns.push({ tick, bytes: Array.from(bytes) });
+    } : null,
   });
   let dropped = null;   // set when the peer is gone
   let over = false;     // game finished (win / lose / disconnect) — stop stepping
@@ -1559,7 +1582,7 @@ async function boot(session) {
     for (const id of Object.keys(pendingPlay)) if (pendingPlay[id].channel >= narrationChannel - 1) delete pendingPlay[id];
   }
   function playNarration(index, channel = narrationChannel) {
-    if (!index || sessionFailed) return;
+    if (!index || sessionFailed || recovering) return;
     audio.js_sound_stop(channel);
     for (const id of Object.keys(pendingPlay)) if (pendingPlay[id].channel === channel) delete pendingPlay[id];
     x.openbw_mission_play_sound(index, channel);
@@ -1572,7 +1595,7 @@ async function boot(session) {
       if (generation !== 1 || sequence !== lastMissionSequence + 1 || owner !== mySlot) throw new Error('Invalid mission presentation sequence.');
       lastMissionSequence = sequence;
       if (type === 7 || type === 8) playNarration(sound, type === 8 ? narrationChannel - 1 : narrationChannel);
-      if (type === 7 || type === 9) {
+      if (!recovering && (type === 7 || type === 9)) {
         $('mission-caption-text').textContent = missionString(text);
         $('mission-caption-speaker').textContent = type === 7 ? narratorName(unit) : '';
         $('mission-caption').hidden = false;
@@ -1678,6 +1701,7 @@ async function boot(session) {
       $('mission-hud').hidden = false;
       x.openbw_mission_begin();
       stepClock = performance.now();
+      saveCurrentGame(`auto:${session.mission.id}`).catch(() => {});
     };
     $('briefing-return').onclick = returnToStartup;
   }
@@ -2068,6 +2092,112 @@ async function boot(session) {
     if (sessionFailed) return;
     try { renderFrame(); } catch (error) { failSession(error); }
   }
+  async function saveCurrentGame(key) {
+    if (!session.mission || briefingActive || recovering || over || sessionFailed || x.openbw_outcome()) return;
+    const camera = readCString(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const selection = readCString(x.openbw_wires()).trim().split('\n').filter(Boolean).map(line => Number(line.split('\t')[0]));
+    const payload = {
+      ...saveCompatibility, title: session.mission.title, ticks: missionTicks, frame: x.openbw_frame(), checksum: x.openbw_checksum() >>> 0, savedAt: Date.now(),
+      turns: missionTurns.map(turn => ({ tick: turn.tick, bytes: turn.bytes.slice() })),
+      view: { camera: camera ? [Math.max(0, Number(camera[1])), Math.max(0, Number(camera[2]))] : [0, 0], selection },
+      caption: { text: $('mission-caption-text').textContent, speaker: $('mission-caption-speaker').textContent, remaining: $('mission-caption').hidden ? 0 : Math.max(0, captionUntil - missionTicks) },
+    };
+    try {
+      const storage = await campaignSaves();
+      await storage.writeCampaignSave(key, storage.sealCampaignSave(payload));
+      $('save-status').textContent = `${key.startsWith('auto:') ? 'Autosaved' : 'Saved'} ${new Date(payload.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return true;
+    } catch (error) {
+      $('save-status').textContent = `Save failed: ${error.message}`;
+      throw error;
+    }
+  }
+  if (session.mission) {
+    $('campaign-save-controls').hidden = false;
+    const saveButton = $('save-game');
+    saveButton.onclick = async () => {
+      saveButton.disabled = true;
+      try { await saveCurrentGame($('save-slot').value); } catch {}
+      finally { saveButton.disabled = false; }
+    };
+    $('campaign-menu').onclick = async () => {
+      if ($('campaign-menu').dataset.discard === '1') { toMainMenu(); return; }
+      try {
+        if (!over && !briefingActive && !await saveCurrentGame(`auto:${session.mission.id}`)) return;
+        toMainMenu();
+      } catch {
+        $('campaign-menu').dataset.discard = '1';
+        $('campaign-menu').innerHTML = '<i data-lucide="arrow-left"></i>Leave Without Saving';
+        window.lucide?.createIcons();
+      }
+    };
+    const autosave = () => saveCurrentGame(`auto:${session.mission.id}`).catch(() => {});
+    const saveTimer = setInterval(autosave, 15000);
+    saveBeforeLeave = autosave;
+    document.addEventListener('visibilitychange', () => { if (document.hidden) autosave(); });
+    addEventListener('pagehide', () => clearInterval(saveTimer), { once: true });
+    pauseBtn.addEventListener('click', () => { if (paused) autosave(); });
+    if (session.resume) {
+      clearTimeout(stepTimer);
+      x.openbw_set_paused(1);
+      const saved = session.resume;
+      $('overlay').style.display = 'grid';
+      $('controls').style.display = 'none';
+      $('mission-briefing').hidden = true;
+      briefingActive = false;
+      briefingPlaying = false;
+      x.openbw_mission_begin();
+      stopNarration();
+      let turn = 0;
+      while (missionTicks < saved.ticks) {
+        session.signal?.throwIfAborted();
+        const until = performance.now() + 16;
+        do {
+          while (saved.turns[turn]?.tick === missionTicks) {
+            const command = saved.turns[turn++];
+            const input = x.openbw_in_ptr(command.bytes.length);
+            new Uint8Array(memory.buffer).set(command.bytes, input);
+            x.openbw_apply(mySlot, command.bytes.length);
+          }
+          x.openbw_step();
+          missionTicks++;
+          consumeMissionEvents();
+          if (x.openbw_outcome()) throw new Error('Saved game reached an unexpected mission outcome.');
+        } while (missionTicks < saved.ticks && performance.now() < until);
+        setMsg(`Restoring ${session.mission.title}: ${Math.floor(missionTicks * 100 / Math.max(1, saved.ticks))}%`);
+        setBar(missionTicks / Math.max(1, saved.ticks));
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+      session.signal?.throwIfAborted();
+      if (turn !== saved.turns.length || x.openbw_frame() !== saved.frame || (x.openbw_checksum() >>> 0) !== saved.checksum) throw new Error('Saved game could not be reconstructed exactly.');
+      for (const command of saved.turns) missionTurns.push({ tick: command.tick, bytes: command.bytes.slice() });
+      lockstep.frame = saved.ticks;
+      lockstep.nextLocalFrame = saved.ticks;
+      x.openbw_render(performance.now());
+      const camera = readCString(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      if (camera) x.openbw_pan(saved.view.camera[0] - Number(camera[1]), saved.view.camera[1] - Number(camera[2]));
+      for (let index = 0; index < saved.view.selection.length; index++) x.openbw_debug_select(saved.view.selection[index], index ? 1 : 0);
+      if (saved.caption?.remaining) {
+        $('mission-caption-text').textContent = saved.caption.text;
+        $('mission-caption-speaker').textContent = saved.caption.speaker;
+        $('mission-caption').hidden = false;
+        captionUntil = missionTicks + saved.caption.remaining;
+      }
+      recovering = false;
+      paused = true;
+      x.openbw_set_paused(1);
+      applyPause();
+      $('mission-hud').hidden = false;
+      $('overlay').style.display = 'none';
+      $('save-status').textContent = 'Saved game restored.';
+      stepClock = performance.now();
+      stepTimer = setTimeout(stepLoop, stepMs);
+    }
+    const address = new URL(location.href);
+    address.searchParams.delete('fresh');
+    address.searchParams.delete('resume');
+    history.replaceState(null, '', address);
+  }
   requestAnimationFrame(frame);
 }
 
@@ -2174,21 +2304,32 @@ let campaignDownload = null;
 function campaignProgress() {
   try {
     const value = JSON.parse(localStorage.getItem(campaignProgressKey) || 'null');
-    if (value?.version === 1 && Array.isArray(value.completed)) return value;
+    if (value?.version === 1 && Array.isArray(value.completed)) return { version: 1, completed: campaignMissionIds.filter(id => value.completed.includes(id)) };
   } catch {}
   return { version: 1, completed: [] };
+}
+function campaignUnlocked(missionId) {
+  const index = campaignMissionIds.indexOf(missionId);
+  const completed = campaignProgress().completed;
+  return index >= 0 && campaignMissionIds.slice(0, index).every(id => completed.includes(id));
 }
 function selectGameMode(campaign) {
   if (!campaign) probeMeleeMaps();
   $('mode-sandbox').setAttribute('aria-selected', String(!campaign));
   $('mode-campaign').setAttribute('aria-selected', String(campaign));
   $('campaign-setup').hidden = !campaign;
+  $('overlay').classList.toggle('campaign-mode', campaign);
   for (const id of ['map-row', 'map-info', 'slots', 'spectate-row', 'lobby-hint', 'sandbox-start', 'mp']) $(id).hidden = campaign;
   if (campaign) loadSelectedMission();
 }
 function loadSelectedMission() {
+  for (const option of $('mission-select').options) option.disabled = !campaignUnlocked(option.value);
+  if (!campaignUnlocked($('mission-select').value)) $('mission-select').value = campaignMissionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || campaignMissionIds[0];
   const missionId = $('mission-select').value;
   if (!campaignMissionIds.includes(missionId)) return;
+  $('campaign-selected-name').textContent = $('mission-select').selectedOptions[0].textContent;
+  renderCampaignSelection();
+  refreshCampaignSaves(missionId);
   campaignManifest = null;
   const complete = campaignProgress().completed.includes(missionId);
   $('mission-size').textContent = complete ? 'Completed' : '';
@@ -2201,6 +2342,76 @@ function loadSelectedMission() {
     campaignManifest = manifest;
     $('mission-size').textContent = `${(manifest.pack.bytes / 1048576).toFixed(2)} MB${complete ? ' - completed' : ''}`;
   }).catch(error => { if ($('mission-select').value === missionId) $('mission-size').textContent = error.message; });
+}
+function renderCampaignSelection() {
+  const completed = campaignProgress().completed;
+  const list = $('campaign-missions');
+  if (!list.querySelector('input')) {
+    for (const option of $('mission-select').options) {
+      const row = document.createElement('label');
+      row.className = 'mission-row';
+      const radio = document.createElement('input');
+      radio.type = 'radio'; radio.name = 'campaign-mission'; radio.value = option.value;
+      radio.onchange = () => { $('mission-select').value = radio.value; loadSelectedMission(); };
+      const name = document.createElement('span');
+      name.className = 'mission-name'; name.textContent = option.textContent;
+      const state = document.createElement('span');
+      state.className = 'mission-state';
+      row.append(radio, name, state); list.append(row);
+    }
+  }
+  for (const radio of list.querySelectorAll('input')) {
+    radio.disabled = !campaignUnlocked(radio.value);
+    radio.checked = radio.value === $('mission-select').value;
+    const state = radio.parentElement.querySelector('.mission-state');
+    state.textContent = radio.disabled ? 'Locked' : completed.includes(radio.value) ? 'Completed' : 'Available';
+    state.classList.toggle('completed', !radio.disabled && completed.includes(radio.value));
+  }
+  $('campaign-progress').querySelector('span').textContent = `${completed.length} of 10 completed`;
+  $('campaign-progress').querySelector('progress').value = completed.length;
+}
+function campaignAddress(mission, resume = null, fresh = false) {
+  const address = new URL(location.origin + location.pathname);
+  address.searchParams.set('mission', mission);
+  address.searchParams.set('autostart', '1');
+  if (resume) address.searchParams.set('resume', resume);
+  if (fresh) address.searchParams.set('fresh', '1');
+  return address;
+}
+async function refreshCampaignSaves(mission) {
+  try {
+    const storage = await campaignSaves();
+    const summaries = await storage.listCampaignSaves();
+    if ($('mission-select').value !== mission) return;
+    const autosave = summaries.find(save => save.key === `auto:${mission}`);
+    $('campaign-resume').hidden = !autosave;
+    $('campaign-resume').onclick = () => location.replace(campaignAddress(mission, autosave.key));
+    const container = $('campaign-saves');
+    container.replaceChildren();
+    if (!summaries.length) return;
+    const heading = document.createElement('h3'); heading.textContent = 'Saved Games'; container.append(heading);
+    for (const save of summaries) {
+      const row = document.createElement('div'); row.className = 'campaign-save-row';
+      const label = document.createElement('div');
+      const title = document.createElement('strong'); title.textContent = save.title;
+      const detail = document.createElement('small');
+      const seconds = Math.floor(save.frame / 16);
+      detail.textContent = `${save.key.startsWith('auto:') ? 'Autosave' : `Slot ${save.key.split(':')[1]}`} - ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} - ${new Date(save.savedAt).toLocaleString()}`;
+      label.append(title, detail);
+      const resume = document.createElement('button'); resume.type = 'button'; resume.title = resume.ariaLabel = `Resume ${save.title}`;
+      resume.innerHTML = '<i data-lucide="play"></i>'; resume.disabled = !campaignUnlocked(save.mission);
+      resume.onclick = () => location.replace(campaignAddress(save.mission, save.key));
+      const remove = document.createElement('button'); remove.type = 'button'; remove.title = remove.ariaLabel = `Delete ${save.title} ${save.key.startsWith('auto:') ? 'autosave' : `slot ${save.key.split(':')[1]}`}`;
+      remove.innerHTML = '<i data-lucide="trash-2"></i>';
+      remove.onclick = async () => {
+        if (remove.dataset.confirm !== '1') { remove.dataset.confirm = '1'; remove.title = remove.ariaLabel = 'Confirm saved game deletion'; $('mission-size').textContent = `Delete ${save.title} saved game?`; return; }
+        try { await storage.deleteCampaignSave(save.key); await refreshCampaignSaves($('mission-select').value); }
+        catch (error) { $('mission-size').textContent = `Saved game could not be deleted: ${error.message}`; }
+      };
+      row.append(label, resume, remove); container.append(row);
+    }
+    window.lucide?.createIcons();
+  } catch (error) { $('mission-size').textContent = `Saved games unavailable: ${error.message}`; }
 }
 function validateMissionManifest(manifest, missionId) {
   if (!campaignMissionIds.includes(missionId) || manifest.schemaVersion !== 1 || manifest.id !== missionId || !Number.isInteger(manifest.humanSlot) || manifest.humanSlot < 0 || manifest.humanSlot >= 8 || ![0, 1, 2].includes(manifest.race) || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files)) throw new Error('Unsupported mission manifest.');
@@ -2218,10 +2429,12 @@ function campaignFailure(error) {
   $('load-retry').hidden = false;
   $('load-return').hidden = false;
   $('mission-briefing').hidden = true;
+  $('load-fresh').hidden = !campaignMissionIds.includes($('mission-select').value);
   setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : `Mission unavailable: ${error.message}`);
 }
 const returnToStartup = () => location.replace(location.origin + location.pathname);
 $('load-return').onclick = returnToStartup;
+$('load-fresh').onclick = () => location.replace(campaignAddress($('mission-select').value, null, true));
 $('load-retry').onclick = () => location.reload();
 $('load-cancel').onclick = () => campaignDownload?.abort();
 $('mode-sandbox').onclick = () => selectGameMode(false);
@@ -2230,6 +2443,8 @@ $('mission-select').onchange = loadSelectedMission;
 $('campaign-start').onclick = async () => {
   $('campaign-start').disabled = true;
   $('mission-select').disabled = true;
+  $('campaign-missions').disabled = true;
+  $('campaign-resume').disabled = true;
   campaignDownload = new AbortController();
   $('load-actions').hidden = false;
   $('load-cancel').hidden = false;
@@ -2238,6 +2453,16 @@ $('campaign-start').onclick = async () => {
   try {
     const missionId = $('mission-select').value;
     if (!campaignMissionIds.includes(missionId)) throw new Error('Unsupported mission selection.');
+    if (!campaignUnlocked(missionId)) throw new Error('Complete the preceding missions first.');
+    const parameters = new URLSearchParams(location.search);
+    const resumeKey = parameters.get('resume') || (parameters.get('autostart') === '1' && parameters.get('fresh') !== '1' ? `auto:${missionId}` : null);
+    let resume = null;
+    if (resumeKey) {
+      try { resume = await (await campaignSaves()).readCampaignSave(resumeKey); }
+      catch (error) { if (parameters.has('resume')) throw error; $('mission-size').textContent = `Recovery unavailable: ${error.message}`; throw error; }
+      if (!resume && parameters.has('resume')) throw new Error('Saved game was not found.');
+      if (resume && resume.mission !== missionId) throw new Error('Saved game belongs to a different mission.');
+    }
     if (campaignManifest?.id !== missionId) campaignManifest = null;
     if (!campaignManifest) {
       const response = await fetch(`data/campaign/${missionId}.json`, { signal: campaignDownload.signal });
@@ -2247,9 +2472,10 @@ $('campaign-start').onclick = async () => {
     }
     const address = new URL(location.href);
     address.searchParams.set('mission', campaignManifest.id);
+    address.searchParams.set('autostart', '1');
     history.replaceState(null, '', address);
     $('controls').style.display = 'none';
-    await boot({ mission: campaignManifest, signal: campaignDownload.signal, slots: [{ slot: campaignManifest.humanSlot, race: campaignManifest.race }], mySlot: campaignManifest.humanSlot });
+    await boot({ mission: campaignManifest, resume, signal: campaignDownload.signal, slots: [{ slot: campaignManifest.humanSlot, race: campaignManifest.race }], mySlot: campaignManifest.humanSlot });
   } catch (error) { campaignFailure(error); }
 };
 $('campaign-delete').onclick = async () => {
@@ -2280,11 +2506,16 @@ $('campaign-reset').onclick = () => {
   catch { $('mission-size').textContent = 'Campaign progress could not be reset.'; }
   delete button.dataset.confirm;
   button.title = button.ariaLabel = 'Reset campaign progress';
+  $('mission-select').value = campaignMissionIds[0];
+  loadSelectedMission();
 };
 if (campaignMissionIds.includes(selectedMission)) {
   $('mission-select').value = selectedMission;
   selectGameMode(true);
   if (new URLSearchParams(location.search).get('autostart') === '1') $('campaign-start').click();
+} else if (!location.search || new URLSearchParams(location.search).get('campaign') === '1') {
+  $('mission-select').value = campaignMissionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || campaignMissionIds[0];
+  selectGameMode(true);
 }
 if (window.lucide) window.lucide.createIcons();
 
@@ -2391,7 +2622,7 @@ function probeMeleeMaps() {
     for (const m of found) if (m) mapSelect.add(new Option(m.name, m.file));
   });
 }
-if (!campaignMissionIds.includes(selectedMission)) probeMeleeMaps();
+if ($('mode-sandbox').getAttribute('aria-selected') === 'true') probeMeleeMaps();
 
 // Race is picked in the lobby, not before hosting — the handshake only carries the
 // starting value, and either side can change it until the countdown locks.

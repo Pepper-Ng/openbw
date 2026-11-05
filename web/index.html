@@ -416,6 +416,43 @@
   #campaign-start, #load-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
   #campaign-tools { display: flex; gap: 8px; margin-top: 16px; }
   #campaign-tools button { width: 44px; height: 44px; padding: 10px; border-radius: 4px; }
+  #overlay.campaign-mode { background: linear-gradient(160deg, #171a1c, #080a0c 70%); }
+  #overlay.campaign-mode:has(#controls[style*="block"]) #bar, #overlay.campaign-mode:has(#controls[style*="block"]) #msg { display: none; }
+  #play-modes button[aria-selected="false"] { background: #28353b; color: #aebac2; }
+  #play-modes button[aria-selected="true"] { background: #d7bc83; color: #151a1d; }
+  #overlay.campaign-mode .card { box-sizing: border-box; width: min(680px, 100%); max-width: 680px; padding: 0 12px; }
+  #campaign-setup h2 { font-size: 19px; margin: 20px 0 4px; color: #e2e8f0; }
+  #campaign-progress { display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #aeb8bf; font-size: 12px; margin-bottom: 14px; }
+  #campaign-progress progress { width: 140px; height: 7px; accent-color: #69b587; }
+  #campaign-missions { border: 0; padding: 0; margin: 0; min-width: 0; }
+  #campaign-missions legend { position: absolute; width: 1px; height: 1px; overflow: hidden; }
+  #campaign-missions .mission-row { display: flex; align-items: center; gap: 12px; padding: 12px 8px; margin: 0; border-bottom: 1px solid #30383c; cursor: pointer; min-height: 28px; }
+  #campaign-missions .mission-row:has(input:checked) { background: #25333a; box-shadow: inset 3px 0 #e2bd73; }
+  #campaign-missions .mission-row:has(input:disabled) { color: #758087; cursor: default; }
+  .mission-row input { flex: 0 0 auto; accent-color: #e2bd73; }
+  .mission-row .mission-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mission-row .mission-state { font-size: 11px; color: #96a4ad; flex: 0 0 auto; }
+  .mission-row .mission-state.completed { color: #85c89c; }
+  #campaign-start, #campaign-resume { display: inline-flex; gap: 8px; align-items: center; min-height: 42px; }
+  #campaign-launch { position: sticky; top: -1px; z-index: 1; background: #141a1e; padding: 10px 0; border-bottom: 1px solid #49545c; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  #campaign-launch-info { flex: 1; min-width: 150px; }
+  #campaign-selected-name { display: block; font-size: 14px; color: #e2e8f0; overflow-wrap: anywhere; }
+  #campaign-launch #mission-size { margin: 3px 0 0; font-size: 11px; }
+  #campaign-launch button { margin: 0; }
+  #campaign-resume { background: #7bc79c; }
+  #campaign-saves { border-top: 1px solid #30383c; margin-top: 22px; }
+  #campaign-saves h3 { font-size: 14px; margin: 14px 0 6px; }
+  .campaign-save-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px; align-items: center; gap: 6px; border-bottom: 1px solid #30383c; padding: 9px 0; }
+  .campaign-save-row strong, .campaign-save-row small { display: block; overflow-wrap: anywhere; }
+  .campaign-save-row small { color: #96a4ad; font-size: 11px; }
+  .campaign-save-row button { display: grid; place-items: center; width: 38px; height: 38px; padding: 9px; margin: 0; background: #28353b; color: #dce5e9; }
+  .campaign-save-row button:disabled { opacity: .4; cursor: default; }
+  #campaign-save-controls { margin-top: 12px; border-top: 1px solid #39434a; padding-top: 8px; }
+  #campaign-save-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+  #campaign-save-controls select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 6px; background: #161d22; color: #dce5e9; border: 1px solid #56616a; border-radius: 4px; font: inherit; }
+  #save-status { font-size: 11px; color: #adbdc5; margin-top: 8px; overflow-wrap: anywhere; }
+  #settings:has(#campaign-save-controls:not([hidden])) { box-sizing: border-box; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 60px); overflow-y: auto; z-index: 8; background: #111923; }
+  #campaign-resume[hidden], #campaign-save-controls[hidden], #go-next[hidden], #load-fresh[hidden] { display: none !important; }
   #load-actions { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
   #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #load-actions button[hidden] { display: none !important; }
   #mission-briefing { position: fixed; inset: 0; z-index: 15; display: grid; align-content: center; overflow: auto; padding: 24px; box-sizing: border-box; background: rgba(5, 12, 16, .96); color: #e2e8f0; }
@@ -483,6 +520,17 @@
   </label>
   <label class="desktop-setting" title="Capture the mouse inside the window (click the game to engage; Esc releases it). Edge-scrolling always works while locked."><input type="checkbox" id="opt-mouselock"> Lock mouse to window</label>
   <button id="opt-fullscreen" class="backmenu">Fullscreen</button>
+  <div id="campaign-save-controls" hidden>
+    <label for="save-slot">Save Game</label>
+    <select id="save-slot" aria-label="Save slot">
+      <option value="slot:1">Slot 1</option>
+      <option value="slot:2">Slot 2</option>
+      <option value="slot:3">Slot 3</option>
+    </select>
+    <button id="save-game" type="button"><i data-lucide="save"></i>Save Game</button>
+    <button id="campaign-menu" type="button"><i data-lucide="arrow-left"></i>Campaign Menu</button>
+    <div id="save-status" role="status" aria-live="polite"></div>
+  </div>
   <div id="opt-debug" style="display:none">
     <button id="dbg-victory">Debug: force Victory</button>
     <button id="dbg-defeat">Debug: force Defeat</button>
@@ -544,6 +592,7 @@
     <div class="go-actions">
       <button id="go-replay">Save replay (.rep)</button>
       <button id="go-retry" hidden>Retry Mission</button>
+      <button id="go-next" hidden><i data-lucide="arrow-right"></i>Next Mission</button>
       <button id="go-close" class="go-ghost">Look at map</button>
       <button id="go-new" class="go-ghost">New game</button>
     </div>
@@ -558,6 +607,7 @@
     <button id="load-cancel" type="button" hidden><i data-lucide="x"></i>Cancel</button>
     <button id="load-retry" type="button"><i data-lucide="rotate-cw"></i>Retry</button>
     <button id="load-return" type="button"><i data-lucide="arrow-left"></i>Return</button>
+    <button id="load-fresh" type="button" hidden><i data-lucide="rotate-ccw"></i>Start Fresh</button>
   </div>
   <div id="mobilewarn">
     📱 Touch controls: <b>tap</b> to select, <b>drag</b> to pan, <b>long-press</b> to
@@ -570,8 +620,9 @@
       <button id="mode-campaign" type="button" role="tab" aria-selected="false"><i data-lucide="book-open"></i>Campaign</button>
     </div>
     <div id="campaign-setup" hidden>
-      <label for="mission-select">Terran Campaign</label>
-      <select id="mission-select">
+      <h2>Terran Campaign</h2>
+      <div id="campaign-progress"><span>0 of 10 completed</span><progress max="10" value="0" aria-label="Campaign progress"></progress></div>
+      <select id="mission-select" hidden aria-label="Mission">
         <option value="terran01">1. Wasteland</option>
         <option value="terran02">2. Backwater Station</option>
         <option value="terran03">3. Desperate Alliance</option>
@@ -583,8 +634,13 @@
         <option value="terran09">9. New Gettysburg</option>
         <option value="terran10">10. The Hammer Falls</option>
       </select>
-      <div id="mission-size" role="status" aria-live="polite"></div>
-      <button id="campaign-start" type="button"><i data-lucide="play"></i>Start Mission</button>
+      <div id="campaign-launch">
+        <div id="campaign-launch-info"><strong id="campaign-selected-name">1. Wasteland</strong><div id="mission-size" role="status" aria-live="polite"></div></div>
+        <button id="campaign-resume" type="button" hidden><i data-lucide="play"></i>Resume</button>
+        <button id="campaign-start" type="button"><i data-lucide="play"></i>Start Mission</button>
+      </div>
+      <fieldset id="campaign-missions"><legend>Missions</legend></fieldset>
+      <div id="campaign-saves" aria-label="Saved games"></div>
       <div id="campaign-tools">
         <button id="campaign-delete" type="button" title="Delete downloaded missions" aria-label="Delete downloaded missions"><i data-lucide="trash-2"></i></button>
         <button id="campaign-reset" type="button" title="Reset campaign progress" aria-label="Reset campaign progress"><i data-lucide="rotate-ccw"></i></button>
