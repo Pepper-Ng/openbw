@@ -16,6 +16,7 @@ const missions = {
   terran07: { title: 'The Trump Card', order: 7, source: 'terran08', scenarioHash: 'dab280d946f059845ba3084da11f159091bfbc24c4cd54eb2a352ff1a165f515', units: 213, triggers: 10, sounds: 16 },
   terran08: { title: 'The Big Push', order: 8, source: 'terran09', scenarioHash: '083be62ec869ddf049f816eaf873355c57381b869581717234f3499b39ab23c7', units: 281, triggers: 13, sounds: 15 },
   terran09: { title: 'New Gettysburg', order: 9, source: 'terran11', scenarioHash: '1b55e907af8c4c5c6c5e0adcc775b8fe82e263d7afb9eba70ded40d11d5e412c', units: 255, triggers: 11, sounds: 22 },
+  terran10: { title: 'The Hammer Falls', order: 10, source: 'terran12', scenarioHash: '2a3efca711b5a75ffd0ea569802fe0bd4dbfcfbfa0b0f308d897c0dca698fd7d', units: 331, triggers: 7, sounds: 14 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({

@@ -1581,6 +1581,55 @@ static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_dat
 	}
 }
 
+static void hammer_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+		unit_t* raynor = nullptr;
+		unit_t* cannon = nullptr;
+		for (unit_t* unit : ptr(st.player_units[1])) {
+			functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture) raynor = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Special_Ion_Cannon) cannon = unit;
+		require(raynor && cannon && raynor->sprite->owner == 2, "original rescued Raynor and Ion Cannon actors");
+		if (scenario == 1) functions.kill_unit(raynor);
+		if (scenario == 2 || scenario == 3) {
+			a_vector<unit_t*> victims;
+			for (int owner : (scenario == 2 ? a_vector<int>{1} : a_vector<int>{0, 6})) for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (scenario == 2 || (functions.ut_building(unit) && unit != cannon)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		}
+		if (scenario == 4) functions.kill_unit(cannon);
+		int outcome_budget = 64;
+		for (int index : {2, 4}) for (const auto& action : st.game->triggers.at(index).actions) {
+			if (!action.type) break;
+			if (action.type == 4 || action.type == 7) {
+				int duration = action.type == 7 ? functions.trigger_transmission_duration(action) : action.time_n;
+				outcome_budget += (std::max(42, duration) + 41) / 42 + 3;
+			}
+		}
+		for (int tick = 0; tick != outcome_budget && !st.players[1].victory_state; ++tick) functions.next_frame();
+		if (scenario == 0 || scenario == 3) require(!st.players[1].victory_state, "idle or other enemy buildings destroyed cannot replace the Ion Cannon objective");
+		if (scenario == 1 || scenario == 2) require(st.players[1].victory_state == 2, "original Raynor or human-force loss reaches defeat");
+		if (scenario == 4) require(st.players[1].victory_state >= 3 && st.building_counts[0] > 0, "destroying the original Ion Cannon wins without requiring all enemy bases destroyed");
+		printf("The Hammer Falls original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1595,6 +1644,7 @@ int main(int argc, char** argv) {
 	bool trump = campaign && argc > 4 && !strcmp(argv[4], "terran07");
 	bool big_push = campaign && argc > 4 && !strcmp(argv[4], "terran08");
 	bool gettysburg = campaign && argc > 4 && !strcmp(argv[4], "terran09");
+	bool hammer = campaign && argc > 4 && !strcmp(argv[4], "terran10");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1609,6 +1659,64 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (hammer) {
+			player.st().strict_triggers = true;
+			state_functions functions(player.st());
+			require(player.st().players[1].controller == player_t::controller_occupied, "The Hammer Falls preserves original human slot one");
+			require(player.st().players[0].force != player.st().players[6].force && player.st().alliances[0][6] && player.st().alliances[6][0], "original UMS computers begin allied across different forces");
+			require(!player.st().alliances[0][1] && !player.st().alliances[6][1] && !player.st().alliances[1][0] && !player.st().alliances[1][6], "both Hammer Falls enemy forces remain hostile to the human");
+			for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+			require(player.st().current_minerals[1] == 500 && player.st().current_gas[1] == 150, "original Hammer Falls starting resources");
+			require(!player.st().players[1].victory_state, "The Hammer Falls does not invent an opening outcome");
+			printf("The Hammer Falls normal initialization passed.\n");
+			for (unit_t* unit : ptr(player.st().player_units[1])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			for (unit_t* unit : ptr(player.st().player_units[6])) if (unit->unit_type->id == UnitTypes::Special_Ion_Cannon) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			int rate_budget = 15000 + 2 * functions.get_unit_type(UnitTypes::Terran_Control_Tower)->build_time + 1000;
+			for (int tick = 0; tick != rate_budget && !player.st().campaign_ai[6].nuke_interval; ++tick) functions.next_frame();
+			require(player.st().campaign_ai[6].nuke_interval == 15 * 60 * 15, "original T12N fifteen-minute nuke rate is retained");
+			printf("The Hammer Falls original nuclear cadence parsed.\n");
+			auto& nuclear_ai = player.st().campaign_ai[6];
+			int original_due = nuclear_ai.next_nuke_frame;
+			require(!functions.try_campaign_ai_nuke(6) && nuclear_ai.next_nuke_frame == original_due, "missing ready missile cannot reset the authored nuclear cadence");
+			bool missile_ready = false;
+			bool launched = false;
+			std::array<bool, 2> ground_fire{};
+			std::array<bool, 2> air_fire{};
+			int combat_deadline = 45502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Terran_Battlecruiser)->build_time;
+			while (player.st().current_frame < combat_deadline && !(launched && ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1])) {
+				for (unit_t* unit : ptr(player.st().player_units[1])) {
+					functions.u_set_status_flag(unit, unit_t::status_flag_invincible, unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture);
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_t* unit : ptr(player.st().player_units[6])) {
+					if (unit->unit_type->id == UnitTypes::Terran_Nuclear_Silo && unit->building.silo.ready) missile_ready = true;
+					if (unit->unit_type->id == UnitTypes::Terran_Ghost && unit->order_type->id == Orders::NukeTrack && unit->connected_unit && unit->connected_unit->unit_type->id == UnitTypes::Terran_Nuclear_Missile) launched = true;
+				}
+				for (int index = 0; index != 2; ++index) for (unit_id id : player.st().campaign_ai[index ? 6 : 0].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					const unit_t* attacker = functions.unit_attacking_unit(unit);
+					if (attacker->ground_weapon_cooldown || attacker->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire[index] = true;
+						else ground_fire[index] = true;
+					}
+				}
+				if (player.st().current_frame < original_due) require(!launched && nuclear_ai.next_nuke_frame == original_due, "scripted nuclear launch cannot run before its original cadence");
+			}
+			require(missile_ready && launched && nuclear_ai.next_nuke_frame > original_due, "T12N pays for a native missile and launches it through an original Ghost at the scripted cadence");
+			if (!ground_fire[0] || !ground_fire[1] || !air_fire[0] || !air_fire[1]) {
+				printf("Hammer combat diagnostic: frame=%d outcome=%d ground0=%d air0=%d ground6=%d air6=%d human_actors=%d human_buildings=%d\n", player.st().current_frame, player.st().players[1].victory_state, ground_fire[0], air_fire[0], ground_fire[1], air_fire[1], count_units(player.st(), 1), player.st().building_counts[1]);
+				for (const auto& script : player.st().campaign_ai_scripts) printf("Hammer script state: owner=%d position=%zu wait=%d\n", script.owner, script.position, script.wait);
+			}
+			require(ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1], "both original Hammer Falls enemy scripts deploy weapon-firing ground and air parties");
+			printf("The Hammer Falls original paid nuclear production and launch passed.\n");
+			printf("The Hammer Falls original ground and air attacks passed.\n");
+			hammer_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (gettysburg) {
 			player.st().strict_triggers = true;
 			require(player.st().players[0].controller == player_t::controller_occupied, "New Gettysburg preserves original human slot zero");
@@ -1638,6 +1746,7 @@ int main(int argc, char** argv) {
 					functions.u_set_status_flag(unit, unit_t::status_flag_invincible, unit->unit_type->id == UnitTypes::Hero_Sarah_Kerrigan);
 					unit->defensive_matrix_hp = fp8::integer(64000);
 					unit->defensive_matrix_timer = 250;
+					if (owner == 0 && functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
 				}
 				functions.next_frame();
 				for (int index = 0; index != 2; ++index) for (unit_id id : player.st().campaign_ai[index ? 3 : 1].attacking) {

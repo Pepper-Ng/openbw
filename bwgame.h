@@ -266,6 +266,8 @@ struct state_base_copyable {
 		int minimum_force = 0;
 		int maximum_force = 0;
 		int attack_deadline = 0;
+		int nuke_interval = 0;
+		int next_nuke_frame = 0;
 		xy home{};
 		size_t military_region = ~(size_t)0;
 		unit_id military_target{};
@@ -4370,6 +4372,11 @@ struct state_functions {
 		if (unit_is(u, UnitTypes::Zerg_Larva)) {
 			if (!u->order_queue.empty()) activate_next_order(u);
 			else order_Larva(u);
+			return;
+		}
+		if (unit_is(u, UnitTypes::Terran_Nuclear_Silo)) {
+			if (!u->order_queue.empty()) activate_next_order(u);
+			else set_unit_order(u, u->unit_type->human_ai_idle);
 			return;
 		}
 		if (!ut_building(u) || u->unit_type->human_ai_idle->id != Orders::Nothing) error("unsupported ComputerAI behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
@@ -19332,6 +19339,10 @@ struct state_functions {
 						selected->second -= unit->unit_type->space_required;
 					}
 				}
+				else if (opcode == 45) {
+					ai.nuke_interval = read(1) * 60 * 15;
+					ai.next_nuke_frame = st.current_frame + ai.nuke_interval;
+				}
 				else if (opcode == 46) ai.maximum_force = read(2);
 				else if (opcode == 47) {
 					auto affected = [&](unit_id id) {
@@ -19500,6 +19511,31 @@ struct state_functions {
 		return 0;
 	}
 
+	bool try_campaign_ai_nuke(int owner) {
+		bool ready = false;
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit_is(unit, UnitTypes::Terran_Nuclear_Silo) && !unit_dying(unit) && u_completed(unit) && unit->building.silo.ready && unit->building.silo.nuke) ready = true;
+		}
+		if (!ready) return false;
+		for (unit_t* ghost : ptr(st.player_units[owner])) {
+			if (!unit_is(ghost, UnitTypes::Terran_Ghost) || unit_dying(ghost) || us_hidden(ghost) || !u_completed(ghost) || unit_is_disabled(ghost) || u_hallucination(ghost)) continue;
+			auto order = ghost->order_type->id;
+			if (order != Orders::Guard && order != Orders::PlayerGuard && order != Orders::ComputerAI && order != Orders::Nothing) continue;
+			unit_t* target = find_nearest_unit(ghost, map_bounds(), [&](const unit_t* unit) {
+				return unit->owner < 8 && unit_target_is_enemy(ghost, unit) && ut_building(unit) && !unit_dying(unit) && !us_hidden(unit) && !u_invincible(unit) && is_reachable(ghost, unit);
+			});
+			if (!target) continue;
+			unit_id id = get_unit_id(ghost);
+			auto& ai = st.campaign_ai[owner];
+			ai.attack_party.erase(std::remove(ai.attack_party.begin(), ai.attack_party.end(), id), ai.attack_party.end());
+			ai.attacking.erase(std::remove(ai.attacking.begin(), ai.attacking.end(), id), ai.attacking.end());
+			ai.defending.erase(std::remove_if(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.unit == id; }), ai.defending.end());
+			issue_order(ghost, false, get_order_type(Orders::NukePaint), {target->sprite->position, nullptr});
+			return true;
+		}
+		return false;
+	}
+
 	void progress_campaign_ai_town(int owner) {
 		if (st.current_frame % 8) return;
 		auto& ai = st.campaign_ai.at(owner);
@@ -19527,6 +19563,8 @@ struct state_functions {
 			if (unit->order_type->id == Orders::DroneStartBuild && unit->order_unit_type) ++counts[unit->order_unit_type->id];
 		}
 		auto unavailable = [&](const unit_t* unit) {
+			auto order = unit->order_type->id;
+			if (order == Orders::NukePaint || order == Orders::CastNuclearStrike || order == Orders::NukeUnit || order == Orders::NukeTrack) return true;
 			unit_id id = get_unit_id(unit);
 			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end();
 		};
@@ -19724,8 +19762,10 @@ struct state_functions {
 		int transport_space = 0;
 		for (unit_id id : ai.transport_passengers) transport_space += get_unit(id)->unit_type->space_required;
 		if (transport_space && counts[UnitTypes::Terran_Dropship] < std::min(3, (transport_space + 7) / 8)) requests.push_back({90, UnitTypes::Terran_Dropship, 0});
+		if (ai.nuke_interval) requests.push_back({80, UnitTypes::Terran_Nuclear_Missile, 0});
 		std::stable_sort(requests.begin(), requests.end(), [](const auto& left, const auto& right) { return left.priority > right.priority; });
 		for (const auto& request : requests) campaign_ai_produce(owner, get_unit_type(request.type), request.town);
+		if (ai.nuke_interval && st.current_frame >= ai.next_nuke_frame && try_campaign_ai_nuke(owner)) ai.next_nuke_frame = st.current_frame + ai.nuke_interval;
 	}
 
 	bool campaign_ai_produce(int owner, const unit_type_t* type, size_t town = 0) {
@@ -22931,6 +22971,14 @@ struct game_load_functions : state_functions {
 			if (!setup_f) {
 				if (player.controller == player_t::controller_open) player.controller = player_t::controller_occupied;
 				if (player.controller == player_t::controller_computer) player.controller = player_t::controller_computer_game;
+			}
+		}
+		if (use_map_settings) {
+			for (size_t owner = 0; owner != 8; ++owner) {
+				if (st.players[owner].controller != player_t::controller_computer_game && st.players[owner].controller != player_t::controller_computer) continue;
+				for (size_t other = 0; other != 8; ++other) {
+					if (st.players[other].controller == player_t::controller_computer_game || st.players[other].controller == player_t::controller_computer) st.alliances[owner][other] = 1;
+				}
 			}
 		}
 

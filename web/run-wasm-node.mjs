@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 const campaign = process.argv[2] === '--test-campaign';
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -192,6 +192,17 @@ function testCampaign() {
     assert.ok(units.some(unit => unit[1] === 'Hive' && unit[2] === '3'), 'Original Zerg buildings remain intact');
     assert.equal(x.openbw_mission_countdown(), -1, 'New Gettysburg has no survival countdown');
     console.log('New Gettysburg initialization checks passed.');
+  } else if (missionId === 'terran10') {
+    assert.equal(mission.humanSlot, 1, 'Keep the original Hammer Falls human slot');
+    assert.equal(human.length, 32, 'Original Terran army, two native tank turrets and naturally rescued Raynor');
+    assert.equal(human.filter(unit => unit[1] === 'Marine').length, 16);
+    assert.equal(human.filter(unit => unit[1] === 'SCV').length, 4);
+    assert.equal(human.filter(unit => unit[1] === 'Firebat').length, 2);
+    assert.equal(human.filter(unit => unit[1].startsWith('Siege Tank')).length, 2, 'Original two tanks');
+    assert.ok(human.some(unit => unit[1] === 'Jim Raynor'), 'Vulture Raynor is naturally rescued at the original base');
+    assert.ok(units.some(unit => unit[1] === 'Ion Cannon' && unit[2] === '6'), 'Original Ion Cannon retains its enemy owner');
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Hammer Falls has no survival countdown');
+    console.log('The Hammer Falls initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -205,7 +216,7 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -213,9 +224,10 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500}[missionId], 'Preserve original mission minerals');
   if (missionId === 'terran08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Big Push trigger grants 100 gas');
   if (missionId === 'terran09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original New Gettysburg trigger grants 150 gas');
+  if (missionId === 'terran10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original Hammer Falls trigger grants 150 gas');
   if (missionId === 'terran03') assert.equal(x.openbw_mission_countdown(), 1800, 'Original thirty-minute countdown');
   if (missionId === 'terran02') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Backwater trigger grants gas');
   if (missionId === 'terran05') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 300, 'Original Revolution trigger grants gas');
