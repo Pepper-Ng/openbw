@@ -191,13 +191,10 @@
   #controls .hint { color: #64748b; font-size: 12px; margin: 2px 0 8px; }
   #mp { margin-top: 18px; padding-top: 14px; border-top: 1px solid #1e293b; text-align: left; }
   #mp h2 { font-size: 13px; margin: 0 0 8px; color: #94a3b8; font-weight: 600; text-align: center; }
-  #mp-relay { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #1e293b; }
-  #mp-relay .hint { margin-top: 6px; font-size: 11px; color: #64748b; text-align: center; }
-  #mp-relay code { background: #1e293b; border-radius: 3px; padding: 1px 4px; }
   #mp .row { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 8px 0; }
   #mp select { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
     padding: 4px 8px; font: inherit; cursor: pointer; }
-  /* The code is never read by a human — a single line with Copy beside it is plenty. */
+  /* Keep the short game code readable beside its Copy control. */
   #mp .codeline { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
   #mp .codeline input { flex: 1 1 auto; min-width: 0; background: #0b1220; color: #cbd5e1;
     border: 1px solid #334155; border-radius: 6px; padding: 6px 8px;
@@ -205,15 +202,24 @@
   #mp .codeline button { margin: 0; flex: 0 0 auto; }
   #mp button { margin-top: 0; }
   /* Lobby laid out like the original: player slots on the left, game info on the right. */
-  #mp .lobby { display: grid; grid-template-columns: 1fr 148px; gap: 12px; margin: 10px 0; }
+  #mp .lobby { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 10px 0; }
   #mp .slots { display: flex; flex-direction: column; gap: 6px; }
-  #mp .slot { display: flex; gap: 8px; align-items: center; padding: 5px 8px;
-    background: rgba(30,41,59,.6); border: 1px solid #334155; border-radius: 6px; }
+  #mp .slot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 160px) 80px; gap: 10px; align-items: center; padding: 10px 8px;
+    background: #182128; border: 1px solid #39454d; border-radius: 4px; }
   #mp .slot .nm { flex: 1 1 auto; color: #e2e8f0; font-weight: 600; font-size: 13px; }
-  #mp .slot.you .nm { color: #38bdf8; }
+  #mp .slot.you .nm { color: #d7bc83; }
   #mp .slot.open .nm { color: #64748b; font-weight: 400; font-style: italic; }
-  #mp .ginfo { background: rgba(30,41,59,.4); border: 1px solid #334155; border-radius: 6px;
-    padding: 8px 10px; }
+  #mp .ginfo { display: flex; flex-wrap: wrap; gap: 8px 20px; border-bottom: 1px solid #39454d; padding: 4px 0 10px; }
+  #mp .ready-state { font-size: 11px; color: #a9b6bd; text-align: right; }
+  #mp .ready-state.is-ready { color: #85c89c; }
+  #mp-ready-label { display: flex; align-items: center; gap: 8px; padding: 8px; min-height: 28px; }
+  #mp-ready { accent-color: #85c89c; width: 18px; height: 18px; }
+  #mp svg { width: 18px; height: 18px; flex-shrink: 0; }
+  #mp button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; }
+  #mp button:disabled { opacity: .5; cursor: default; }
+  #mp-out, #mp-in-invite { font-variant-numeric: tabular-nums; }
+  #mp-expires { color: #aebac2; font-size: 12px; min-height: 20px; }
+  @media (max-width: 480px) { #mp .slot { grid-template-columns: minmax(0, 1fr) 70px; } #mp .slot select { grid-column: 1; grid-row: 2; } #mp .slot .ready-state { grid-column: 2; grid-row: 1 / 3; } }
   #mp .ginfo > div { display: flex; justify-content: space-between; gap: 8px; margin: 3px 0;
     font-size: 12px; }
   #mp .ginfo label { color: #64748b; }
@@ -670,62 +676,36 @@
     </label>
     <div id="lobby-hint" class="hint"></div>
     <div id="mp">
-      <h2>or play a friend (1v1)</h2>
+      <h2>Multiplayer (1v1)</h2>
       <div class="row" id="mp-setup">
-        <button id="mp-host">Host a game</button>
-        <button id="mp-join">Join with a code</button>
+        <button id="mp-host"><i data-lucide="plus"></i>Create Game</button>
+        <button id="mp-join"><i data-lucide="log-in"></i>Join Game</button>
       </div>
-
-      <!-- Relay (openbw_bridge): the host runs the relay and shares its address; no paste.
-           Falls back to copy-paste above when you don't want to run anything. -->
-      <div id="mp-relay">
-        <div class="codeline">
-          <input id="mp-relay-url" type="text" spellcheck="false" autocomplete="off"
-                 placeholder="ws://host-ip:8100">
-        </div>
-        <div class="row">
-          <button id="mp-relay-host">Host on relay</button>
-          <button id="mp-relay-join">Join on relay</button>
-        </div>
-        <div class="hint">Run <code>openbw_bridge</code> on the host, share its
-          <code>ws://&lt;LAN-IP&gt;:8100</code>. No copy-paste.</div>
-      </div>
-
-      <!-- Joiner without a link: the only place anything is pasted in by a joiner. -->
       <div id="mp-step-invite" class="step" style="display:none">
-        <div class="hint" id="mp-invite-hint">1. Paste the invite code your friend sent:</div>
+        <label for="mp-in-invite" id="mp-invite-hint">Game Code</label>
         <div class="codeline">
-          <input id="mp-in-invite" type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Paste invite code">
-          <button id="mp-accept">Continue</button>
+          <input id="mp-in-invite" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" spellcheck="false" autocomplete="off" aria-label="Eight-digit game code" placeholder="00000000">
+          <button id="mp-accept"><i data-lucide="log-in"></i>Join Game</button>
         </div>
       </div>
-
-      <!-- Host shares the invite; joiner shares the response. Copy-out only. -->
       <div id="mp-step-share" class="step" style="display:none">
-        <div class="hint" id="mp-share-hint"></div>
+        <label for="mp-out" id="mp-share-hint">Game Code</label>
         <div class="codeline">
-          <input id="mp-out" type="text" spellcheck="false" autocomplete="off" readonly>
-          <button id="mp-copy">Copy</button>
+          <input id="mp-out" type="text" spellcheck="false" autocomplete="off" readonly aria-label="Game code">
+          <button id="mp-copy" title="Copy game code" aria-label="Copy game code"><i data-lucide="copy"></i></button>
         </div>
+        <div id="mp-expires" role="status"></div>
       </div>
-
-      <!-- Host only: paste back what the joiner sends. -->
-      <div id="mp-step-answer" class="step" style="display:none">
-        <div class="hint">2. Then paste your friend&rsquo;s response here:</div>
-        <div class="codeline">
-          <input id="mp-in-answer" type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="Paste response">
-          <button id="mp-connect">Connect</button>
-        </div>
-      </div>
+      <button id="mp-cancel" type="button" style="display:none"><i data-lucide="x"></i>Cancel</button>
 
       <!-- Lobby: player slots + game info, host starts a 5s countdown. -->
       <div id="mp-lobby" style="display:none">
         <div class="lobby">
           <div class="slots">
             <div class="slot" id="mp-s0"><span class="nm" id="mp-n0">Player 1</span>
-              <select id="mp-r0"></select></div>
+              <select id="mp-r0" aria-label="Player 1 race"></select><span id="mp-ready-0" class="ready-state">Not ready</span></div>
             <div class="slot" id="mp-s1"><span class="nm" id="mp-n1">Open</span>
-              <select id="mp-r1"></select></div>
+              <select id="mp-r1" aria-label="Player 2 race"></select><span id="mp-ready-1" class="ready-state">Not ready</span></div>
           </div>
           <div class="ginfo">
             <div><label>Type</label><span>Melee</span></div>
@@ -733,7 +713,7 @@
             <div><label>Speed</label><span id="mp-gi-speed">Fastest</span></div>
           </div>
         </div>
-        <div class="row"><button id="mp-start">Start game</button></div>
+        <div class="row"><label id="mp-ready-label"><input id="mp-ready" type="checkbox">Ready</label><button id="mp-start" disabled><i data-lucide="play"></i>Start Game</button></div>
       </div>
 
       <div id="mp-status"></div>

@@ -22,8 +22,16 @@ RUN bash web/build-wasm.sh \
 	&& build_id="$(date -u +%Y%m%d%H%M%S)" \
 	&& sed -i "s/__BUILD__/${build_id}/g" /site/index.html /site/openbw.js
 
+FROM node:22-alpine AS signalling
+WORKDIR /app
+COPY web/signalling-server.mjs ./
+USER node
+ENV PORT=8080
+CMD ["node", "signalling-server.mjs"]
+
 FROM nginx:alpine
 RUN apk add --no-cache nodejs
+COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=wasm-build /site/ /usr/share/nginx/html/
 COPY --from=wasm-build /src/web/campaign-pack.wasm /src/web/prepare-campaign.mjs /src/web/prepare-campaigns.mjs /opt/openbw/web/
 CMD ["sh", "-c", "node /opt/openbw/web/prepare-campaigns.mjs && exec nginx -g 'daemon off;'"]

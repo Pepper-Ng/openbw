@@ -10,6 +10,50 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 
+if (process.argv[2] === '--test-lobby') {
+  const source = readFileSync('web/openbw.js', 'utf8');
+  const extract = name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
+  const functions = ['mpUpdateLobby', 'mpCancelCountdown', 'mpCountdown', 'mpOnControl'].map(extract);
+  assert.ok(functions.every(Boolean), 'Actual ready/countdown lobby functions exist');
+  const make = new Function('assert', `${functions.join('\n')}
+    let mpRole = 'host', mpConnected = true, mpLocked = false, mpCountingDown = false, mpCountdownTimer = 0;
+    const mpReadyFlags = [false, false], mpRaceRevisions = [0, 0], sent = [], started = [];
+    const field = () => ({ value: '1', disabled: false, checked: false, textContent: '', classList: { toggle() {} } });
+    const mp = { r: [field(), field()], readyStates: [field(), field()], ready: field(), start: field(), cancel: field(), giSpeed: field() };
+    const mpLink = { sendControl: message => sent.push(message) };
+    const mpMine = () => mpRole === 'host' ? 0 : 1, mpTheirs = () => mpRole === 'host' ? 1 : 0;
+    const mpSlots = () => mp.r.map((race, index) => ({ slot: index, race: Number(race.value) }));
+    const RACES = [-1, 0, 1, 2].map(value => ({ v: value })), MAPS = [{ file: 'map', starts: 2 }];
+    const mpMap = 'map', COUNTDOWN = 5, LOCK_AT = 2;
+    let mpPeerRace = 1;
+    const resolveRace = race => race < 0 ? 1 : race, pickStartSlots = () => [0, 1];
+    const mpBoot = (...args) => started.push(args), mpSay = () => {};
+    const setTimeout = () => 1, clearTimeout = () => {};
+    mpCountdown(5);
+    assert.equal(sent.length, 0, 'Host cannot count down without both ready');
+    mpReadyFlags.fill(true); mpCountdown(5);
+    assert.equal(mpCountingDown, true); assert.equal(mp.start.disabled, true);
+    mpOnControl({ t: 'ready', ready: false, revisions: [0, 0] });
+    assert.equal(mpCountingDown, false, 'Unready cancels countdown');
+    mpReadyFlags.fill(true); mpOnControl({ t: 'race', race: 2, revision: 1 });
+    assert.deepEqual(mpReadyFlags, [false, false], 'Race changes invalidate both ready flags');
+    mpOnControl({ t: 'ready', ready: true, revisions: [0, 0] });
+    assert.equal(mpReadyFlags[1], false, 'Stale readiness for an old race revision is rejected');
+    mpOnControl({ t: 'ready', ready: true, revisions: [0, 1] });
+    assert.equal(mpReadyFlags[1], true);
+    const start = { t: 'start', revisions: [0, 1], slots: [{ slot: 0, race: 1 }, { slot: 1, race: 2 }], you: 1 };
+    mpOnControl(start); assert.equal(started.length, 0, 'Peer cannot force the host to start');
+    mpRole = 'join'; mpReadyFlags.fill(false); mpOnControl(start);
+    assert.equal(started.length, 0, 'Joiner refuses premature start');
+    mpReadyFlags.fill(true); mpOnControl({ ...start, slots: [{ slot: 0, race: 1 }, { slot: 0, race: 2 }] });
+    assert.equal(started.length, 0, 'Duplicate player slots are rejected');
+    mpOnControl(start); assert.equal(started.length, 1, 'Ready consensus permits a valid start');
+  `);
+  make(assert);
+  console.log('Lobby readiness, race revision, countdown cancellation and start authority checks passed.');
+  process.exit(0);
+}
+
 if (process.argv[2] === '--test-campaign-menu') {
   const source = readFileSync('web/openbw.js', 'utf8');
   const progress = source.match(/function campaignProgress\(\) \{[\s\S]*?\n\}/)?.[0];

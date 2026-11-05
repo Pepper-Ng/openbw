@@ -17,7 +17,7 @@
 // be on different deploys, and a version mismatch must fail loudly instead of desyncing.
 // v2: map hash changed from SHA-256 (crypto.subtle) to cyrb53 (pure JS) — a v1 peer would
 // compute a different hash and fail the terrain check, so the version bump rejects the pair.
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 
 const EMPTY = new Uint8Array(0);
 
@@ -31,8 +31,8 @@ const EMPTY = new Uint8Array(0);
 export const BOT_LATENCY = 3;
 
 // --- signalling -------------------------------------------------------------------
-// There is no signalling server: the offer and answer are exchanged by copy-paste, like
-// the original game's direct-cable mode. They're gzipped and base64url'd to stay short.
+// RoomSetup transfers the offer and answer through short-lived server room codes.
+// They're gzipped and base64url'd; PeerLink still carries gameplay directly.
 // Measured on a typical machine, a data-channel-only offer is ~850 B raw / ~720 chars
 // encoded — but the size is dominated by ICE candidate lines, and candidate count scales
 // with the number of network interfaces (VPNs, Docker bridges, IPv6). So callers must
@@ -60,6 +60,71 @@ export async function unpackSignal(code) {
   const stream = new Blob([b64urlDecode(code.trim())]).stream()
     .pipeThrough(new DecompressionStream('gzip'));
   return JSON.parse(await new Response(stream).text());
+}
+
+export class RoomSetup {
+  constructor({ base = '/signal', request = globalThis.fetch.bind(globalThis) } = {}) {
+    this.base = base;
+    this.request = request;
+    this.controller = new AbortController();
+    this.code = '';
+    this.token = '';
+    this.expiresAt = 0;
+  }
+
+  async call(path, method = 'GET', value = null) {
+    const response = await this.request(this.base + path, {
+      method, cache: 'no-store', signal: this.controller.signal,
+      headers: { ...(value ? { 'Content-Type': 'application/json' } : {}), ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: value ? JSON.stringify(value) : undefined,
+    });
+    let result;
+    try { result = await response.json(); } catch { throw new Error('Game setup service is unavailable.'); }
+    if (!response.ok) throw new Error(result.error || `Game setup HTTP ${response.status}`);
+    return result;
+  }
+
+  remember(value, code) {
+    if (!/^\d{8}$/.test(code) || !/^[A-Za-z0-9_-]{43}$/.test(value.token) || !Number.isFinite(value.expiresAt)) throw new Error('Invalid game setup response.');
+    this.code = code;
+    this.token = value.token;
+    this.expiresAt = value.expiresAt;
+  }
+
+  async create(offer) {
+    const value = await this.call('/rooms', 'POST', { offer });
+    this.remember(value, value.code);
+    return value.code;
+  }
+
+  async join(code) {
+    if (!/^\d{8}$/.test(code)) throw new Error('Enter an eight-digit game code.');
+    const value = await this.call(`/rooms/${code}/join`, 'POST', {});
+    this.remember(value, code);
+    if (typeof value.offer !== 'string') throw new Error('Invalid game offer.');
+    return value.offer;
+  }
+
+  async sendAnswer(answer) { await this.call(`/rooms/${this.code}/answer`, 'POST', { answer }); }
+
+  async waitForAnswer(status = () => {}) {
+    while (!this.controller.signal.aborted) {
+      const value = await this.call(`/rooms/${this.code}/answer?wait=1`);
+      if (typeof value.answer === 'string') return value.answer;
+      if (Number.isFinite(value.expiresAt)) this.expiresAt = value.expiresAt;
+      status(value);
+    }
+    throw new DOMException('Game setup cancelled.', 'AbortError');
+  }
+
+  async close() {
+    this.controller.abort();
+    if (!this.code || !this.token) return;
+    const code = this.code, token = this.token;
+    this.code = '';
+    this.token = '';
+    try { await this.request(`${this.base}/rooms/${code}`, { method: 'DELETE', keepalive: true, headers: { Authorization: `Bearer ${token}` } }); } catch {}
+  }
 }
 
 // Peers can easily be on different deploys (we cache-bust per commit), so a version
