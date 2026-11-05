@@ -1535,6 +1535,56 @@ static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_dat
 		require(kerrigan && kerrigan->owner == 0 && kerrigan->sprite->owner == 2, "original Kerrigan is naturally rescued with her original display color");
 		finish_gettysburg_opening(st, functions);
 		require(st.current_minerals[0] == 250 && st.current_gas[0] == 150, "original New Gettysburg resources");
+		if (scenario == 0) {
+			functions.u_set_status_flag(kerrigan, unit_t::status_flag_cloaked);
+			require(functions.unit_target_acquisition_range(kerrigan) > 0, "cloaked Kerrigan retains normal idle target acquisition");
+			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::AttackMove), kerrigan->sprite->position + xy(96, 0));
+			require(functions.unit_target_acquisition_range(kerrigan) > 0, "cloaked Kerrigan retains Attack-move target acquisition");
+			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+			require(functions.unit_target_acquisition_range(kerrigan) == 0, "cloaked Ghost Hold Position preserves stealth without automatic target acquisition");
+			functions.set_unit_order(kerrigan, kerrigan->unit_type->return_to_idle);
+			std::array<unit_t*, 2> targets{};
+			for (unit_t* unit : ptr(st.player_units[1])) {
+				int index = unit->unit_type->id == UnitTypes::Protoss_Zealot ? 0 : unit->unit_type->id == UnitTypes::Protoss_Dragoon ? 1 : -1;
+				if (index < 0) continue;
+				require(functions.unit_target_is_enemy(kerrigan, unit) && functions.unit_can_attack_target(kerrigan, unit), "cloaking does not prevent Kerrigan from recognizing valid Protoss attack targets");
+				targets[index] = unit;
+			}
+			require(targets[0] && targets[1], "original New Gettysburg includes both Zealot and Dragoon targets");
+			functions.u_set_status_flag(kerrigan, unit_t::status_flag_cloaked, false);
+			require(functions.unit_target_acquisition_range(kerrigan) > 0, "decloaked Kerrigan resumes automatic acquisition");
+			functions.set_secondary_order(kerrigan, functions.get_order_type(Orders::Cloak));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(functions.u_cloaked(kerrigan), "original Kerrigan enters native cloaking before the combat check");
+			xy original_position = kerrigan->sprite->position;
+			for (unit_t* target : targets) {
+				xy target_position = target->sprite->position;
+				functions.move_unit(target, original_position + xy(96, 0));
+				for (const order_type_t* order : {functions.get_order_type(Orders::AttackMove), functions.get_order_type(kerrigan->unit_type->attack_unit->id)}) {
+					functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+					for (int tick = 0; tick != 64; ++tick) {
+						target->defensive_matrix_hp = fp8::integer(64000);
+						target->defensive_matrix_timer = 250;
+						functions.next_frame();
+					}
+					require(!kerrigan->ground_weapon_cooldown && !kerrigan->order_target.unit, "cloaked Hold Position does not automatically fire at the nearby enemy");
+					functions.issue_order(kerrigan, false, order, {original_position + xy(256, 0), order->id == Orders::AttackMove ? nullptr : target});
+					bool fired = false;
+					for (int tick = 0; tick != 96 && !fired; ++tick) {
+						target->defensive_matrix_hp = fp8::integer(64000);
+						target->defensive_matrix_timer = 250;
+						functions.next_frame();
+						fired = kerrigan->ground_weapon_cooldown && kerrigan->order_target.unit == target;
+					}
+					require(fired && functions.u_cloaked(kerrigan), "cloaked Kerrigan fires at an original Zealot or Dragoon through Attack-move and direct Attack");
+				}
+				functions.move_unit(target, target_position);
+				functions.move_unit(kerrigan, original_position);
+			}
+			functions.set_secondary_order(kerrigan, functions.get_order_type(Orders::Decloak));
+			functions.set_unit_order(kerrigan, kerrigan->unit_type->return_to_idle);
+			printf("New Gettysburg Kerrigan cloaked Attack-move, direct Attack and Hold Position passed.\n");
+		}
 		if (scenario == 1) functions.kill_unit(kerrigan);
 		if (scenario == 2) {
 			a_vector<unit_t*> victims;
