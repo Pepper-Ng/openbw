@@ -532,6 +532,9 @@ struct play_ui : ui_functions {
 			[this](int o, const uint8_t* d, size_t n) { rep_record(o, d, n); });
 	}
 
+	UnitTypes active_subgroup = UnitTypes::None;
+	unit_id active_subgroup_unit{};
+
 	// Push the UI's visual selection into the sim's per-player selection, capped to BW's
 	// 12-unit limit, own units only. Emitted as a command so every peer applies the same
 	// selection immediately before whatever order follows it.
@@ -545,6 +548,17 @@ struct play_ui : ui_functions {
 		cmds.select(ids, n);
 	}
 
+	void sync_subgroup() {
+		unit_t* primary = primary_selected();
+		if (!primary) return;
+		uint16_t ids[12]; size_t count = 0;
+		for (auto selected_id : current_selection) {
+			unit_t* unit = get_unit(selected_id);
+			if (unit && unit->owner == my_player && !unit_dying(unit) && unit->unit_type == primary->unit_type && count < 12) ids[count++] = get_unit_id(unit).raw_value;
+		}
+		cmds.select(ids, count);
+	}
+
 	// Sync only the primary unit to the sim. Single-unit actions (action_build via
 	// get_single_selected_unit) silently no-op when the whole group is synced — with several
 	// SCVs selected, placing a building did nothing. BW sends one worker from the group too;
@@ -556,21 +570,55 @@ struct play_ui : ui_functions {
 		cmds.select(&id, 1);
 	}
 
-	unit_t* primary_selected() {
-		for (auto uid : current_selection) {
-			unit_t* u = get_unit(uid);
-			if (u && u->owner == my_player) return u;
-		}
-		return nullptr;
+	bool subgroup_precedes(UnitTypes first, UnitTypes second) const {
+		const auto* first_type = get_unit_type(first);
+		const auto* second_type = get_unit_type(second);
+		if (ut_hero(first_type) != ut_hero(second_type)) return ut_hero(first_type);
+		bool first_morph = unit_is(first_type, UnitTypes::Zerg_Larva) || unit_is_egg(first_type);
+		bool second_morph = unit_is(second_type, UnitTypes::Zerg_Larva) || unit_is_egg(second_type);
+		if (first_morph != second_morph) return !first_morph;
+		int first_value = first_type->mineral_cost + first_type->gas_cost;
+		int second_value = second_type->mineral_cost + second_type->gas_cost;
+		if (first_value != second_value) return first_value > second_value;
+		return first < second;
 	}
 
-	unit_t* acknowledgement_unit() {
-		for (auto uid : current_selection) {
-			unit_t* unit = get_unit(uid);
-			if (unit && unit->owner == my_player && ut_hero(unit)) return unit;
+	unit_t* primary_selected() {
+		unit_t* preferred = nullptr;
+		unit_t* active = nullptr;
+		unit_t* previous = nullptr;
+		for (auto selected_id : current_selection) {
+			unit_t* unit = get_unit(selected_id);
+			if (!unit || unit->owner != my_player || unit_dying(unit)) continue;
+			if (!preferred || subgroup_precedes(unit->unit_type->id, preferred->unit_type->id) || (unit->unit_type == preferred->unit_type && selected_id.raw_value < get_unit_id(preferred).raw_value)) preferred = unit;
+			if (unit->unit_type->id == active_subgroup && (!active || selected_id.raw_value < get_unit_id(active).raw_value)) active = unit;
+			if (selected_id == active_subgroup_unit) previous = unit;
 		}
-		return primary_selected();
+		if (!active) active = previous ? previous : preferred;
+		active_subgroup = active ? active->unit_type->id : UnitTypes::None;
+		active_subgroup_unit = active ? get_unit_id(active) : unit_id{};
+		return active;
 	}
+
+	bool cycle_subgroup(bool backwards) {
+		a_vector<UnitTypes> types;
+		for (auto selected_id : current_selection) {
+			unit_t* unit = get_unit(selected_id);
+			if (!unit || unit->owner != my_player || unit_dying(unit)) continue;
+			if (std::find(types.begin(), types.end(), unit->unit_type->id) == types.end()) types.push_back(unit->unit_type->id);
+		}
+		if (types.size() < 2) return false;
+		std::sort(types.begin(), types.end(), [&](UnitTypes first, UnitTypes second) { return subgroup_precedes(first, second); });
+		unit_t* primary = primary_selected();
+		size_t index = size_t(std::find(types.begin(), types.end(), primary->unit_type->id) - types.begin());
+		active_subgroup = types[(index + (backwards ? types.size() - 1 : 1)) % types.size()];
+		active_subgroup_unit = unit_id{};
+		clear_pending(); targeting = false; menu = 0;
+		refresh_card();
+		return true;
+	}
+
+	unit_t* acknowledgement_unit() { return primary_selected(); }
 
 	// Play one of a unit's voice-ack sounds (first..last inclusive), the way the
 	// original game client did on select/order — the sim never plays these.
@@ -621,6 +669,8 @@ struct play_ui : ui_functions {
 				if (first) current_selection_add(first);
 			}
 		}
+		active_subgroup = UnitTypes::None;
+		active_subgroup_unit = unit_id{};
 		menu = 0;
 		last_recalled_group = -1;   // a fresh selection resets group double-tap tracking
 		unit_t* u = primary_selected();
@@ -731,13 +781,18 @@ struct play_ui : ui_functions {
 	// Select up to 12 of the player's units of a type — handy for the fiddly-to-click
 	// ones (workers, and especially Zerg larvae clustered at the hatchery).
 	void select_units_of_type(UnitTypes type) {
-		current_selection_clear();
+		unit_t* producer = primary_selected();
+		a_vector<unit_t*> matches;
 		for (unit_t* u : ptr(st.player_units[my_player])) {
 			if (unit_is(u, type) && !unit_dying(u)) {
-				current_selection_add(u);
-				if (current_selection.size() >= 12) break;
+				if (type == UnitTypes::Zerg_Larva && (!producer || !unit_is_hatchery(producer) || u->connected_unit != producer)) continue;
+				matches.push_back(u);
+				if (matches.size() >= 12) break;
 			}
 		}
+		if (matches.empty()) return;
+		current_selection_clear();
+		for (unit_t* unit : matches) current_selection_add(unit);
 		on_selection(false);
 	}
 
@@ -1968,30 +2023,30 @@ struct play_ui : ui_functions {
 			                          pending_build = b->unit_type; pending_addon = at;
 			                          menu = 0; refresh_card();
 			                      }
-			                  } else { sync_selection(); cmd_type(31, c.ut); }
+							 } else { sync_subgroup(); cmd_type(31, c.ut); }
 			                  break;
-			case C_MORPH:     sync_selection(); cmd_type(35, c.ut); break;
-			case C_MORPHBLDG: sync_selection(); cmd_type(53, c.ut); break;
+			case C_MORPH:     sync_subgroup(); cmd_type(35, c.ut); break;
+			case C_MORPHBLDG: sync_subgroup(); cmd_type(53, c.ut); break;
 			case C_SELECT:    select_units_of_type(c.ut); break;
 			case C_RALLY:     start_target(T_RALLY); break;
 			case C_RESEARCH:  sync_selection(); cmd_id8(48, (int)c.tech); break;
 			case C_UPGRADE:   sync_selection(); cmd_id8(50, (int)c.upg); break;
-			case C_STIM:      sync_selection(); cmd_bare(54); break;
-			case C_SIEGE:     sync_selection(); cmd_queued(38, key_shift()); break;
-			case C_UNSIEGE:   sync_selection(); cmd_queued(37, key_shift()); break;
+			case C_STIM:      sync_subgroup(); cmd_bare(54); break;
+			case C_SIEGE:     sync_subgroup(); cmd_queued(38, key_shift()); break;
+			case C_UNSIEGE:   sync_subgroup(); cmd_queued(37, key_shift()); break;
 			case C_LIFT:      sync_selection(); cmd_liftoff(u_pos_of_selected()); break;
 			case C_LAND:      pending_build = get_unit_type(c.ut != UnitTypes::None ? c.ut : landing_type());
 			                  pending_land = true; menu = 0; refresh_card(); break;
 			case C_UNLOAD:    sync_selection(); cmds.unload(c.unit); break;
-			case C_UNLOADALL: sync_selection(); cmds.unload_all(key_shift()); break;
+			case C_UNLOADALL: sync_subgroup(); cmds.unload_all(key_shift()); break;
 			case C_RETURN:    sync_selection(); cmds.return_cargo(key_shift()); break;
-			case C_BURROW:    sync_selection(); cmds.burrow(key_shift()); break;
-			case C_UNBURROW:  sync_selection(); cmds.unburrow(); break;
-			case C_CLOAK:     sync_selection(); cmds.cloak(); break;
-			case C_DECLOAK:   sync_selection(); cmds.decloak(); break;
-			case C_FIGHTER:   sync_selection(); cmds.train_fighter(); break;
-			case C_ARCHON:    sync_selection(); cmds.morph_archon(); break;
-			case C_DARCHON:   sync_selection(); cmds.morph_dark_archon(); break;
+			case C_BURROW:    sync_subgroup(); cmds.burrow(key_shift()); break;
+			case C_UNBURROW:  sync_subgroup(); cmds.unburrow(); break;
+			case C_CLOAK:     sync_subgroup(); cmds.cloak(); break;
+			case C_DECLOAK:   sync_subgroup(); cmds.decloak(); break;
+			case C_FIGHTER:   sync_subgroup(); cmds.train_fighter(); break;
+			case C_ARCHON:    sync_subgroup(); cmds.morph_archon(); break;
+			case C_DARCHON:   sync_subgroup(); cmds.morph_dark_archon(); break;
 			case C_SPELL:     if (const spell_t* s = find_spell(c.tech)) {
 			                      pending_spell_order = s->order; pending_spell_unit = s->targ_unit;
 			                      start_target(T_SPELL);
@@ -2045,7 +2100,8 @@ struct play_ui : ui_functions {
 		// (matches the right-click path — both at once looked wrong on attack clicks).
 		if (target && pending_targ != T_PATROL) flash_target(target);
 		else show_marker(pos);
-		sync_selection();
+		if (pending_targ == T_SPELL) sync_primary();
+		else sync_selection();
 		bool q = key_shift();
 		switch (pending_targ) {
 		// A unit target force-attacks it (AttackDefault → the unit's attack_unit); a-move to
@@ -2121,7 +2177,9 @@ struct play_ui : ui_functions {
 			if ((int)st.current_gas[my_player] < pending_build->gas_cost) { raise_error(E_GAS); return; }
 		}
 		sync_primary();   // build is a single-unit action (see sync_primary)
-		cmd_build(pending_land ? Orders::BuildingLand : kit.build_order, pending_build, tx, ty);
+		unit_t* builder = primary_selected();
+		Orders build_order = builder && unit_is(builder, UnitTypes::Protoss_Probe) ? Orders::PlaceProtossBuilding : builder && unit_is(builder, UnitTypes::Terran_SCV) ? Orders::PlaceBuilding : Orders::DroneStartBuild;
+		cmd_build(pending_land ? Orders::BuildingLand : build_order, pending_build, tx, ty);
 		clear_pending();   // one-shot; re-open the menu to place another
 	}
 
@@ -2966,8 +3024,8 @@ struct play_ui : ui_functions {
 			if (have_last_event) center_on(last_event_pos);
 			return true;
 		}
-		if (e.type == ev::type_key_down && e.scancode == 43) {   // Tab: toggle minimap terrain
-			minimap_terrain = !minimap_terrain;
+		if (e.type == ev::type_key_down && e.scancode == 43) {
+			if (!cycle_subgroup(key_shift())) minimap_terrain = !minimap_terrain;
 			return true;
 		}
 		if (e.type == ev::type_key_down && e.sym >= '0' && e.sym <= '9') {

@@ -614,6 +614,16 @@ Implemented compatibility policies:
 
 Verification on this pass: all ten original native mission suites, all ten browser-module mission suites and all ten deterministic save-recovery modes pass. The complete command suite and multiplayer ownership/departure regressions also pass. Desperate Alliance's existing unassisted diagnostic retains first combat at frame 3,530 and defeat at frame 17,073; this is a regression observation, not proof of identical balance. Native and browser builds contain only the existing compiler warnings. Normal-control/classic comparison of the new micro policies remains open. On 2026-11-06 the user authorized this AI milestone's commit and push before implementing the first Zerg mission.
 
+### Mixed Selection And Hatchery Controls
+
+Mixed selections retain all selected units while one unit type supplies the command card. Tab cycles forward through selected types; Shift+Tab reverses. Cycling cancels the previous type's targeting, building preview and submenu. Explicit focus follows native morph/type changes. With fewer than two selected types, Tab retains its minimap-terrain toggle.
+
+- Fresh selections prefer heroes, then ordinary units over Larva/eggs, then higher combined mineral/gas cost. Type IDs and generation-safe unit IDs break ties deterministically. This is an explicit usability policy, not a verified reproduction of classic selection-priority metadata.
+- Movement, attack and other ordinary group orders still synchronize the entire visual selection. Type-specific abilities and morphs synchronize only the active type; targeted spells use its active caster. Worker construction uses the selected worker's race-specific native build order. The existing command format remains unchanged.
+- Hatchery-family Select Larva uses each Larva's native parent link, not visibility or proximity. No matches leaves the Hatchery selected. Repeated S can therefore select its naturally spawned Larva without jumping to another base. Original map bytes, mission availability and normal resources are unchanged.
+
+Regression fixtures cover Drone/Larva precedence and morphing, Raynor/SCV mine placement and construction controls, a three-type Protoss cycle, and whole-group movement. A test-funded second Hatchery is built through normal commands to verify parent-specific selection and empty-Hatchery retention. Real browser Tab/Shift+Tab input, existing command regressions, deterministic Terran/Zerg save recovery and multiplayer checks pass. On 2026-11-06 the user authorized a separate commit and push before implementing Zerg mission 2. Normal-control classic comparison remains open.
+
 ### Campaign Menu And Local Recovery
 
 The campaign menu presents the ten original Terran missions and the first Zerg mission with selected, available, completed and locked states, grouped by campaign. Fresh local progress starts at Wasteland. Every preceding mission must have a saved victory flag before the next can be loaded normally. Progress persists on the browser origin and is separate from downloaded files and save slots. Reset returns selection and unlocks to mission 1 without deleting manual saves or cached assets.

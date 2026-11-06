@@ -252,10 +252,11 @@ if (process.argv[2] === '--test-campaign-menu') {
 }
 
 const recoveryTest = process.argv[2] === '--test-campaign-save';
+const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
 if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01'].includes(missionId), 'Unsupported test mission');
-const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
@@ -318,7 +319,7 @@ const x = recoveryTest ? {
   },
 } : nativeExports;
 if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
-else x.openbw_init(1280, 800, 1 /*terran*/, 0 /*slot*/);
+else x.openbw_init(1280, 800, protossSelectionTest ? 2 : 1, 0 /*slot*/);
 if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
 
@@ -375,6 +376,8 @@ if (out) {
     assert.equal(readRecoveryString(restored.openbw_debug_units()), expectedUnits, 'Recovered actors, ownership, positions and orders match');
     console.log(`Campaign deterministic recovery passed: ${recordedTicks} service ticks, ${recordedTurns.length} command batches.`);
   }
+} else if (protossSelectionTest) {
+  testProtossSelection();
 } else {
   testCommands();
 }
@@ -713,12 +716,28 @@ function testCampaign() {
     assert.match(read(x.openbw_card()), /\tSelect Larva\t/, 'Native Zerg Hatchery card selects Larva');
     const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => Number(unit[2]) === mission.humanSlot && unit[1] === 'Larva');
     assert.ok(larva);
-    x.openbw_debug_select(Number(larva[0]), 0); x.openbw_render(0);
+    const drone = human.find(unit => unit[1] === 'Drone');
+    x.openbw_debug_select(Number(larva[0]), 0); x.openbw_debug_select(Number(drone[0]), 1); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^Drone\t/, 'A mixed Larva/Drone group defaults to the Drone regardless of selection order');
+    assert.equal(read(x.openbw_wires()).trim().split('\n').length, 2, 'Both unit types remain visually selected');
+    x.openbw_key(1, 98, 0); x.openbw_key(0, 98, 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^Build\t/, 'Active Drone exposes building choices while Larva stays selected');
+    x.openbw_key(1, 115, 0); x.openbw_key(0, 115, 0); x.openbw_render(0);
+    assert.equal(x.openbw_cursor(), 2, 'Active Drone can arm building placement in a mixed group');
+    x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^Larva\t/, 'Tab cycles the command card to the other selected unit type');
+    assert.notEqual(x.openbw_cursor(), 2, 'Cycling cancels the previous subgroup building preview');
+    assert.equal(read(x.openbw_wires()).trim().split('\n').length, 2, 'Tab never shrinks the visual selection');
+    x.openbw_key(1, 0, 225); x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43); x.openbw_key(0, 0, 225); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^Drone\t/, 'Shift+Tab cycles back through selected unit types');
+    x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43); x.openbw_render(0);
     assert.match(read(x.openbw_card()), /\tDrone\t/, 'Larva exposes native Drone morph');
     x.openbw_out_clear(); x.openbw_key(1, 100, 0); x.openbw_key(0, 100, 0);
     x.openbw_render(0);
     const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
     assert.ok(output.length > 0, 'Drone morph uses the normal synchronized command stream');
+    assert.equal(output[2], 9); assert.equal(output[3], 1, 'Only the active Larva subgroup is synchronized for morphing');
+    assert.equal(output[4] | output[5] << 8, Number(larva[0]));
     new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
     x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     for (let tick = 0; tick < 600; tick++) x.openbw_step();
@@ -726,6 +745,92 @@ function testCampaign() {
     assert.equal(after.filter(unit => Number(unit[2]) === mission.humanSlot && unit[1] === 'Drone').length, 3, 'A native Larva becomes the third Drone');
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 150, 'Native Drone morph pays fifty minerals');
     console.log('Among the Ruins native Hatchery/Larva controls and paid Drone morph passed.');
+    if (!recoveryTest) {
+      const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
+      const selectedIds = () => read(x.openbw_wires()).trim().split('\n').filter(Boolean).map(line => Number(line.split('\t')[0]));
+      const press = symbol => { x.openbw_key(1, symbol.charCodeAt(0), 0); x.openbw_key(0, symbol.charCodeAt(0), 0); x.openbw_render(0); };
+      const applyQueued = () => {
+        const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+        assert.ok(bytes.length > 0);
+        new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+        x.openbw_apply(mission.humanSlot, bytes.length); x.openbw_out_clear();
+      };
+      x.openbw_debug_resources(2000, 1000);
+      const worker = owned().find(unit => unit[1] === 'Drone');
+      x.openbw_debug_select(Number(worker[0]), 0); x.openbw_render(0);
+      const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      let site = null;
+      for (let vertical = -480; vertical <= 160 && !site; vertical += 32) for (let horizontal = -256; horizontal <= 576 && !site; horizontal += 32) {
+        const mapX = Number(hatchery[3]) + horizontal, mapY = Number(hatchery[4]) + vertical;
+        if (Math.hypot(horizontal, vertical) < 384 || mapX < Number(camera[1]) + 160 || mapX > Number(camera[1]) + 1120 || mapY < Number(camera[2]) + 64 || mapY > Number(camera[2]) + 600) continue;
+        if ((x.openbw_debug_build_check(131, mapX, mapY) & 3) === 3) site = [mapX - Number(camera[1]), mapY - Number(camera[2])];
+      }
+      assert.ok(site, 'A second native Hatchery fits in the same viewport for parent-specific selection');
+      press('b'); press('h');
+      x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1); x.openbw_render(0);
+      applyQueued();
+      let secondBase = null, completed = false;
+      for (let tick = 0; tick < 3000 && !completed; tick++) {
+        x.openbw_step();
+        if (tick % 16) continue;
+        secondBase = owned().find(unit => unit[1] === 'Hatchery' && Number(unit[0]) !== Number(hatchery[0]));
+        if (secondBase) { x.openbw_debug_select(Number(secondBase[0]), 0); x.openbw_render(0); const card = read(x.openbw_card()); completed = /\tSelect Larva\t/.test(card) && !/\tCancel\t/.test(card); }
+      }
+      assert.ok(completed, 'Second Hatchery completes through paid native Drone construction');
+      for (let tick = 0; tick < 64; tick++) x.openbw_step();
+      x.openbw_debug_select(Number(secondBase[0]), 0); x.openbw_render(0); press('s');
+      assert.match(read(x.openbw_card()), /^Larva\t/);
+      const allLarvae = owned().filter(unit => unit[1] === 'Larva'), selectedLarvae = allLarvae.filter(unit => selectedIds().includes(Number(unit[0])));
+      assert.ok(selectedLarvae.length > 0 && selectedLarvae.length < allLarvae.length, 'S selects only the chosen Hatchery Larva, not other nearby Larva');
+      assert.ok(selectedLarvae.every(unit => Math.hypot(Number(unit[3]) - Number(secondBase[3]), Number(unit[4]) - Number(secondBase[4])) < 192), 'Selected Larva belong to the requested Hatchery');
+      press('o'); applyQueued();
+      for (let tick = 0; tick < 8; tick++) x.openbw_step();
+      x.openbw_debug_select(Number(secondBase[0]), 0); x.openbw_render(0);
+      press('s'); press('s');
+      assert.match(read(x.openbw_card()), /^Hatchery\t/, 'An empty Hatchery stays selected when S is pressed repeatedly');
+      assert.deepEqual(selectedIds(), [Number(secondBase[0])], 'Empty Hatchery selection does not jump to another base Larva');
+      let spawned = false;
+      for (let tick = 0; tick < 600 && !spawned; tick++) { x.openbw_step(); press('s'); spawned = /^Larva\t/.test(read(x.openbw_card())); }
+      assert.ok(spawned, 'Repeated S selects that Hatchery Larva when native spawning produces one');
+      const focusedLarva = owned().find(unit => selectedIds().includes(Number(unit[0]))), overlord = owned().find(unit => unit[1] === 'Overlord');
+      x.openbw_debug_select(Number(overlord[0]), 0); x.openbw_debug_select(Number(focusedLarva[0]), 1); x.openbw_render(0);
+      assert.match(read(x.openbw_card()), /^Overlord\t/);
+      x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43); x.openbw_render(0);
+      assert.match(read(x.openbw_card()), /^Larva\t/); press('d'); applyQueued();
+      for (let tick = 0; tick < 600; tick++) x.openbw_step();
+      x.openbw_render(0);
+      assert.match(read(x.openbw_card()), /^Drone\t/, 'A manually chosen subgroup follows its unit through morphing beside a higher-priority unit');
+      console.log('Parent-specific Hatchery Larva selection, empty retention and repeated-S spawning checks passed.');
+    }
+  }
+  if (missionId === 'terran06') {
+    const raynor = human.find(unit => unit[1] === 'Jim Raynor'), worker = human.find(unit => unit[1] === 'SCV');
+    assert.ok(raynor && worker);
+    x.openbw_debug_select(Number(worker[0]), 0); x.openbw_debug_select(Number(raynor[0]), 1); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^Jim Raynor\t/, 'Hero Raynor has stable precedence over a first-selected SCV');
+    assert.match(read(x.openbw_card()), /\tSpider Mines\t/);
+    assert.equal(read(x.openbw_wires()).trim().split('\n').length, 2);
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const left = Math.max(0, Number(raynor[3]) - 640), top = Math.max(0, Number(raynor[4]) - 400);
+    x.openbw_pan(left - Number(camera[1]), top - Number(camera[2]));
+    x.openbw_out_clear(); x.openbw_key(1, 105, 0); x.openbw_key(0, 105, 0); x.openbw_render(0);
+    const targetX = Number(raynor[3]) + 64 - left, targetY = Number(raynor[4]) + 32 - top;
+    x.openbw_mouse_button(1, 1, targetX, targetY, 1); x.openbw_mouse_button(0, 1, targetX, targetY, 1); x.openbw_render(0);
+    const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.equal(output[2], 9); assert.equal(output[3], 1, 'A targeted ability selects only its active caster');
+    assert.equal(output[4] | output[5] << 8, Number(raynor[0]));
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+    x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 240; tick++) x.openbw_step();
+    x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /Mines 2/, 'Raynor places a real mine while the SCV remains selected');
+    x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /^SCV\t/, 'Tab exposes the selected worker without dropping Raynor');
+    x.openbw_key(1, 98, 0); x.openbw_key(0, 98, 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tBarracks\t/, 'Active SCV exposes Barracks construction in a mixed hero group');
+    assert.equal(read(x.openbw_wires()).trim().split('\n').length, 2);
+    x.openbw_key(1, 0, 41); x.openbw_key(0, 0, 41); x.openbw_render(0);
+    console.log('Mixed Raynor/SCV precedence, real mine placement and worker Tab controls passed.');
   }
   if (missionId === 'terran01') {
     x.openbw_debug_select(Number(human.find(unit => unit[1] === 'SCV')[0]), 0);
@@ -788,6 +893,77 @@ function testCampaign() {
     console.log('Campaign base/forces advisor checks passed.');
   }
   console.log(`Campaign original-trigger checks passed: ${events.length} events, ${dialogue.length} transmissions.`);
+}
+
+function testProtossSelection() {
+  const read = readRecoveryString;
+  const units = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[2] === '0');
+  const press = symbol => { x.openbw_key(1, symbol.charCodeAt(0), 0); x.openbw_key(0, symbol.charCodeAt(0), 0); x.openbw_render(0); };
+  const applyQueued = () => {
+    const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(bytes.length > 0);
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(0, bytes.length); x.openbw_out_clear();
+    return bytes;
+  };
+  x.openbw_debug_resources(2000, 1000);
+  const probe = units().find(unit => unit[1] === 'Probe');
+  assert.ok(probe);
+  const build = (type, label, width, height) => {
+    x.openbw_debug_select(Number(probe[0]), 0); x.openbw_render(0);
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    let site = null;
+    for (let tileY = Math.ceil((Number(camera[2]) + 64) / 32); tileY * 32 < Number(camera[2]) + 512 && !site; tileY++) {
+      for (let tileX = Math.ceil((Number(camera[1]) + 160) / 32); tileX * 32 < Number(camera[1]) + 1120 && !site; tileX++) {
+        const mapX = tileX * 32 + width * 16, mapY = tileY * 32 + height * 16;
+        if ((x.openbw_debug_build_check(type, mapX, mapY) & 3) === 3) site = [mapX - Number(camera[1]), mapY - Number(camera[2])];
+      }
+    }
+    assert.ok(site, `Legal native placement for ${label}`);
+    press('b');
+    const command = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(row => row[1] === label);
+    assert.ok(command, `Probe command for ${label}`); press(command[0]);
+    x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1); x.openbw_render(0); applyQueued();
+    for (let tick = 0; tick < 3000; tick++) {
+      x.openbw_step();
+      if (tick % 16) continue;
+      const building = units().find(unit => unit[1] === label);
+      if (!building) continue;
+      x.openbw_debug_select(Number(building[0]), 0); x.openbw_render(0);
+      if (!/\tCancel\t/.test(read(x.openbw_card()))) return building;
+    }
+    assert.fail(`${label} completes through native Probe construction`);
+  };
+  build(156, 'Pylon', 2, 2);
+  const gateway = build(160, 'Gateway', 4, 3);
+  build(164, 'Cybernetics Core', 3, 2);
+  const train = label => {
+    x.openbw_debug_select(Number(gateway[0]), 0); x.openbw_render(0);
+    const command = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(row => row[1] === label);
+    assert.ok(command); press(command[0]); applyQueued();
+    for (let tick = 0; tick < 1800; tick++) { x.openbw_step(); const unit = units().find(unit => unit[1] === label); if (unit) return unit; }
+    assert.fail(`${label} completes through native Gateway production`);
+  };
+  const zealot = train('Zealot'), dragoon = train('Dragoon');
+  x.openbw_debug_select(Number(probe[0]), 0); x.openbw_debug_select(Number(zealot[0]), 1); x.openbw_debug_select(Number(dragoon[0]), 1); x.openbw_render(0);
+  assert.match(read(x.openbw_card()), /^Dragoon\t/, 'A more valuable Protoss unit takes stable default precedence');
+  const tab = backwards => {
+    if (backwards) x.openbw_key(1, 0, 225);
+    x.openbw_key(1, 0, 43); x.openbw_key(0, 0, 43);
+    if (backwards) x.openbw_key(0, 0, 225);
+    x.openbw_render(0);
+  };
+  tab(false); assert.match(read(x.openbw_card()), /^Zealot\t/);
+  tab(false); assert.match(read(x.openbw_card()), /^Probe\t/);
+  press('b'); assert.match(read(x.openbw_card()), /\tGateway\t/, 'Tab exposes Probe building options inside a three-type group');
+  x.openbw_key(1, 0, 41); x.openbw_key(0, 0, 41); x.openbw_render(0);
+  tab(true); assert.match(read(x.openbw_card()), /^Zealot\t/, 'Shift+Tab reverses the three-type order');
+  assert.equal(read(x.openbw_wires()).trim().split('\n').length, 3);
+  x.openbw_out_clear(); press('m');
+  x.openbw_mouse_button(1, 1, 900, 300, 1); x.openbw_mouse_button(0, 1, 900, 300, 1); x.openbw_render(0);
+  const move = applyQueued();
+  assert.equal(move[2], 9); assert.equal(move[3], 3, 'Generic movement still applies to every selected type');
+  console.log('Protoss three-type precedence, forward/reverse Tab, Probe commands and whole-group movement passed.');
 }
 
 function testCommands() {
