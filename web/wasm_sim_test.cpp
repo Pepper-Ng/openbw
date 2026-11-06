@@ -1914,6 +1914,88 @@ static void among_ruins_mission_cases(data_loading::data_files_loader<>& load_da
 	}
 }
 
+static void egression_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+		unit_t* standing = nullptr;
+		unit_t* carrier = nullptr;
+		unit_t* replacement = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			if (functions.unit_is(unit, UnitTypes::Special_Zerg_Beacon)) standing = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) {
+				if (!carrier) carrier = unit;
+				else replacement = unit;
+			}
+		}
+		require(standing && carrier && replacement, "original standing Chrysalis and two Drones for Egression objective cases");
+		const auto& destination_area = st.locations.at(0).area;
+		xy destination = (destination_area.from + destination_area.to) / 2;
+		if (scenario == 4) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		} else if (scenario == 0) {
+			functions.move_unit(carrier, destination);
+			functions.set_unit_order(carrier, functions.get_order_type(Orders::HoldPosition));
+		} else {
+			functions.set_unit_order(carrier, functions.get_order_type(Orders::Move), standing->sprite->position);
+			for (int tick = 0; tick != 600 && !carrier->worker.powerup; ++tick) functions.next_frame();
+			require(carrier->worker.powerup && functions.unit_is(carrier->worker.powerup, UnitTypes::Powerup_Young_Chrysalis), "ordinary Drone movement picks up the original tracked Chrysalis");
+			unit_t* portable = carrier->worker.powerup;
+			require(functions.us_hidden(portable) && carrier->carrying_flags == 4, "native hidden carried Chrysalis retains normal worker carrying state");
+			ImageTypes overlay = ImageTypes(int(ImageTypes::IMAGEID_Flag) + int(UnitTypes::Powerup_Young_Chrysalis) - int(UnitTypes::Powerup_Flag));
+			require(functions.find_image(carrier->sprite, overlay, overlay), "native Chrysalis carry overlay is present");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.unit_counts[3][UnitTypes::Hero_Hunter_Killer] == 6, "original contact rescue gives the six Hunter Killers without synthetic reinforcements");
+			if (scenario == 2 || scenario == 3) {
+				xy dropped(768, 1088);
+				functions.move_unit(carrier, dropped);
+				functions.set_unit_order(carrier, functions.get_order_type(Orders::HoldPosition));
+				functions.kill_unit(carrier);
+				for (int tick = 0; tick != 600 && !st.countdown_timer; ++tick) functions.next_frame();
+				require(!functions.unit_dying(portable) && !functions.us_hidden(portable) && portable->sprite->position == dropped, "carrier death drops the surviving Chrysalis at the actual carrier position");
+				require(st.countdown_timer > 0 && !st.players[3].victory_state, "the original warning starts its recovery countdown without immediate defeat");
+				if (scenario == 3) {
+					functions.move_unit(replacement, dropped + xy(0, 40));
+					functions.set_unit_order(replacement, functions.get_order_type(Orders::Move), dropped);
+					for (int tick = 0; tick != 400 && replacement->worker.powerup != portable; ++tick) functions.next_frame();
+					require(replacement->worker.powerup == portable, "the other original Drone recovers the same dropped Chrysalis");
+					for (int tick = 0; tick != 640 && st.countdown_timer; ++tick) functions.next_frame();
+					require(st.countdown_timer == 0 && !st.players[3].victory_state, "the original recovery trigger clears the countdown before defeat");
+					carrier = replacement;
+				}
+			}
+			if (scenario == 1 || scenario == 3) {
+				functions.move_unit(carrier, destination);
+				functions.set_unit_order(carrier, functions.get_order_type(Orders::HoldPosition));
+			}
+		}
+		bool paused = false;
+		for (int tick = 0; tick != 4000 && !st.players[3].victory_state; ++tick) {
+			functions.next_frame();
+			if (st.scripted_pause) paused = true;
+		}
+		if (scenario == 0) require(!st.players[3].victory_state, "an empty Drone at the destination beacon cannot win Egression");
+		if (scenario == 1 || scenario == 3) require(st.players[3].victory_state >= 3 && paused, "the original carried-Chrysalis delivery reaches its paused dialogue and victory");
+		if (scenario == 2 || scenario == 4) require(st.players[3].victory_state == 2, "original recovery expiry or whole-human-force loss reaches defeat");
+		printf("Egression original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1931,6 +2013,7 @@ int main(int argc, char** argv) {
 	bool gettysburg = campaign && argc > 4 && !strcmp(argv[4], "terran09");
 	bool hammer = campaign && argc > 4 && !strcmp(argv[4], "terran10");
 	bool among_ruins = campaign && argc > 4 && !strcmp(argv[4], "zerg01");
+	bool egression = campaign && argc > 4 && !strcmp(argv[4], "zerg02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1946,6 +2029,60 @@ int main(int argc, char** argv) {
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
 		if (combat_ai) { shared_combat_ai_checks(player.st()); return 0; }
+		if (egression) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg, "Egression preserves original human Zerg slot three");
+			require(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 2 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 3 && st.unit_counts[3][UnitTypes::Zerg_Mutalisk] == 2 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 3, "Egression preserves original Zerg starting forces");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 300 && st.current_gas[3] == 0, "Egression original opening grants three hundred minerals and no gas");
+			unit_t* chrysalis = nullptr;
+			unit_t* worker = nullptr;
+			int portable_count = 0;
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				if (functions.unit_is(unit, UnitTypes::Special_Zerg_Beacon)) chrysalis = unit;
+				if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) worker = unit;
+				if (functions.unit_is(unit, UnitTypes::Powerup_Young_Chrysalis)) ++portable_count;
+			}
+			require(chrysalis && worker, "Egression preserves its original standing Chrysalis and Drone");
+			require(portable_count == 1, "original tracking initialization produces exactly one portable Chrysalis");
+			require(!st.players[3].victory_state && !st.campaign_ai[3].town_active, "Egression neither invents an opening outcome nor enables human AI");
+			require(st.campaign_ai[1].town_active && st.campaign_ai_scripts.size() == 1, "Egression starts its original Protoss Zer2 town program");
+			printf("Egression original initialization, standing Chrysalis and AI startup passed.\n");
+			functions.move_unit(worker, chrysalis->sprite->position);
+			functions.set_unit_order(worker, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64 && !worker->worker.powerup; ++tick) functions.next_frame();
+			require(worker->worker.powerup && functions.unit_is(worker->worker.powerup, UnitTypes::Powerup_Young_Chrysalis), "a Drone entering the original Chrysalis picks up its native portable form");
+			require(!functions.unit_dying(chrysalis) && functions.us_hidden(worker->worker.powerup), "pickup carries one native Chrysalis while preserving the original source beacon");
+			printf("Egression native Chrysalis pickup passed.\n");
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 17002 + 4 * 180 * 15 + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time + 2000;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[1].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			if (!(ground_fire && air_fire)) {
+				printf("Egression combat diagnostic: frame=%d outcome=%d ground=%d air=%d scouts=%d stargates=%d minerals=%d gas=%d\n", st.current_frame, st.players[3].victory_state, ground_fire, air_fire, st.unit_counts[1][UnitTypes::Protoss_Scout], st.unit_counts[1][UnitTypes::Protoss_Stargate], st.current_minerals[1], st.current_gas[1]);
+				for (const auto& script : st.campaign_ai_scripts) printf("Egression script diagnostic: owner=%d position=%zu wait=%d\n", script.owner, script.position, script.wait);
+			}
+			require(ground_fire && air_fire, "original Zer2 deploys weapon-firing ground and air parties at authored timing");
+			printf("Egression original Protoss ground and air attacks passed.\n");
+			egression_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (among_ruins) {
 			auto& st = player.st();
 			state_functions functions(st);

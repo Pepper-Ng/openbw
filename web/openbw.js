@@ -2341,7 +2341,7 @@ const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
 const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {

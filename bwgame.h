@@ -23156,6 +23156,21 @@ struct game_load_functions : state_functions {
 			}
 		} else error("unsupported map version %d", version);
 
+		if (use_map_settings && version == 59) {
+			for (const auto& trigger : game_st.triggers) for (const auto& action : trigger.actions) {
+				if (!action.type) break;
+				if (action.flags & 2 || action.type != 38 || action.extra_n != int(UnitTypes::Powerup_Young_Chrysalis) || !action.location || action.location > st.locations.size() || !action.group2_n || action.group2_n > st.locations.size()) continue;
+				const auto& area = st.locations[action.group2_n - 1].area;
+				for (unit_t* unit : ptr(st.visible_units)) {
+					if (!unit_is(unit, UnitTypes::Special_Zerg_Beacon) || st.players[unit->owner].controller != player_t::controller_occupied || !trigger.enabled[unit->owner]) continue;
+					xy position = unit->sprite->position;
+					if (position.x < area.from.x || position.x > area.to.x || position.y < area.from.y || position.y > area.to.y) continue;
+					if (trigger_find_unit(unit->owner, st.locations[action.location - 1], action.group_n, action.extra_n)) continue;
+					create_initial_unit(get_unit_type(UnitTypes::Powerup_Young_Chrysalis), position, unit->owner);
+				}
+			}
+		}
+
 		if (!use_map_settings) {
 			if (setup_info.victory_condition == 1) {
 				data_reader_le r(global_st.melee_trg.data(), global_st.melee_trg.data() + global_st.melee_trg.size());
