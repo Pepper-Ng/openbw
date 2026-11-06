@@ -5,14 +5,15 @@ import { WASI } from 'node:wasi';
 import { readFileSync } from 'node:fs';
 import { argv } from 'node:process';
 
-const campaign = argv[2] === '--test-campaign';
-const missionId = campaign ? argv[3] || 'terran01' : null;
+const combatAI = argv[2] === '--test-ai-combat';
+const campaign = argv[2] === '--test-campaign' || combatAI;
+const missionId = campaign ? combatAI ? 'terran01' : argv[3] || 'terran01' : null;
 if (campaign && !['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'].includes(missionId)) throw new Error('Unsupported test mission');
 const map = campaign ? `/data/campaign/${missionId}.mpq` : argv[2] || '/maps/Benzene.scx';
 
 const wasi = new WASI({
   version: 'preview1',
-  args: ['sim', '/data', map, ...(campaign ? ['--test-campaign', missionId] : [])],
+  args: ['sim', '/data', map, ...(combatAI ? ['--test-ai-combat'] : campaign ? ['--test-campaign', missionId] : [])],
   preopens: { '/data': 'web/data', '/maps': 'web/maps' },
 });
 

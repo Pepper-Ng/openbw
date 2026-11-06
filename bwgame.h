@@ -13338,6 +13338,7 @@ struct state_functions {
 	void process_frame() {
 		recede_creep();
 		progress_campaign_ai_scripts();
+		for (int owner = 0; owner != 8; ++owner) progress_campaign_ai_combat(owner);
 
 		if (st.update_tiles_countdown == 0) st.update_tiles_countdown = 100;
 		--st.update_tiles_countdown;
@@ -13863,6 +13864,7 @@ struct state_functions {
 
 	void on_unit_damage(unit_t* u, unit_t* source_unit, bool reveal_source) {
 		if (!source_unit || source_unit->owner == u->owner) return;
+		if (u->owner < 8 && unit_target_is_enemy(u, source_unit) && unit_target_is_undetected(u, source_unit)) try_campaign_ai_scan(u->owner, source_unit);
 		u->last_attacking_player = source_unit->owner;
 		if (reveal_source && !unit_target_is_undetected(u, source_unit) && u->owner < 8) {
 			reveal_sight_at(source_unit->sprite->position, 1, 1 << u->owner, u_flying(source_unit));
@@ -19210,6 +19212,10 @@ struct state_functions {
 		}
 	}
 
+	UnitTypes campaign_ai_type(UnitTypes type) const {
+		return type == UnitTypes::Terran_Siege_Tank_Siege_Mode ? UnitTypes::Terran_Siege_Tank_Tank_Mode : type;
+	}
+
 	void progress_campaign_ai_scripts() {
 		const auto& bytes = st.global->ai_script;
 		if (st.campaign_ai_scripts.empty()) return;
@@ -19252,7 +19258,7 @@ struct state_functions {
 					} else script.town = size_t(existing - ai.area_towns.begin()) + 1;
 				} else if (opcode == 6) {
 					int amount = read(1);
-					const auto* type = get_unit_type((UnitTypes)read(2));
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					int priority = read(1);
 					if (script.town) ai.area_towns.at(script.town - 1).build_requests[type->id] = {amount, priority};
 					else ai.build_requests[type->id] = {amount, priority};
@@ -19265,10 +19271,10 @@ struct state_functions {
 					ai.tech_requests[tech->id] = read(1);
 				} else if (opcode == 9) {
 					int amount = read(1);
-					const auto* type = get_unit_type((UnitTypes)read(2));
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					int count = 0;
 					for (unit_t* unit : ptr(st.player_units[script.owner])) {
-						if (unit_dying(unit) || unit->unit_type != type || campaign_ai_unit_town(script.owner, unit) != script.town) continue;
+						if (unit_dying(unit) || campaign_ai_type(unit->unit_type->id) != type->id || campaign_ai_unit_town(script.owner, unit) != script.town) continue;
 						if (u_completed(unit)) ++count;
 					}
 					if (count < amount) { script.position = position; script.wait = 15; break; }
@@ -19280,7 +19286,7 @@ struct state_functions {
 					ai.attack_launched = false;
 				} else if (opcode == 12) {
 					int amount = read(1);
-					const auto* type = get_unit_type((UnitTypes)read(2));
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					ai.attack_requests[type->id] += amount;
 					int total = 0;
 					for (size_t type = 0; type != 228; ++type) total += ai.attack_requests[(UnitTypes)type];
@@ -19296,7 +19302,7 @@ struct state_functions {
 					}
 				} else if (opcode >= 19 && opcode <= 26) {
 					int amount = read(1);
-					const auto* type = get_unit_type((UnitTypes)read(2));
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					ai.defenses.push_back({opcode - 19, amount, type->id});
 				} else if (opcode == 16) ai.expand_defense = true;
 				else if (opcode == 31) {
@@ -19536,6 +19542,111 @@ struct state_functions {
 		return false;
 	}
 
+	bool try_campaign_ai_scan(int owner, unit_t* target) {
+		if (st.players[owner].controller != player_t::controller_computer_game || !target || unit_dying(target) || us_hidden(target)) return false;
+		if (!unit_is_undetected(target, owner) || (unit_calculate_detected_flags(target) & (1 << owner))) return false;
+		for (const unit_t* sweep : ptr(st.map_revealer_units)) {
+			if (sweep->owner == owner && unit_is(sweep, UnitTypes::Spell_Scanner_Sweep) && !unit_dying(sweep) && unit_target_in_range(sweep, target, unit_sight_range(sweep))) return false;
+		}
+		const auto* tech = get_tech_type(TechTypes::Scanner_Sweep);
+		int radius = get_unit_type(UnitTypes::Spell_Scanner_Sweep)->sight_range * 32;
+		unit_t* caster = nullptr;
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (!unit_is(unit, UnitTypes::Terran_Comsat_Station) || unit_dying(unit)) continue;
+			if (!unit_can_use_tech(unit, tech) || unit->energy < fp8::integer(tech->energy_cost)) continue;
+			if (unit->order_type->id == Orders::CastScannerSweep) {
+				if (xy_length(unit->order_target.pos - target->sprite->position) <= radius) return false;
+				continue;
+			}
+			if (!caster) caster = unit;
+		}
+		if (!caster) return false;
+		issue_order(caster, false, get_order_type(Orders::CastScannerSweep), {target->sprite->position, nullptr});
+		return true;
+	}
+
+	bool try_campaign_ai_stim(unit_t* unit, unit_t* target) {
+		if (st.players[unit->owner].controller != player_t::controller_computer_game || (!unit_is_marine(unit) && !unit_is_firebat(unit))) return false;
+		if (!target || unit_dying(target) || unit_dying(unit) || unit_is_disabled(unit) || us_hidden(unit) || !u_completed(unit) || u_hallucination(unit)) return false;
+		if (unit->stim_timer || unit->hp <= fp8::integer(30) || !unit_can_use_tech(unit, get_tech_type(TechTypes::Stim_Packs))) return false;
+		if (!unit_target_is_enemy(unit, target) || !unit_can_attack_target(unit, target) || !unit_target_in_weapon_movement_range(unit, target)) return false;
+		play_sound(lcg_rand(31, 278, 279), unit);
+		unit_deal_damage(unit, fp8::integer(10), nullptr, ~0);
+		unit->stim_timer = 37;
+		update_unit_speed(unit);
+		return true;
+	}
+
+	bool try_campaign_ai_wraith_cloak(unit_t* unit, unit_t* threat) {
+		if (st.players[unit->owner].controller != player_t::controller_computer_game || !unit_is_wraith(unit)) return false;
+		if (unit_dying(unit) || unit_is_disabled(unit) || us_hidden(unit) || !u_completed(unit) || u_hallucination(unit)) return false;
+		if (!threat) {
+			if (unit->secondary_order_type->id != Orders::Cloak) return false;
+			set_secondary_order(unit, get_order_type(Orders::Decloak));
+			return true;
+		}
+		if (unit->secondary_order_type->id == Orders::Cloak || u_requires_detector(unit) || !unit_can_use_tech(unit, get_tech_type(TechTypes::Cloaking_Field))) return false;
+		if (!unit_target_is_enemy(unit, threat) || unit_dying(threat) || !unit_can_see_target(unit, threat) || !unit_can_attack_target(unit, threat)) return false;
+		const auto* own_weapon = unit_target_weapon(unit, threat);
+		const auto* enemy_weapon = unit_target_weapon(threat, unit);
+		if (!own_weapon || !enemy_weapon || units_distance(unit, threat) > std::max(weapon_max_range(unit, own_weapon), weapon_max_range(threat, enemy_weapon)) + 32) return false;
+		auto cost = fp8::integer(get_tech_type(TechTypes::Cloaking_Field)->energy_cost);
+		if (unit->energy < cost * 2) return false;
+		unit->energy -= cost;
+		set_secondary_order(unit, get_order_type(Orders::Cloak));
+		return true;
+	}
+
+	bool try_campaign_ai_siege(unit_t* unit) {
+		if (st.players[unit->owner].controller != player_t::controller_computer_game || !unit_is_tank(unit)) return false;
+		if (unit_dying(unit) || unit_is_disabled(unit) || us_hidden(unit) || !u_completed(unit) || u_hallucination(unit) || u_order_not_interruptible(unit) || u_iscript_nobrk(unit)) return false;
+		if (!unit_can_use_tech(unit, get_tech_type(TechTypes::Tank_Siege_Mode))) return false;
+		if (unit->order_type->id == Orders::Sieging || unit->order_type->id == Orders::Unsieging) return false;
+		const weapon_type_t* tank_weapon = get_unit_type(UnitTypes::Terran_Siege_Tank_Tank_Mode_Turret)->ground_weapon;
+		const weapon_type_t* siege_weapon = get_unit_type(UnitTypes::Terran_Siege_Tank_Siege_Mode_Turret)->ground_weapon;
+		int tank_range = weapon_max_range(unit, tank_weapon), siege_range = weapon_max_range(unit, siege_weapon);
+		auto valid = [&](const unit_t* target) { return !u_flying(target) && !unit_dying(target) && !ut_turret(target) && !unit_is_critter(target) && unit_target_is_enemy(unit, target) && unit_can_attack_target(unit, target) && unit_can_see_target(unit, target); };
+		unit_t* close = find_nearest_unit(unit, square_at(unit->sprite->position, siege_weapon->min_range + 64), [&](const unit_t* target) {
+			return valid(target) && units_distance(unit, target) <= siege_weapon->min_range && unit_target_weapon(target, unit);
+		});
+		unit_t* ranged = find_nearest_unit(unit, square_at(unit->sprite->position, siege_range + 64), [&](const unit_t* target) {
+			int distance = units_distance(unit, target);
+			return valid(target) && distance > siege_weapon->min_range && distance <= siege_range;
+		});
+		bool sieged = unit_is_sieged_tank(unit);
+		bool travelling = !ranged && (unit->order_type->id == Orders::Move || unit->order_type->id == Orders::AttackMove) && xy_length(unit->order_target.pos - unit->sprite->position) > 64;
+		if (sieged ? !close && !travelling : close || !ranged || units_distance(unit, ranged) <= tank_range) return false;
+		const auto* previous = unit->order_type;
+		order_target_t destination{unit->order_target.pos, unit->order_target.unit};
+		if (previous->id != Orders::Move && previous->id != Orders::AttackMove) {
+			for (const order_t* queued : ptr(unit->order_queue)) if (queued->order_type->id == Orders::Move || queued->order_type->id == Orders::AttackMove) {
+				previous = queued->order_type; destination = queued->target; break;
+			}
+		}
+		issue_order(unit, false, get_order_type(sieged ? Orders::Unsieging : Orders::Sieging), {});
+		unit_t* target = close ? close : ranged;
+		if (target) queue_order_back(unit, get_order_type(Orders::AttackUnit), {target->sprite->position, target});
+		if (previous->id == Orders::Move || previous->id == Orders::AttackMove) queue_order_back(unit, previous, destination);
+		return true;
+	}
+
+	void progress_campaign_ai_combat(int owner) {
+		if (st.current_frame % 8 || st.players[owner].controller != player_t::controller_computer_game) return;
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (unit_dying(unit) || ut_turret(unit) || unit_is_disabled(unit) || us_hidden(unit) || !u_completed(unit) || u_hallucination(unit)) continue;
+			if (unit_is_marine(unit) || unit_is_firebat(unit)) {
+				unit_t* target = unit->order_target.unit ? unit->order_target.unit : unit->auto_target_unit;
+				try_campaign_ai_stim(unit, target);
+			} else if (unit_is_wraith(unit)) {
+				unit_t* threat = find_nearest_unit(unit, square_at(unit->sprite->position, 448), [&](const unit_t* target) {
+					const auto* weapon = unit_target_weapon(target, unit);
+					return weapon && !unit_dying(target) && !ut_turret(target) && unit_target_is_enemy(unit, target) && unit_can_attack_target(unit, target) && unit_can_see_target(unit, target) && units_distance(unit, target) <= std::max(weapon_max_range(target, weapon), 160) + 96;
+				});
+				try_campaign_ai_wraith_cloak(unit, threat);
+			} else if (unit_is_tank(unit)) try_campaign_ai_siege(unit);
+		}
+	}
+
 	void progress_campaign_ai_town(int owner) {
 		if (st.current_frame % 8) return;
 		auto& ai = st.campaign_ai.at(owner);
@@ -19551,14 +19662,14 @@ struct state_functions {
 			if (unit_dying(unit) || ut_turret(unit)) continue;
 			if (us_hidden(unit) && !ut_worker(unit) && !ut_building(unit)) continue;
 			if (ut_worker(unit) && worker_idle(unit) && !unit->build_queue.empty() && ut_building(unit->build_queue.front())) build_queue_clear_single(unit);
-			++counts[unit->unit_type->id];
+			++counts[campaign_ai_type(unit->unit_type->id)];
 			bool main_town = campaign_ai_unit_town(owner, unit) == 0;
-			if (main_town) ++main_counts[unit->unit_type->id];
+			if (main_town) ++main_counts[campaign_ai_type(unit->unit_type->id)];
 			for (const auto* type : unit->build_queue) {
 				int amount = ut_two_units_in_one_egg(type) ? 2 : 1;
-				counts[type->id] += amount;
-				if (main_town) main_counts[type->id] += amount;
-				pending[type->id] += amount;
+				counts[campaign_ai_type(type->id)] += amount;
+				if (main_town) main_counts[campaign_ai_type(type->id)] += amount;
+				pending[campaign_ai_type(type->id)] += amount;
 			}
 			if (unit->order_type->id == Orders::DroneStartBuild && unit->order_unit_type) ++counts[unit->order_unit_type->id];
 		}
@@ -19594,7 +19705,7 @@ struct state_functions {
 		}
 		type_indexed_array<int, UnitTypes> reserves{};
 		type_indexed_array<int, UnitTypes> deployed{};
-		for (unit_id id : ai.attacking) ++deployed[get_unit(id)->unit_type->id];
+		for (unit_id id : ai.attacking) ++deployed[campaign_ai_type(get_unit(id)->unit_type->id)];
 		auto is_defending = [&](const unit_t* unit) {
 			unit_id id = get_unit_id(unit);
 			return std::any_of(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.unit == id; });
@@ -19616,7 +19727,7 @@ struct state_functions {
 			}
 			if (unit->order_target.unit != target) issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
 			for (int domain = 0; domain != 2; ++domain) ai.regions[defender.region].assigned[domain] += domain ? game_st.unit_air_strength[unit->unit_type->id] : game_st.unit_ground_strength[unit->unit_type->id];
-			++reserves[unit->unit_type->id];
+			++reserves[campaign_ai_type(unit->unit_type->id)];
 			return false;
 		}), ai.defending.end());
 		type_indexed_array<int, UnitTypes> defense_build{};
@@ -19634,7 +19745,7 @@ struct state_functions {
 						if (defense.category != category + 4) continue;
 						for (int amount = 0; amount < defense.amount && region.assigned[domain] < region.needed[domain]; ++amount) {
 							unit_t* unit = find_nearest_unit(target->sprite->position, map_bounds(), [&](const unit_t* unit) {
-								return unit->owner == owner && unit_is(unit, defense.type) && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && unit_can_attack_target(unit, target) && (u_flying(unit) || is_reachable(unit, target));
+								return unit->owner == owner && campaign_ai_type(unit->unit_type->id) == defense.type && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && unit_can_attack_target(unit, target) && (u_flying(unit) || is_reachable(unit, target));
 							});
 							if (!unit) break;
 							ai.defending.push_back({get_unit_id(unit), path_region.index, unit->sprite->position});
@@ -19665,14 +19776,14 @@ struct state_functions {
 				UnitTypes type = (UnitTypes)type_id;
 				if (!ai.attack_requests[type]) continue;
 				int selected = 0;
-				for (unit_id id : ai.attack_party) if (unit_is(get_unit(id), type)) ++selected;
+				for (unit_id id : ai.attack_party) if (campaign_ai_type(get_unit(id)->unit_type->id) == type) ++selected;
 				while (selected < ai.attack_requests[type] && counts[type] - deployed[type] - selected > reserves[type]) {
 					unit_t* unit = find_nearest_unit(ai.home, map_bounds(), [&](const unit_t* unit) {
 						if (us_hidden(unit)) return false;
 						if (unit->order_target.unit && !unit_dying(unit->order_target.unit) && unit_target_is_enemy(unit, unit->order_target.unit)) return false;
 						if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit)) return false;
 						if (!u_flying(unit) && !is_reachable(unit->sprite->position, rally)) return false;
-						return unit->owner == owner && unit_is(unit, type) && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && !ut_turret(unit);
+						return unit->owner == owner && campaign_ai_type(unit->unit_type->id) == type && !unit_dying(unit) && u_completed(unit) && !unavailable(unit) && !is_defending(unit) && !ut_turret(unit);
 					});
 					if (!unit) break;
 					ai.attack_party.push_back(get_unit_id(unit));
@@ -19748,8 +19859,8 @@ struct state_functions {
 			type_indexed_array<int, UnitTypes> local_counts{};
 			for (unit_t* unit : ptr(st.player_units[owner])) {
 				if (unit_dying(unit) || ut_turret(unit) || campaign_ai_unit_town(owner, unit) != town + 1) continue;
-				++local_counts[unit->unit_type->id];
-				for (const auto* type : unit->build_queue) local_counts[type->id] += ut_two_units_in_one_egg(type) ? 2 : 1;
+				++local_counts[campaign_ai_type(unit->unit_type->id)];
+				for (const auto* type : unit->build_queue) local_counts[campaign_ai_type(type->id)] += ut_two_units_in_one_egg(type) ? 2 : 1;
 			}
 			for (size_t type = 0; type != 228; ++type) {
 				const auto& request = ai.area_towns[town].build_requests[(UnitTypes)type];
