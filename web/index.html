@@ -443,6 +443,15 @@
   #overlay.menu-mode #mp h2 { font-size: 14px; text-align: left; color: #aebac2; }
   #campaign-progress { display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #aeb8bf; font-size: 12px; margin-bottom: 14px; }
   #campaign-progress progress { width: 140px; height: 7px; accent-color: #69b587; }
+  #campaign-code-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; padding: 0 0 12px; margin-bottom: 12px; border-bottom: 1px solid #30383c; }
+  #campaign-code-tools label { color: #aeb8bf; font-size: 12px; margin-bottom: 5px; }
+  .campaign-code-row { display: flex; gap: 6px; align-items: center; }
+  .campaign-code-row input { box-sizing: border-box; flex: 1; min-width: 0; width: 0; min-height: 40px; padding: 8px; border: 1px solid #49545c; border-radius: 4px; background: #161d22; color: #dce5e9; font: 14px ui-monospace, Menlo, monospace; }
+  .campaign-code-row button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: 0 0 auto; min-height: 40px; padding: 8px 10px; border-radius: 4px; }
+  #campaign-code-copy { width: 44px; }
+  #campaign-code-status { grid-column: 1 / -1; min-height: 18px; color: #aeb8bf; font-size: 12px; overflow-wrap: anywhere; }
+  #campaign-code-status.err { color: #f87171; }
+  @media (max-width: 480px) { #campaign-code-tools { grid-template-columns: minmax(0, 1fr); } }
   #campaign-missions { border: 0; padding: 0; margin: 0; min-width: 0; }
   #campaign-missions legend { position: absolute; width: 1px; height: 1px; overflow: hidden; }
   #campaign-missions .mission-row { display: flex; align-items: center; gap: 12px; padding: 12px 8px; margin: 0; border-bottom: 1px solid #30383c; cursor: pointer; min-height: 28px; }
@@ -642,6 +651,11 @@
     <div id="campaign-setup" hidden>
       <h2>Terran Campaign</h2>
       <div id="campaign-progress"><span>0 of 10 completed</span><progress max="10" value="0" aria-label="Campaign progress"></progress></div>
+      <div id="campaign-code-tools">
+        <div><label for="campaign-code">Progress Code</label><div class="campaign-code-row"><input id="campaign-code" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Current campaign progress code"><button id="campaign-code-copy" type="button" title="Copy progress code" aria-label="Copy progress code"><i data-lucide="copy"></i></button></div></div>
+        <div><label for="campaign-code-input">Resume Code</label><div class="campaign-code-row"><input id="campaign-code-input" type="text" maxlength="12" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Six-character campaign resume code" placeholder="000000"><button id="campaign-code-apply" type="button" disabled><i data-lucide="log-in"></i>Apply</button></div></div>
+        <div id="campaign-code-status" role="status" aria-live="polite"></div>
+      </div>
       <select id="mission-select" hidden aria-label="Mission">
         <option value="terran01">1. Wasteland</option>
         <option value="terran02">2. Backwater Station</option>

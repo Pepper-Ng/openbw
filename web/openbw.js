@@ -1144,7 +1144,7 @@ async function boot(session) {
       if (won && !campaignDebug) {
         const progress = campaignProgress();
         progress.victories[session.mission.id] = true;
-        try { localStorage.setItem(campaignProgressKey, JSON.stringify({ version: 2, victories: progress.victories })); $('go-progress').textContent = 'Mission complete.'; }
+        try { saveCampaignProgress(progress); $('go-progress').textContent = 'Mission complete.'; }
         catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
       }
       const next = campaignMissionIds[campaignMissionIds.indexOf(session.mission.id) + 1];
@@ -2338,6 +2338,7 @@ renderMapInfo(); buildSlots();
 
 const campaignProgressKey = 'openbw-campaign-progress-v2';
 const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
+const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
 const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'];
@@ -2350,12 +2351,43 @@ function campaignProgress() {
     if (saved !== null) value = JSON.parse(saved);
     else legacy = JSON.parse(localStorage.getItem(campaignLegacyProgressKey) || 'null');
   } catch {}
-  const victories = Object.fromEntries(campaignMissionIds.map(id => [id, value?.version === 2 ? value.victories?.[id] === true : legacy?.version === 1 && Array.isArray(legacy.completed) && legacy.completed.includes(id)]));
+  const importedPrefix = value?.version === 2 && value.victories && typeof value.victories === 'object' && !Array.isArray(value.victories) && Number.isInteger(value.importedPrefix) && value.importedPrefix >= 0 && value.importedPrefix <= campaignCodeLimit && campaignMissionIds.slice(0, value.importedPrefix).every(id => !Object.hasOwn(value.victories, id) || value.victories[id] === true) ? value.importedPrefix : 0;
+  const victories = Object.fromEntries(campaignMissionIds.map((id, index) => [id, value?.version === 2 ? value.victories?.[id] === true || index < importedPrefix : legacy?.version === 1 && Array.isArray(legacy.completed) && legacy.completed.includes(id)]));
   const completed = campaignMissionIds.filter(id => victories[id]);
   if (!campaignDebug && legacy?.version === 1 && Array.isArray(legacy.completed)) {
-    try { localStorage.setItem(campaignProgressKey, JSON.stringify({ version: 2, victories })); } catch {}
+    try { saveCampaignProgress({ victories, importedPrefix: 0 }); } catch {}
   }
-  return { version: 2, victories, completed };
+  return { version: 2, victories, completed, importedPrefix };
+}
+function saveCampaignProgress(progress) {
+  localStorage.setItem(campaignProgressKey, JSON.stringify({ version: 2, victories: progress.victories, importedPrefix: progress.importedPrefix || 0 }));
+}
+function campaignSequentialProgress(progress = campaignProgress()) {
+  let cleared = 0;
+  while (cleared < campaignMissionIds.length && progress.victories[campaignMissionIds[cleared]]) cleared++;
+  return Math.max(cleared, progress.importedPrefix);
+}
+function campaignProgressCode(completed) {
+  if (!Number.isInteger(completed) || completed < 0 || completed > campaignCodeLimit) throw new Error('Unsupported campaign progress.');
+  return cyrb53(new TextEncoder().encode(`OpenBW campaign progress v1:${completed}`)).slice(-6);
+}
+function campaignDecodeCode(code) {
+  if (typeof code !== 'string') return null;
+  const normalized = code.trim().toLowerCase();
+  if (!/^[a-f0-9]{6}$/.test(normalized)) return null;
+  for (let completed = 0; completed <= campaignCodeLimit; completed++) if (campaignProgressCode(completed) === normalized) return completed;
+  return null;
+}
+function campaignApplyCode(code) {
+  if (campaignDebug) throw new Error('Progress codes are disabled in debug mode.');
+  const completed = campaignDecodeCode(code);
+  if (completed === null) throw new Error('Invalid six-character progress code.');
+  const progress = campaignProgress();
+  if (completed <= campaignSequentialProgress(progress)) return false;
+  for (const id of campaignMissionIds.slice(0, completed)) progress.victories[id] = true;
+  progress.importedPrefix = completed;
+  saveCampaignProgress(progress);
+  return true;
 }
 function campaignUnlocked(missionId) {
   const index = campaignMissionIds.indexOf(missionId);
@@ -2393,7 +2425,7 @@ function loadSelectedMission() {
   }).catch(error => { if ($('mission-select').value === missionId) $('mission-size').textContent = error.message; });
 }
 function renderCampaignSelection() {
-  const completed = campaignProgress().completed;
+  const progress = campaignProgress(), completed = progress.completed;
   const list = $('campaign-missions');
   if (!list.querySelector('input')) {
     for (const option of $('mission-select').options) {
@@ -2420,6 +2452,8 @@ function renderCampaignSelection() {
   while (completed.includes(campaignMissionIds[cleared])) cleared++;
   $('campaign-progress').hidden = campaignDebug;
   $('campaign-tools').hidden = campaignDebug;
+  $('campaign-code-tools').hidden = campaignDebug;
+  $('campaign-code').value = campaignProgressCode(campaignSequentialProgress(progress));
   $('campaign-progress').querySelector('span').textContent = `${cleared} of 10 completed${completed.length > cleared ? ` - ${completed.length - cleared} later victories recorded` : ''}`;
   $('campaign-progress').querySelector('progress').value = cleared;
 }
@@ -2549,6 +2583,26 @@ $('campaign-delete').onclick = async () => {
     $('mission-size').textContent = 'Mission downloads deleted.';
   } catch { $('mission-size').textContent = 'Mission downloads could not be deleted.'; }
 };
+$('campaign-code-copy').onclick = async () => {
+  if (campaignDebug) return;
+  const status = $('campaign-code-status');
+  try { await navigator.clipboard.writeText($('campaign-code').value); status.textContent = 'Progress code copied.'; status.className = ''; }
+  catch { $('campaign-code').focus(); $('campaign-code').select(); status.textContent = 'Clipboard unavailable.'; status.className = 'err'; }
+};
+$('campaign-code-apply').onclick = () => {
+  const status = $('campaign-code-status');
+  try {
+    if (campaignApplyCode($('campaign-code-input').value)) {
+      const progress = campaignProgress();
+      $('mission-select').value = campaignMissionIds.find(id => !progress.victories[id] && campaignUnlocked(id)) || campaignMissionIds[campaignMissionIds.length - 1];
+      loadSelectedMission();
+      status.textContent = 'Campaign progress restored.';
+    } else { renderCampaignSelection(); status.textContent = 'Code is not ahead of current progress.'; }
+    status.className = '';
+  } catch (error) { status.textContent = error.message; status.className = 'err'; }
+};
+$('campaign-code-input').oninput = () => { $('campaign-code-apply').disabled = !$('campaign-code-input').value.trim(); };
+$('campaign-code-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !$('campaign-code-apply').disabled) $('campaign-code-apply').click(); });
 $('campaign-reset').onclick = () => {
   const button = $('campaign-reset');
   if (button.dataset.confirm !== '1') {
@@ -2561,6 +2615,7 @@ $('campaign-reset').onclick = () => {
   catch { $('mission-size').textContent = 'Campaign progress could not be reset.'; }
   delete button.dataset.confirm;
   button.title = button.ariaLabel = 'Reset campaign progress';
+  $('campaign-code-input').value = ''; $('campaign-code-apply').disabled = true; $('campaign-code-status').textContent = '';
   $('mission-select').value = campaignMissionIds[0];
   loadSelectedMission();
 };

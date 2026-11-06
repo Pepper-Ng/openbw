@@ -184,11 +184,13 @@ if (process.argv[2] === '--test-campaign-menu') {
   const source = readFileSync('web/openbw.js', 'utf8');
   const progress = source.match(/function campaignProgress\(\) \{[\s\S]*?\n\}/)?.[0];
   const unlocked = source.match(/function campaignUnlocked\(missionId\) \{[\s\S]*?\n\}/)?.[0];
+  const progressFunctions = ['cyrb53', 'saveCampaignProgress', 'campaignSequentialProgress', 'campaignProgressCode', 'campaignDecodeCode', 'campaignApplyCode'].map(name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0]);
   assert.ok(progress && unlocked, 'Actual campaign progress functions exist');
+  assert.ok(progressFunctions.every(Boolean), 'Actual portable progress functions exist');
   const ids = Array.from({ length: 10 }, (value, index) => `terran${String(index + 1).padStart(2, '0')}`);
   const stored = new Map();
   const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
-  const functions = debug => new Function('localStorage', 'campaignMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', `${progress}\n${unlocked}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked };`)(localStorage, ids, 'v2', 'v1', debug);
+  const functions = (debug, missionIds = ids) => new Function('localStorage', 'campaignMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', 'campaignCodeLimit', `${progress}\n${unlocked}\n${progressFunctions.join('\n')}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked, code: campaignProgressCode, decode: campaignDecodeCode, apply: campaignApplyCode, sequential: campaignSequentialProgress, save: saveCampaignProgress };`)(localStorage, missionIds, 'v2', 'v1', debug, 70);
   const normal = functions(false);
   assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Fresh campaigns only unlock mission one');
   assert.ok(Object.values(normal.progress().victories).every(value => value === false), 'Missing victory flags default false');
@@ -204,7 +206,44 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(JSON.stringify([...stored]), beforeDebug, 'Debug unlocking does not write progress');
   stored.set('v2', '{invalid');
   assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Corrupt new progress cannot resurrect old win records');
-  console.log('Campaign menu victory flags, legacy migration, strict unlocks and debug isolation passed.');
+  const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
+  assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
+  assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
+  for (let completed = 0; completed <= 70; completed++) {
+    assert.match(codes[completed], /^[a-f0-9]{6}$/);
+    assert.equal(normal.decode(' ' + codes[completed].toUpperCase() + ' '), completed);
+  }
+  for (const invalid of ['', 'AA', '12345', '1234567', 'gggggg', '000000', null]) assert.equal(normal.decode(invalid), null);
+  stored.clear();
+  stored.set('v2', JSON.stringify({ version: 2, victories: { terran01: true, terran04: true, terran09: true } }));
+  assert.equal(normal.apply(codes[3]), true);
+  assert.equal(normal.sequential(), 4, 'Imported prefix merges with existing later victories');
+  assert.equal(normal.progress().victories.terran09, true, 'Import preserves out-of-order local wins');
+  const ahead = JSON.stringify([...stored]);
+  assert.equal(normal.apply(codes[2]), false);
+  assert.equal(normal.apply(codes[4]), false);
+  assert.equal(JSON.stringify([...stored]), ahead, 'Equal or older codes never rewrite local progress');
+  assert.throws(() => normal.apply('gggggg'), /Invalid/);
+  assert.equal(JSON.stringify([...stored]), ahead);
+  assert.equal(normal.apply(codes[70]), true);
+  assert.equal(normal.sequential(), 70, 'Future campaign progress survives with only ten missions currently implemented');
+  const expanded = functions(false, ids.concat(Array.from({ length: 60 }, (_, index) => 'future-' + index)));
+  assert.equal(expanded.sequential(), 70, 'The same portable prefix survives expansion of the mission catalogue');
+  assert.equal(expanded.progress().completed.length, 70);
+  normal.save(normal.progress());
+  assert.equal(functions(false).sequential(), 70, 'Ordinary victory persistence preserves portable future progress');
+  assert.throws(() => functions(true).apply(codes[70]), /debug/);
+  assert.equal(normal.sequential(), 70);
+  assert.throws(() => normal.code(71), /Unsupported/);
+  stored.set('v2', JSON.stringify({ version: 2, victories: { terran01: true, terran02: false }, importedPrefix: 70 }));
+  assert.equal(normal.sequential(), 1, 'A counter contradicting an explicit missing victory cannot unlock it');
+  const beforeFailedWrite = JSON.stringify([...stored]), originalWrite = localStorage.setItem;
+  localStorage.setItem = () => { throw new Error('Simulated storage limit'); };
+  assert.throws(() => normal.apply(codes[2]), /storage limit/);
+  assert.equal(JSON.stringify([...stored]), beforeFailedWrite, 'Storage failure preserves the previous progress atomically');
+  localStorage.setItem = originalWrite;
+  console.log('Campaign victory flags, migration, strict unlocks, six-hex forward-only progress codes through seventy missions and debug isolation passed.');
+  console.log('Progress code vectors:', JSON.stringify([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]])));
   process.exit(0);
 }
 
