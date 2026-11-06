@@ -64,7 +64,8 @@ const MAPS = [
 const TILESETS = ['Badlands', 'Space', 'Installation', 'Ashworld', 'Jungle', 'Desert', 'Ice', 'Twilight'];
 // Pick `n` distinct start slots at random.
 function pickStartSlots(n, starts) {
-  const pool = [...Array(Math.max(starts, n)).keys()];
+  if (!Number.isInteger(n) || !Number.isInteger(starts) || n < 1 || starts > 8 || n > starts) throw new Error('The map has no room for that many players.');
+  const pool = [...Array(starts).keys()];
   for (let i = pool.length - 1; i > 0; i--) {
     const j = (Math.random() * (i + 1)) | 0;
     [pool[i], pool[j]] = [pool[j], pool[i]];
@@ -1284,7 +1285,7 @@ async function boot(session) {
   // stepping. Single-player is just a one-player session with zero input delay, so solo
   // play runs the exact code path multiplayer will — versioned by net.js's BUILD query so
   // a deploy can't pair a fresh openbw.js with a stale net.js.
-  const { Lockstep } = await import('./net.js?v=' + BUILD);
+  const { Lockstep, PeerDepartures } = await import('./net.js?v=' + BUILD);
   const lockstep = new Lockstep({
     x, memory,
     slots: slots.map((s) => s.slot),
@@ -1300,54 +1301,86 @@ async function boot(session) {
   });
   let dropped = null;   // set when the peer is gone
   let over = false;     // game finished (win / lose / disconnect) — stop stepping
+  let rejectPeer = () => {};
+  let departures = null;
   const dropBtn = $('dropbtn');
   if (link) {
     const peerSlot = slots.find((s) => s.slot !== mySlot).slot;
+    const group = slots.length > 2;
+    const remoteSlot = player => session.playerSlots ? session.playerSlots[player] : peerSlot;
+    const isCoordinator = () => departures ? departures.isCoordinator() : session.isHost;
     link.frameOf = () => lockstep.frame;
 
     // End the multiplayer game cleanly: stop stepping, release the peer, and show a final
     // banner. Used for a disconnect, a host-authority kick, and a manual drop after a stall.
     const endMp = (banner) => {
-      if (over) return;
+      if (dropped) return;
       over = true;
       dropped = dropped || banner;
-      lockstep.dropSlot(peerSlot);
+      if (!group) lockstep.dropSlot(peerSlot);
       dropBtn.style.display = 'none';
+      departures?.close();
       try { link.close(); } catch {}
-      showGameOver(banner, /Victory/.test(banner));   // opponent left is a win; others neutral
+      setBanner(banner, 0);
+      showGameOver(banner, !group && /Victory/.test(banner) ? true : null);
     };
     // The host is the authority: a peer sending turns for illegal frames, or whose sim has
     // diverged, is dropped rather than allowed to stall or corrupt the game.
     const kick = (why) => {
-      if (over) return;
+      if (dropped) return;
       console.warn('[mp] dropping peer:', why);
-      if (session.isHost) link.sendControl({ t: 'kick', why });
+      if (isCoordinator()) link.sendControl({ t: 'kick', why });
       endMp(`Opponent dropped — ${why}`);
     };
+    rejectPeer = kick;
     // The channel closed or failed mid-game: in a 1v1, the opponent leaving is a win.
-    link.onClose = () => { if (!over) endMp('Opponent left — Victory!'); };
+    link.onClose = player => {
+      if (dropped) return;
+      if (departures) departures.lost(player);
+      else endMp('Opponent left — Victory!');
+    };
     // Manual escape hatch shown after a long stall.
-    dropBtn.onclick = () => endMp('Opponent left — Victory!');
+    dropBtn.textContent = 'Drop disconnected player';
+    dropBtn.onclick = () => {
+      if (!departures) { endMp('Opponent left — Victory!'); return; }
+      const missing = lockstep.missing(lockstep.frame);
+      for (const [player, slot] of Object.entries(session.playerSlots)) if (missing.includes(slot) && Number(player) !== link.localSlot) departures.lost(Number(player));
+    };
 
     // setTurnHandler (not a plain assignment) so turns that arrived while we were still
     // loading get replayed instead of dropped — they are never retransmitted.
-    link.setTurnHandler((frame, bytes) => {
-      const r = lockstep.receiveTurn(peerSlot, frame, bytes);
-      if (!r.ok && session.isHost) kick(r.why);
-      else if (!r.ok) console.warn('[mp] bad turn from host:', r.why);
+    link.setTurnHandler((frame, bytes, player) => {
+      const r = lockstep.receiveTurn(remoteSlot(player), frame, bytes);
+      if (!r.ok && isCoordinator()) kick(r.why);
+      else if (!r.ok) console.warn('[mp] bad peer turn:', r.why);
     });
 
     // Periodic desync probe: both peers hash their sim at the same frames and compare.
-    link.onControl = (msg) => {
-      if (msg.t === 'kick') { endMp(`Disconnected — ${msg.why || 'kicked'}`); return; }
+    link.onControl = (msg, player) => {
+      if (session.playerSlots && !Object.hasOwn(session.playerSlots, player)) return;
+      if (departures?.handle(msg, player)) return;
+      if (departures && !departures.has(player)) return;
+      if (msg.t === 'kick') { if (!session.playerSlots || player === departures?.coordinator()) endMp(`Disconnected — ${String(msg.why || 'kicked').slice(0, 160)}`); return; }
       if (msg.t === 'chat') { postLog('Opponent: ' + String(msg.text || '').slice(0, 80)); return; }
       if (msg.t !== 'sum') return;
+      if (!Number.isInteger(msg.f) || msg.f < 0 || msg.f % SUM_EVERY !== 0 || msg.f > lockstep.frame + lockstep.horizon() || !Number.isInteger(msg.h) || msg.h < 0 || msg.h > 0xffffffff) return;
       const mine = mySums.get(msg.f);
-      if (mine === undefined) { peerSums.set(msg.f, msg.h); return; }
-      mySums.delete(msg.f);
-      if (mine !== msg.h && session.isHost) kick(`desync at frame ${msg.f}`);
+      if (mine === undefined) {
+        if (msg.f < lockstep.frame) return;
+        if (!peerSums.has(msg.f)) peerSums.set(msg.f, new Map());
+        peerSums.get(msg.f).set(player, msg.h);
+        return;
+      }
+      if (mine !== msg.h && isCoordinator()) kick(`desync at frame ${msg.f}`);
       else if (mine !== msg.h) endMp('Desynced — game ended');
     };
+    if (session.playerSlots) departures = new PeerDepartures({
+      lockstep, player: link.localSlot, playerSlots: session.playerSlots,
+      send: (message, player = null) => link.sendControl(message, player), detach: player => link.remove(player),
+      onError: error => endMp('Connection recovery failed: ' + error.message),
+    });
+    for (const [player] of session.pendingNetwork?.closed || []) departures?.lost(player);
+    for (const [message, player] of session.pendingNetwork?.controls || []) link.onControl(message, player);
   }
   const mySums = new Map(), peerSums = new Map();
   const SUM_EVERY = 240;   // ~10 s at "fastest"
@@ -1395,7 +1428,7 @@ async function boot(session) {
   let lastHb = 0;   // heartbeat pacing (see the black-box recorder)
   const runStepLoop = () => {
     let burstMs = 0;
-    if (!briefingActive && !paused && (!over || (link && performance.now() - overSince < OVER_GRACE_MS))) {
+    if (!briefingActive && !paused && !dropped && (!over || (link && (slots.length > 2 || performance.now() - overSince < OVER_GRACE_MS)))) {
       const now = performance.now();
       if (now - stepClock > MAX_DEBT_MS) stepClock = now - MAX_DEBT_MS;
       let budget = Math.min(Math.floor((now - stepClock) / stepMs), MAX_CATCHUP);
@@ -1438,21 +1471,18 @@ async function boot(session) {
       // to drop the opponent (their turns never resumed).
       const stall = (link && !over) ? (now - lastProgress) : 0;
       waiting = stall > 1500;
-      dropBtn.style.display = stall > 8000 ? 'block' : 'none';
+      dropBtn.style.display = stall > 8000 && !lockstep.networkPaused ? 'block' : 'none';
       updateBanner();
       // Desync probe: both peers hash the same frames and compare. Sampled after the step,
       // so both label it with the same post-step frame number.
       if (stepped && link && !dropped && !over && lockstep.frame % SUM_EVERY === 0) {
         const h = x.openbw_checksum() >>> 0;
-        const peer = peerSums.get(lockstep.frame);
-        if (peer === undefined) mySums.set(lockstep.frame, h);
-        else {
+        const peers = peerSums.get(lockstep.frame);
+        mySums.set(lockstep.frame, h);
+        while (mySums.size > 8) mySums.delete(mySums.keys().next().value);
+        if (peers) {
           peerSums.delete(lockstep.frame);
-          if (peer !== h) {
-            console.warn('[mp] desync', lockstep.frame, h, peer);
-            if (session.isHost) link.sendControl({ t: 'kick', why: `desync at frame ${lockstep.frame}` });
-            over = true; overSince = now; dropped = 'desync'; setBanner('Desync detected — game ended', 0);
-          }
+          if ([...peers.values()].some(peer => peer !== h)) rejectPeer(`desync at frame ${lockstep.frame}`);
         }
         link.sendControl({ t: 'sum', f: lockstep.frame, h });
       }
@@ -2608,6 +2638,12 @@ $('map-file').addEventListener('change', async (e) => {
 const MP_DELAY = 4;        // input delay in frames (~170 ms at "fastest")
 const COUNTDOWN = 5, LOCK_AT = 2;
 
+for (let index = 2; index < 8; index++) {
+  const row = $('mp-s0').cloneNode(true);
+  for (const element of [row, ...row.querySelectorAll('[id]')]) element.id = element.id.replace(/0$/, String(index));
+  row.hidden = true;
+  $('mp-rows').appendChild(row);
+}
 const mp = {
   setup: $('mp-setup'),
   host: $('mp-host'), join: $('mp-join'),
@@ -2616,10 +2652,10 @@ const mp = {
   stepShare: $('mp-step-share'), shareHint: $('mp-share-hint'), out: $('mp-out'), copy: $('mp-copy'),
   cancel: $('mp-cancel'), expires: $('mp-expires'),
   lobby: $('mp-lobby'), start: $('mp-start'), status: $('mp-status'),
-  ready: $('mp-ready'), readyStates: [$('mp-ready-0'), $('mp-ready-1')],
-  loadLabels: [$('mp-load-0'), $('mp-load-1')], loadBars: [$('mp-load-progress-0'), $('mp-load-progress-1')], loadRetry: $('mp-load-retry'),
-  s: [$('mp-s0'), $('mp-s1')], n: [$('mp-n0'), $('mp-n1')], r: [$('mp-r0'), $('mp-r1')],
-  giMap: $('mp-gi-map'), giSpeed: $('mp-gi-speed'),
+  ready: $('mp-ready'), readyStates: Array.from({ length: 8 }, (_, index) => $('mp-ready-' + index)),
+  loadLabels: Array.from({ length: 8 }, (_, index) => $('mp-load-' + index)), loadBars: Array.from({ length: 8 }, (_, index) => $('mp-load-progress-' + index)), loadRetry: $('mp-load-retry'),
+  s: Array.from({ length: 8 }, (_, index) => $('mp-s' + index)), n: Array.from({ length: 8 }, (_, index) => $('mp-n' + index)), r: Array.from({ length: 8 }, (_, index) => $('mp-r' + index)),
+  giMap: $('mp-gi-map'), giSpeed: $('mp-gi-speed'), giPlayers: $('mp-gi-players'),
 };
 
 // Random is a lobby choice, not something the engine understands. The host resolves it
@@ -2652,12 +2688,15 @@ if ($('mode-sandbox').getAttribute('aria-selected') === 'true') probeMeleeMaps()
 // Race is picked in the lobby, not before hosting — the handshake only carries the
 // starting value, and either side can change it until the countdown locks.
 const START_RACE = 1;   // Terran
-let mpLink = null, mpRole = null, mpMap = MAPS[0].file, mpPeerRace = START_RACE, mpLocked = false;
+let mpLink = null, mpRole = null, mpMap = MAPS[0].file, mpLocked = false;
 let mpRoom = null, mpConnected = false, mpExpiryTimer = 0, mpConnectionTimer = 0;
 let mpCountdownTimer = 0, mpCountingDown = false;
 let mpSetupGeneration = 0;
-const mpReadyFlags = [false, false], mpRaceRevisions = [0, 0];
-const mpLoadStates = [{ phase: 'Waiting', percent: 0, stagePercent: 0, ready: false }, { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false }];
+let mpPlayer = 0, mpCapacity = 2, mpRosterVersion = 0, mpLobbyVersion = 0, mpServerVersion = -1;
+let mpStarted = false, mpAdmissionLocked = false, mpSealing = false, mpCode = '';
+const mpMembers = Array(8).fill(null), mpOffers = new Map(), mpPeerTimers = new Map();
+const mpReadyFlags = Array(8).fill(false), mpRaceRevisions = Array(8).fill(0);
+const mpLoadStates = Array.from({ length: 8 }, () => ({ phase: 'Waiting', percent: 0, stagePercent: 0, ready: false }));
 let mpPrepared = null, mpLoadController = null, mpExpectedMapHash = '';
 
 // Choosing a role is one-way until it fails or the game starts. Without this, clicking
@@ -2689,7 +2728,11 @@ function mpSetRole(role) {
 function mpResetRole() {                    // let the user try again after a failure
   mpSetupGeneration++;
   mpLoadController?.abort(); mpLoadController = null; mpPrepared = null;
-  for (let index = 0; index < 2; index++) mpLoadStates[index] = { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false };
+  for (let index = 0; index < 8; index++) mpLoadStates[index] = { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false };
+  for (const timer of mpPeerTimers.values()) clearTimeout(timer);
+  mpPeerTimers.clear(); mpOffers.clear(); mpMembers.fill(null);
+  mpStarted = false; mpAdmissionLocked = false; mpSealing = false;
+  mpPlayer = 0; mpCapacity = 2; mpRosterVersion = 0; mpLobbyVersion = 0; mpServerVersion = -1; mpCode = '';
   clearInterval(mpExpiryTimer); clearTimeout(mpConnectionTimer);
   clearTimeout(mpCountdownTimer); mpCountingDown = false;
   mpRoom?.close(); mpRoom = null;
@@ -2713,58 +2756,85 @@ function mpResetRole() {                    // let the user try again after a fa
 
 const mpNet = () => import('./net.js?v=' + BUILD);
 
-const mpBoot = (slots, mySlot) => {
-  if (!mpAllLoaded()) { mpCancelCountdown(true); return; }
+const mpBoot = (slots, mySlot, playerSlots) => {
+  if (!mpCanStart()) { mpCancelCountdown(true); return; }
+  mpStarted = true;
+  const pendingNetwork = { controls: [], closed: [] };
+  mpLink.onControl = (message, player) => { if (pendingNetwork.controls.length < 2000) pendingNetwork.controls.push([message, player]); };
+  mpLink.onClose = (player, why) => pendingNetwork.closed.push([player, why]);
+  for (const timer of mpPeerTimers.values()) clearTimeout(timer);
+  mpPeerTimers.clear(); clearInterval(mpExpiryTimer);
+  if (mpRole === 'host') mpRoom?.close();
+  else mpRoom?.detach();
+  mpRoom = null;
+  for (const player of [...mpLink.links.keys()]) if (!mpMembers[player]) mpLink.remove(player);
   $('controls').style.display = 'none';
-  boot({ slots, mySlot, link: mpLink, delay: MP_DELAY, isHost: mpRole === 'host', mapFile: mpMap, prepared: mpPrepared })
+  boot({ slots, mySlot, playerSlots, pendingNetwork, link: mpLink, delay: MP_DELAY, isHost: mpRole === 'host', mapFile: mpMap, prepared: mpPrepared })
     .catch((err) => { setMsg('Error: ' + err.message); console.error(err); });
 };
 
 const mpRaceName = (r) => (RACES.find((x) => x.v === r) || RACES[0]).n;
-const mpMine = () => (mpRole === 'host' ? 0 : 1);
-const mpTheirs = () => (mpRole === 'host' ? 1 : 0);
-const mpSlots = () => [{ slot: 0, race: +mp.r[0].value }, { slot: 1, race: +mp.r[1].value }];
+const mpMine = () => mpPlayer;
+function mpPlayers() { return mpMembers.flatMap((member, player) => member ? [player] : []); }
+function mpMeshReady() {
+  const players = mpPlayers();
+  return !!mpLink && mpLink.ready(players) && players.every(player => mpMembers[player].connected && players.every(peer => peer === player || mpMembers[player].peers.includes(peer)));
+}
+function mpCanStart() { return mpConnected && mpPlayers().length >= 2 && mpMeshReady() && mpAllLoaded() && mpPlayers().every(player => mpReadyFlags[player]); }
 
 function mpEnterLobby() {
   mpHideSteps();
   mpShow(mp.lobby, true);
+  mpShow(mp.stepShare, true);
   mpShow(mp.cancel, true);
+  mp.out.value = mpCode;
   mp.giMap.textContent = (MAPS.find((m) => m.file === mpMap) || {}).name || '—';
   mp.start.style.display = mpRole === 'host' ? '' : 'none';
-  // Your row is editable; your opponent's mirrors what they picked.
-  mp.r[mpTheirs()].value = String(mpPeerRace);
-  mp.r[mpMine()].disabled = false;
-  mp.r[mpTheirs()].disabled = true;
-  mp.n[mpMine()].textContent = mpRole === 'host' ? 'Host (you)' : 'You';
-  mp.n[mpTheirs()].textContent = mpRole === 'host' ? 'Opponent' : 'Host';
-  mp.r[mpMine()].ariaLabel = 'Your race';
-  mp.r[mpTheirs()].ariaLabel = 'Opponent race';
-  mp.s[mpMine()].classList.add('you');
-  for (const el of mp.s) el.classList.remove('open');
   mpUpdateLobby();
-  mpSay('Connected.', 'ok');
+  mpSay(mpRole === 'host' ? 'Waiting for players...' : 'Connected.', 'ok');
   mpPreloadDependencies();
 }
 function mpAllLoaded() {
-  const peer = mpLoadStates[mpTheirs()];
-  return !!mpPrepared && mpLoadStates.every(state => state.ready) && peer.mapHash === mpPrepared.mapHash && peer.engineHash === mpPrepared.engineHash && JSON.stringify(peer.assetHashes) === JSON.stringify(mpPrepared.assetHashes);
+  return !!mpPrepared && mpPlayers().every(player => {
+    const state = mpLoadStates[player];
+    return state.ready && state.mapHash === mpPrepared.mapHash && state.engineHash === mpPrepared.engineHash && JSON.stringify(state.assetHashes) === JSON.stringify(mpPrepared.assetHashes);
+  });
 }
 function mpUpdateLobby() {
   mp.giSpeed.textContent = 'Fastest';
-  for (let index = 0; index < 2; index++) {
-    mp.readyStates[index].textContent = mpReadyFlags[index] ? 'Ready' : 'Not ready';
+  mp.giPlayers.textContent = `${mpPlayers().length} / ${mpCapacity}`;
+  for (let index = 0; index < 8; index++) {
+    const member = mpMembers[index];
+    mp.s[index].hidden = index >= mpCapacity;
+    mp.s[index].classList.toggle('open', !member);
+    mp.s[index].classList.toggle('you', index === mpPlayer);
+    mp.n[index].textContent = member ? (index === 0 ? 'Host' : `Player ${index + 1}`) + (index === mpPlayer ? ' (you)' : '') : 'Open';
+    mp.r[index].disabled = !member || index !== mpPlayer || !mpConnected || mpLocked || mpReadyFlags[index];
+    mp.r[index].ariaLabel = index === mpPlayer ? 'Your race' : `Player ${index + 1} race`;
+    mp.readyStates[index].textContent = !member ? '' : !member.connected ? 'Connecting' : mpReadyFlags[index] ? 'Ready' : 'Not ready';
     mp.readyStates[index].classList.toggle('is-ready', mpReadyFlags[index]);
     const load = mpLoadStates[index];
-    mp.loadLabels[index].textContent = load.ready ? 'Loaded' : load.phase === 'Failed' ? 'Download failed' : `${load.phase}: ${load.stagePercent}%`;
-    mp.loadBars[index].value = load.percent;
+    mp.loadLabels[index].textContent = !member ? 'Open slot' : load.ready ? 'Loaded' : load.phase === 'Failed' ? 'Download failed' : `${load.phase}: ${load.stagePercent}%`;
+    mp.loadBars[index].value = member ? load.percent : 0;
+    mp.loadBars[index].ariaLabel = `Player ${index + 1} download progress`;
   }
   mp.ready.checked = mpReadyFlags[mpMine()];
-  mp.ready.disabled = !mpConnected || mpLocked || !mpLoadStates[mpMine()].ready;
-  mp.r[mpMine()].disabled = !mpConnected || mpLocked || mpReadyFlags[mpMine()];
-  mp.r[mpTheirs()].disabled = true;
-  mp.start.disabled = !mpConnected || !mpAllLoaded() || !mpReadyFlags.every(Boolean) || mpCountingDown;
+  mp.ready.disabled = !mpConnected || mpLocked || !mpLoadStates[mpMine()].ready || !mpMeshReady();
+  mp.start.disabled = !mpCanStart() || mpCountingDown || mpSealing;
   mp.cancel.disabled = mpLocked;
   mp.loadRetry.hidden = mpLoadStates[mpMine()].phase !== 'Failed';
+  if (mpCode && (mpServerVersion > 0 || mpRole === 'join')) mp.expires.textContent = mpAdmissionLocked ? 'Game starting' : `${mpCapacity - mpPlayers().length} open player slots`;
+}
+
+function mpPublishLobby() {
+  mpUpdateLobby();
+  if (mpRole !== 'host' || mpStarted) return;
+  const members = mpMembers.slice(0, mpCapacity).map((member, player) => member && ({ ...member, race: +mp.r[player].value, revision: mpRaceRevisions[player], ready: mpReadyFlags[player], load: mpLoadStates[player] }));
+  mpLink.sendControl({ t: 'lobby', version: ++mpLobbyVersion, roster: mpRosterVersion, members });
+}
+function mpSubmit(message) {
+  if (mpRole === 'host') mpOnControl(message, 0);
+  else mpLink?.sendControl(message, 0);
 }
 
 async function mpPreloadDependencies() {
@@ -2774,7 +2844,7 @@ async function mpPreloadDependencies() {
   const generation = mpSetupGeneration;
   mpPrepared = null;
   mpReadyFlags[mpMine()] = false;
-  mpLink.sendControl({ t: 'ready', ready: false, revisions: mpRaceRevisions.slice() });
+  mpSubmit({ t: 'ready', ready: false, roster: mpRosterVersion, revisions: mpRaceRevisions.slice(0, mpCapacity) });
   let last = '';
   const report = (phase, fraction, ready = false, hashes = {}) => {
     if (generation !== mpSetupGeneration || controller !== mpLoadController) return;
@@ -2786,7 +2856,7 @@ async function mpPreloadDependencies() {
     last = signature;
     const state = { phase, percent, stagePercent, ready, ...hashes };
     mpLoadStates[mpMine()] = state;
-    mpLink?.sendControl({ t: 'loading', ...state });
+    mpSubmit({ t: 'loading', ...state });
     mpUpdateLobby();
   };
   try {
@@ -2803,7 +2873,7 @@ async function mpPreloadDependencies() {
     if (generation !== mpSetupGeneration || controller !== mpLoadController) return;
     mpPrepared = { assets, module, map: mpMap, mapHash, engineHash, assetHashes };
     report('Loaded', 1, true, { mapHash, engineHash, assetHashes });
-    if (mpLoadStates[mpTheirs()].ready && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
+    if (mpPlayers().every(player => mpLoadStates[player].ready) && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
   } catch (error) {
     if (controller.signal.aborted || generation !== mpSetupGeneration) return;
     controller.abort();
@@ -2816,13 +2886,9 @@ mp.loadRetry.onclick = mpPreloadDependencies;
 
 // Races may change freely in the lobby; both sides mirror each other until the lock.
 const mpSendRace = () => {
-  mpRaceRevisions[mpMine()]++;
-  mpReadyFlags.fill(false);
-  mpCancelCountdown(true);
-  mpUpdateLobby();
-  if (mpLink) mpLink.sendControl({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] });
+  if (!mpLocked) mpSubmit({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] + 1 });
 };
-mp.r[0].onchange = mp.r[1].onchange = mpSendRace;
+for (const select of mp.r) select.onchange = mpSendRace;
 mapSelect.onchange = () => { mpMap = mapSelect.value; };
 
 function mpCancelCountdown(notify = false) {
@@ -2831,35 +2897,35 @@ function mpCancelCountdown(notify = false) {
   clearTimeout(mpCountdownTimer);
   mpCountingDown = false;
   mpLocked = false;
+  if (mpRole === 'host' && mpAdmissionLocked && !mpStarted) {
+    mpAdmissionLocked = false;
+    mpRoom?.setLocked(false).catch(error => mpSay(error.message, 'err'));
+  }
   mpUpdateLobby();
-  if (wasCountingDown) mpSay('Waiting for both players to be ready.');
+  if (wasCountingDown) mpSay('Waiting for all players to be ready.');
 }
 mp.ready.onchange = () => {
-  if (!mpLoadStates[mpMine()].ready) { mp.ready.checked = false; return; }
-  mpReadyFlags[mpMine()] = mp.ready.checked;
-  if (!mp.ready.checked) mpCancelCountdown(true);
-  mpLink?.sendControl({ t: 'ready', ready: mp.ready.checked, revisions: mpRaceRevisions.slice() });
-  mpUpdateLobby();
+  if (!mpLoadStates[mpMine()].ready || !mpMeshReady()) { mp.ready.checked = false; return; }
+  mpSubmit({ t: 'ready', ready: mp.ready.checked, roster: mpRosterVersion, revisions: mpRaceRevisions.slice(0, mpCapacity) });
 };
 
 function mpCountdown(n) {
-  if (!mpConnected || !mpAllLoaded() || !mpReadyFlags.every(Boolean)) { mpCancelCountdown(true); return; }
+  if (!mpCanStart()) { mpCancelCountdown(true); return; }
   mpCountingDown = true;
   if (n <= LOCK_AT && !mpLocked) {
     mpLocked = true;
-    mapSelect.disabled = mp.r[0].disabled = mp.r[1].disabled = true;
+    mapSelect.disabled = true;
   }
   mpUpdateLobby();
   if (n <= 0) {
     if (mpRole !== 'host') return;          // the joiner starts on the host's `start`
     // Randomise who starts where. Slot drives both start location and colour, so this
     // stops the host always being top-left in the same colour every game.
-    const races = mpSlots().map((s) => resolveRace(s.race));   // [host, joiner]
-    const starts = (MAPS.find((m) => m.file === mpMap) || {}).starts || 2;
-    const [hostSlot, joinSlot] = pickStartSlots(2, starts);
-    const slots = [{ slot: hostSlot, race: races[0] }, { slot: joinSlot, race: races[1] }];
-    mpLink.sendControl({ t: 'start', slots, you: joinSlot, revisions: mpRaceRevisions.slice() });
-    mpBoot(slots, hostSlot);
+    const players = mpPlayers(), starts = pickStartSlots(players.length, mpCapacity);
+    const playerSlots = Object.fromEntries(players.map((player, index) => [player, starts[index]]));
+    const slots = players.map(player => ({ slot: playerSlots[player], race: resolveRace(+mp.r[player].value) }));
+    mpLink.sendControl({ t: 'start', slots, playerSlots, roster: mpRosterVersion, revisions: mpRaceRevisions.slice(0, mpCapacity) });
+    mpBoot(slots, playerSlots[0], playerSlots);
     return;
   }
   mpSay(`Starting in ${n}…`, 'ok');
@@ -2871,53 +2937,225 @@ function mpCountdown(n) {
 
 // Lobby control messages, shared by the copy-paste (PeerLink) and relay (RelayLink)
 // transports since both are just a channel underneath.
-function mpOnControl(msg) {
-  if (msg.t === 'loading' && mpRole) {
-    if (!['Waiting', 'Game files', 'Map', 'Engine', 'Verifying', 'Loaded', 'Failed'].includes(msg.phase) || !Number.isInteger(msg.percent) || msg.percent < 0 || msg.percent > 100 || !Number.isInteger(msg.stagePercent) || msg.stagePercent < 0 || msg.stagePercent > 100) return;
-    const ready = msg.ready === true && msg.phase === 'Loaded' && msg.percent === 100 && /^[a-f0-9]{14}$/.test(msg.mapHash) && /^[a-f0-9]{64}$/.test(msg.engineHash) && Array.isArray(msg.assetHashes) && msg.assetHashes.length === 3 && msg.assetHashes.every(hash => /^[a-f0-9]{14}$/.test(hash));
-    mpLoadStates[mpTheirs()] = { phase: msg.phase, percent: msg.percent, stagePercent: msg.stagePercent, ready, mapHash: msg.mapHash, engineHash: msg.engineHash, assetHashes: msg.assetHashes };
-    if (!ready) { mpReadyFlags[mpTheirs()] = false; mpCancelCountdown(true); }
-    mpUpdateLobby();
-    if (ready && mpPrepared && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
+function mpLoadState(message) {
+  if (!['Waiting', 'Game files', 'Map', 'Engine', 'Verifying', 'Loaded', 'Failed'].includes(message.phase) || !Number.isInteger(message.percent) || message.percent < 0 || message.percent > 100 || !Number.isInteger(message.stagePercent) || message.stagePercent < 0 || message.stagePercent > 100) return null;
+  const ready = message.ready === true && message.phase === 'Loaded' && message.percent === 100 && /^[a-f0-9]{14}$/.test(message.mapHash) && /^[a-f0-9]{64}$/.test(message.engineHash) && Array.isArray(message.assetHashes) && message.assetHashes.length === 3 && message.assetHashes.every(hash => /^[a-f0-9]{14}$/.test(hash));
+  return { phase: message.phase, percent: message.percent, stagePercent: message.stagePercent, ready, mapHash: message.mapHash, engineHash: message.engineHash, assetHashes: message.assetHashes };
+}
+function mpOnControl(msg, player) {
+  if (!mpRole || mpStarted || !mpMembers[player]) return;
+  if (mpRole === 'join') {
+    if (player !== 0) return;
+    if (msg.t === 'lobby') { mpApplyLobby(msg); return; }
+    if (msg.t === 'mesh-signal') { mpAcceptPeerSignal(msg).catch(error => mpPeerFailure(msg.from, error.message)); return; }
+    if (msg.t === 'cancel-start') { mpCancelCountdown(); return; }
+    if (msg.t === 'tick' && Number.isInteger(msg.n) && msg.n >= 0 && msg.n <= COUNTDOWN) { mpCountdown(msg.n); return; }
+    if (msg.t !== 'start' || !mpCanStart() || msg.roster !== mpRosterVersion || !Array.isArray(msg.revisions) || msg.revisions.length !== mpCapacity || !msg.revisions.every((revision, index) => revision === mpRaceRevisions[index])) return;
+    const players = mpPlayers();
+    if (!Array.isArray(msg.slots) || msg.slots.length !== players.length || !msg.playerSlots || typeof msg.playerSlots !== 'object' || Object.keys(msg.playerSlots).length !== players.length) return;
+    if (msg.slots.some(slot => !Number.isInteger(slot.slot) || slot.slot < 0 || slot.slot >= mpCapacity || ![0, 1, 2].includes(slot.race)) || new Set(msg.slots.map(slot => slot.slot)).size !== players.length) return;
+    if (new Set(players.map(peer => msg.playerSlots[peer])).size !== players.length || players.some(peer => !msg.slots.some(slot => slot.slot === msg.playerSlots[peer] && (+mp.r[peer].value === -1 || slot.race === +mp.r[peer].value)))) return;
+    mpBoot(msg.slots, msg.playerSlots[mpPlayer], msg.playerSlots);
     return;
   }
-  if (msg.t === 'race') {
-    if (!RACES.some(race => race.v === msg.race) || !Number.isInteger(msg.revision) || msg.revision < 0 || msg.revision > 1000000 || !mpRole) return;
-    if (msg.revision < mpRaceRevisions[mpTheirs()]) return;
-    if (msg.revision !== mpRaceRevisions[mpTheirs()] || +mp.r[mpTheirs()].value !== msg.race) { mpReadyFlags.fill(false); mpCancelCountdown(true); }
-    mpRaceRevisions[mpTheirs()] = msg.revision;
-    mpPeerRace = msg.race;
-    if (mpRole) mp.r[mpTheirs()].value = String(msg.race);
-    mpUpdateLobby();
+  if (msg.t === 'mesh-signal') { mpRoutePeerSignal(msg, player); return; }
+  if (msg.t === 'mesh-failed') {
+    if (Number.isInteger(msg.peer) && msg.peer > 0 && msg.peer !== player && mpMembers[msg.peer] && mpMembers[msg.peer].id === msg.member) mpPeerFailure(player, 'A direct connection between players failed.', msg.peer);
     return;
   }
-  if (msg.t === 'ready' && mpRole) {
-    mpReadyFlags[mpTheirs()] = mpLoadStates[mpTheirs()].ready && msg.ready === true && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index]);
-    if (!mpReadyFlags.every(Boolean)) mpCancelCountdown(true);
-    mpUpdateLobby();
-    return;
-  }
-  if (msg.t === 'cancel-start' && mpRole === 'join') { mpCancelCountdown(); return; }
-  if (msg.t === 'tick' && mpRole === 'join' && Number.isInteger(msg.n) && msg.n >= 0 && msg.n <= COUNTDOWN) { mpCountdown(msg.n); return; }
-  if (msg.t === 'start' && mpRole === 'join' && mpAllLoaded() && mpReadyFlags.every(Boolean) && Array.isArray(msg.revisions) && msg.revisions.length === 2 && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index])) {
-    if (!Array.isArray(msg.slots) || msg.slots.length !== 2 || msg.slots.some(slot => !Number.isInteger(slot.slot) || slot.slot < 0 || slot.slot > 7 || ![0, 1, 2].includes(slot.race)) || msg.slots[0].slot === msg.slots[1].slot || !msg.slots.some(slot => slot.slot === msg.you)) return;
-    mpBoot(msg.slots, msg.you); return;
-  }
+  if (msg.t === 'mesh') {
+    if (!Array.isArray(msg.peers) || msg.peers.length > 7 || msg.peers.some(peer => !Number.isInteger(peer) || peer === player || !mpMembers[peer])) return;
+    mpMembers[player].peers = [...new Set(msg.peers)];
+  } else if (msg.t === 'loading') {
+    const load = mpLoadState(msg);
+    if (!load) return;
+    mpLoadStates[player] = load;
+    if (!load.ready) { mpReadyFlags[player] = false; mpCancelCountdown(true); }
+  } else if (msg.t === 'race') {
+    if (!RACES.some(race => race.v === msg.race) || !Number.isInteger(msg.revision) || msg.revision <= mpRaceRevisions[player] || msg.revision > 1000000) return;
+    mpRaceRevisions[player] = msg.revision; mp.r[player].value = String(msg.race);
+    mpReadyFlags.fill(false); mpCancelCountdown(true);
+  } else if (msg.t === 'ready') {
+    mpReadyFlags[player] = msg.ready === true && mpLoadStates[player].ready && mpMeshReady() && msg.roster === mpRosterVersion && Array.isArray(msg.revisions) && msg.revisions.length === mpCapacity && msg.revisions.every((revision, index) => revision === mpRaceRevisions[index]);
+    if (!mpReadyFlags[player]) mpCancelCountdown(true);
+  } else return;
+  mpPublishLobby();
+  if (mpPlayers().every(peer => mpLoadStates[peer].ready) && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
 }
 
-function mpNewLink(net, onOpen) {
-  const link = new net.PeerLink({
-    onOpen: () => {
-      if (mpLink !== link || !mpRole) return;
-      mpConnected = true;
-      clearInterval(mpExpiryTimer); clearTimeout(mpConnectionTimer);
-      mpRoom?.close(); mpRoom = null;
-      onOpen();
+function mpNewMesh(net) {
+  const mesh = new net.PeerMesh({
+    localSlot: mpPlayer, onControl: mpOnControl,
+    onOpen: player => {
+      if (mpLink !== mesh || !mpRole || mpStarted) return;
+      clearTimeout(mpPeerTimers.get(player)); mpPeerTimers.delete(player);
+      if (mpRole === 'host') {
+        if (!mpMembers[player]) return;
+        mpMembers[player].connected = true;
+        if (mpLoadStates[0].phase !== 'Failed') mpSay(`Player ${player + 1} connected.`, 'ok');
+      } else if (player === 0 && !mpConnected) {
+        mpConnected = true;
+        clearTimeout(mpConnectionTimer);
+        mpMembers[mpPlayer].connected = true;
+        mpEnterLobby();
+      }
+      mpReportConnections();
     },
-    onControl: mpOnControl,
-    onClose: (why) => { if (mpLink === link && mpRole) { mpResetRole(); mpSay(`Direct P2P connection ${why}.`, 'err'); } },
+    onClose: (player, why) => { if (mpLink === mesh && mpRole && !mpStarted) mpPeerFailure(player, `Direct P2P connection ${why}.`); },
   });
-  return link;
+  return mesh;
+}
+function mpAttachPeer(net, player, member) {
+  const record = { link: new net.PeerLink(), member, answered: false, replacing: false };
+  mpOffers.set(player, record);
+  mpLink.add(player, record.link);
+  return record;
+}
+function mpWatchPeer(player, record) {
+  clearTimeout(mpPeerTimers.get(player));
+  mpPeerTimers.set(player, setTimeout(() => {
+    if (mpOffers.get(player) === record && !mpLink?.connected(player)) mpPeerFailure(player, 'Direct connection failed; these networks may block WebRTC.');
+  }, 30000));
+}
+function mpReportConnections() {
+  if (!mpConnected || !mpLink || mpStarted) return;
+  const peers = mpPlayers().filter(player => player !== mpPlayer && mpLink.connected(player));
+  if (mpRole === 'host') { mpMembers[0].peers = peers; mpPublishLobby(); }
+  else mpSubmit({ t: 'mesh', peers });
+}
+function mpRosterChanged() {
+  mpRosterVersion++;
+  mpReadyFlags.fill(false);
+  mpCancelCountdown(true);
+}
+async function mpHostOffer(net, player) {
+  const record = mpAttachPeer(net, player, null);
+  record.replacing = true;
+  const offer = await record.link.createOffer({ build: BUILD, map: mpMap, hash: mpExpectedMapHash, capacity: mpCapacity, player });
+  return { record, offer };
+}
+async function mpRefreshSlot(player, why = '') {
+  if (mpRole !== 'host' || mpStarted || mpOffers.get(player)?.replacing) return;
+  const room = mpRoom, generation = mpSetupGeneration;
+  const previous = mpOffers.get(player)?.member ?? null;
+  clearTimeout(mpPeerTimers.get(player)); mpPeerTimers.delete(player);
+  mpMembers[player] = null; mpReadyFlags[player] = false; mpRaceRevisions[player] = 0;
+  mpLoadStates[player] = { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false };
+  mp.r[player].value = String(START_RACE);
+  mpLink.remove(player); mpOffers.delete(player);
+  mpRosterChanged(); mpReportConnections();
+  if (why) mpSay(why, 'err');
+  const net = await mpNet();
+  if (generation !== mpSetupGeneration || room !== mpRoom) return;
+  const { record, offer } = await mpHostOffer(net, player);
+  if (generation !== mpSetupGeneration || room !== mpRoom || mpOffers.get(player) !== record) return;
+  const state = await room.replaceOffer(player, offer, previous);
+  record.replacing = false;
+  await mpProcessRoom(state);
+}
+function mpPeerFailure(player, why, other = null) {
+  if (!mpRole || mpStarted) return;
+  if (mpRole === 'host') {
+    if (!mpMembers[player] || player === 0) return;
+    const target = other > 0 && mpMembers[other] && mpMembers[other].joined > mpMembers[player].joined ? other : player;
+    mpRefreshSlot(target, why).catch(error => mpSay(error.message, 'err'));
+  } else if (player === 0) { mpResetRole(); mpSay(why, 'err'); }
+  else if (mpMembers[player]) mpSubmit({ t: 'mesh-failed', peer: player, member: mpMembers[player].id });
+}
+function mpApplyLobby(message) {
+  if (!Number.isInteger(message.version) || message.version <= mpLobbyVersion || !Number.isInteger(message.roster) || message.roster < mpRosterVersion || !Array.isArray(message.members) || message.members.length !== mpCapacity) return;
+  if (message.members[0]?.id !== 'host' || message.members[mpPlayer]?.id !== mpMembers[mpPlayer]?.id) return;
+  const valid = message.members.every((member, player) => !member || (
+    typeof member.id === 'string' && (player === 0 ? member.id === 'host' : /^[a-f0-9]{24}$/.test(member.id)) &&
+    RACES.some(race => race.v === member.race) && Number.isInteger(member.revision) && member.revision >= 0 && member.revision <= 1000000 &&
+    Number.isInteger(member.joined) && member.joined >= 0 && typeof member.connected === 'boolean' &&
+    Array.isArray(member.peers) && member.peers.length < mpCapacity && member.peers.every(peer => Number.isInteger(peer) && peer >= 0 && peer < mpCapacity && peer !== player) && mpLoadState(member.load)
+  ));
+  if (!valid) return;
+  const changed = mpRosterVersion !== message.roster;
+  mpLobbyVersion = message.version; mpRosterVersion = message.roster;
+  for (let player = 0; player < mpCapacity; player++) {
+    const member = message.members[player];
+    mpMembers[player] = member && { id: member.id, connected: member.connected, peers: member.peers.slice(), joined: member.joined };
+    mpReadyFlags[player] = member?.ready === true;
+    mpRaceRevisions[player] = member?.revision ?? 0;
+    mp.r[player].value = String(member?.race ?? START_RACE);
+    mpLoadStates[player] = member ? mpLoadState(member.load) : { phase: 'Waiting', percent: 0, stagePercent: 0, ready: false };
+  }
+  if (changed || (mpCountingDown && !mpCanStart())) mpCancelCountdown();
+  mpUpdateLobby(); mpSyncPeerLinks();
+  if (mpPlayers().every(player => mpLoadStates[player].ready) && !mpAllLoaded()) mpSay('Game files or engine differ between players.', 'err');
+}
+function mpPeerInfo(player) {
+  return { build: BUILD, room: mpCode, from: mpPlayer, to: player, member: mpMembers[mpPlayer].id, target: mpMembers[player].id };
+}
+function mpSyncPeerLinks() {
+  if (mpRole !== 'join') return;
+  for (const [player, record] of mpOffers) {
+    if (player > 0 && mpMembers[player]?.id !== record.member) {
+      mpLink.remove(player); mpOffers.delete(player);
+      clearTimeout(mpPeerTimers.get(player)); mpPeerTimers.delete(player);
+    }
+  }
+  for (const player of mpPlayers()) if (player > mpPlayer && mpMembers[player].connected && !mpOffers.has(player)) {
+    const generation = mpSetupGeneration;
+    (async () => {
+      const net = await mpNet();
+      if (generation !== mpSetupGeneration || !mpMembers[player] || mpOffers.has(player)) return;
+      const record = mpAttachPeer(net, player, mpMembers[player].id);
+      mpWatchPeer(player, record);
+      const signal = await record.link.createOffer(mpPeerInfo(player));
+      if (generation !== mpSetupGeneration || mpOffers.get(player) !== record) return;
+      mpLink.sendControl({ t: 'mesh-signal', to: player, target: record.member, member: mpMembers[mpPlayer].id, kind: 'offer', signal }, 0);
+    })().catch(error => mpPeerFailure(player, error.message));
+  }
+}
+function mpRoutePeerSignal(message, player) {
+  if (!mpMembers[player]?.connected || !Number.isInteger(message.to) || message.to <= 0 || message.to === player || !mpMembers[message.to]?.connected || message.member !== mpMembers[player].id || message.target !== mpMembers[message.to].id || !['offer', 'answer'].includes(message.kind) || typeof message.signal !== 'string' || message.signal.length > 24000) return;
+  mpLink.sendControl({ t: 'mesh-signal', from: player, target: message.target, member: message.member, kind: message.kind, signal: message.signal }, message.to);
+}
+async function mpAcceptPeerSignal(message) {
+  const player = message.from, generation = mpSetupGeneration;
+  if (!Number.isInteger(player) || player <= 0 || player === mpPlayer || !mpMembers[player]?.connected || message.member !== mpMembers[player].id || message.target !== mpMembers[mpPlayer].id || typeof message.signal !== 'string' || message.signal.length > 24000) return;
+  const net = await mpNet(), info = await net.unpackSignal(message.signal);
+  if (generation !== mpSetupGeneration || info.build !== BUILD || info.room !== mpCode || info.from !== player || info.to !== mpPlayer || info.member !== message.member || info.target !== message.target) return;
+  if (message.kind === 'offer' && player < mpPlayer && !mpOffers.has(player)) {
+    const record = mpAttachPeer(net, player, message.member);
+    mpWatchPeer(player, record);
+    const { answer } = await record.link.acceptOffer(message.signal, mpPeerInfo(player));
+    if (generation !== mpSetupGeneration || mpOffers.get(player) !== record) return;
+    mpLink.sendControl({ t: 'mesh-signal', to: player, target: message.member, member: message.target, kind: 'answer', signal: answer }, 0);
+  } else if (message.kind === 'answer' && player > mpPlayer) {
+    const record = mpOffers.get(player);
+    if (record?.member === message.member && !record.answered) { record.answered = true; await record.link.acceptAnswer(message.signal); }
+  }
+}
+async function mpProcessRoom(state) {
+  if (!mpRoom || mpRole !== 'host' || mpStarted || !Number.isInteger(state.version) || state.version < mpServerVersion) return;
+  mpServerVersion = state.version;
+  const room = mpRoom, generation = mpSetupGeneration;
+  const net = await mpNet();
+  if (generation !== mpSetupGeneration || room !== mpRoom) return;
+  for (const member of state.members) {
+    const record = mpOffers.get(member.slot);
+    if (!record || record.replacing) continue;
+    if (mpMembers[member.slot]?.id !== member.id) {
+      record.member = member.id;
+      mpMembers[member.slot] = { id: member.id, connected: false, peers: [], joined: mpRosterVersion + 1 };
+      mpRosterChanged(); mpPublishLobby(); mpWatchPeer(member.slot, record);
+    }
+    if (member.answer && !record.answered) {
+      record.answered = true;
+      const info = await net.unpackSignal(member.answer);
+      if (generation !== mpSetupGeneration || room !== mpRoom || mpOffers.get(member.slot) !== record) return;
+      if (info.build !== BUILD || info.player !== member.slot || info.member !== member.id) { await mpRefreshSlot(member.slot, 'A joining player has a different game version.'); continue; }
+      await record.link.acceptAnswer(member.answer);
+    }
+  }
+  for (let player = 1; player < mpCapacity; player++) {
+    if (mpOffers.get(player)?.replacing) continue;
+    if ((mpMembers[player] && !state.members.some(member => member.slot === player)) || state.unavailable.includes(player)) await mpRefreshSlot(player);
+  }
 }
 
 mp.host.onclick = async () => {
@@ -2930,32 +3168,31 @@ mp.host.onclick = async () => {
     if (generation !== mpSetupGeneration) return;
     room = mpRoom = new net.RoomSetup();
     mpMap = mapSelect.value;
+    mpCapacity = MAPS.find(map => map.file === mpMap)?.starts;
+    if (!Number.isInteger(mpCapacity) || mpCapacity < 2 || mpCapacity > 8) throw new Error('This map does not support multiplayer.');
     mapSelect.disabled = true;
     mpSay('Preparing game code...');
     const hash = await mapHash(mpMap);
     if (room !== mpRoom) return;
     mpExpectedMapHash = hash;
-    mpLink = mpNewLink(net, () => { mpEnterLobby(); mpLink.sendControl({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] }); });
-    const offer = await mpLink.createOffer({ race: START_RACE, map: mpMap, hash, build: BUILD });
+    mpPlayer = 0; mpMembers[0] = { id: 'host', connected: true, peers: [], joined: 0 };
+    mpLink = mpNewMesh(net);
+    const prepared = await Promise.all(Array.from({ length: mpCapacity - 1 }, (_, index) => mpHostOffer(net, index + 1)));
     if (room !== mpRoom) return;
-    const code = await room.create(offer);
+    const code = await room.create(prepared.map(value => value.offer));
     if (room !== mpRoom) return;
-    mpShow(mp.stepShare, true);
+    for (const value of prepared) value.record.replacing = false;
+    mpCode = code; mpConnected = true;
+    mpEnterLobby();
     mp.shareHint.textContent = 'Game Code';
     mp.out.value = code;
     const expiry = () => {
+      if (mpServerVersion > 0) return;
       const remaining = Math.max(0, Math.ceil((room.expiresAt - Date.now()) / 1000));
       mp.expires.textContent = `Expires in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
     };
     expiry(); mpExpiryTimer = setInterval(expiry, 1000);
-    mpSay('Waiting for a player...');
-    const answer = await room.waitForAnswer(value => { if (value.joining) mpSay('Player joining...', 'ok'); });
-    if (room !== mpRoom) return;
-    const info = await net.unpackSignal(answer);
-    if (info.build !== BUILD) throw new Error('Game versions differ. Both players should reload.');
-    await mpLink.acceptAnswer(answer);
-    mpPeerRace = info.race ?? START_RACE;
-    mpAwaitConnection();
+    while (room === mpRoom && !mpStarted) await mpProcessRoom(await room.poll(mpServerVersion));
   } catch (e) { if (generation === mpSetupGeneration && (!room || room === mpRoom)) { mpResetRole(); mpSay(e.message, 'err'); } }
 };
 
@@ -2995,10 +3232,16 @@ async function mpAcceptInvite(code) {
   mapSelect.disabled = true;              // the host picks the map
   if (!/^[a-f0-9]{14}$/.test(info.hash)) throw new Error('Invalid host map fingerprint.');
   mpExpectedMapHash = info.hash;
-  mpPeerRace = info.race ?? 1;
+  mpCapacity = MAPS.find(map => map.file === mpMap).starts;
+  if (info.capacity !== mpCapacity || !Number.isInteger(room.slot) || room.slot < 1 || room.slot >= mpCapacity || info.player !== room.slot || !/^[a-f0-9]{24}$/.test(room.member)) throw new Error('Invalid map player reservation.');
+  mpCode = code; mpPlayer = room.slot;
+  mpMembers[0] = { id: 'host', connected: true, peers: [mpPlayer], joined: 0 };
+  mpMembers[mpPlayer] = { id: room.member, connected: false, peers: [0], joined: 0 };
   if (room !== mpRoom) return;
-  mpLink = mpNewLink(net, () => { mpEnterLobby(); mpLink.sendControl({ t: 'race', race: +mp.r[mpMine()].value, revision: mpRaceRevisions[mpMine()] }); });
-  const { answer } = await mpLink.acceptOffer(offer, { race: START_RACE, build: BUILD });
+  mpLink = mpNewMesh(net);
+  const record = mpAttachPeer(net, 0, 'host');
+  const { answer } = await record.link.acceptOffer(offer, { build: BUILD, player: mpPlayer, member: room.member });
+  if (room !== mpRoom) return;
   await room.sendAnswer(answer);
   mpAwaitConnection();
 }
@@ -3020,7 +3263,20 @@ mp.accept.onclick = () => {
     mpResetRole(); mpSay(e.message, 'err');
   });
 };
-mp.start.onclick = () => { if (mpRole === 'host' && mpAllLoaded() && mpReadyFlags.every(Boolean) && !mpCountingDown) mpCountdown(COUNTDOWN); };
+mp.start.onclick = async () => {
+  if (mpRole !== 'host' || !mpCanStart() || mpCountingDown || mpSealing) return;
+  const room = mpRoom, generation = mpSetupGeneration;
+  mpSealing = true; mpUpdateLobby();
+  try {
+    const state = await room.setLocked(true);
+    if (generation !== mpSetupGeneration || room !== mpRoom) return;
+    mpAdmissionLocked = true;
+    await mpProcessRoom(state);
+    if (mpCanStart()) mpCountdown(COUNTDOWN);
+    else mpCancelCountdown(true);
+  } catch (error) { if (generation === mpSetupGeneration) { mpCancelCountdown(true); mpSay(error.message, 'err'); } }
+  finally { if (generation === mpSetupGeneration) { mpSealing = false; mpUpdateLobby(); } }
+};
 
 mp.copy.onclick = async () => {
   try { await navigator.clipboard.writeText(mp.out.value); mpSay('Copied to clipboard.', 'ok'); }

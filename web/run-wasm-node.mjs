@@ -10,67 +10,173 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 
+if (process.argv[2] === '--test-network') {
+  const { PeerMesh, Lockstep, PeerDepartures } = await import('./net.js');
+  const controls = [], turns = [], closed = [];
+  const mesh = new PeerMesh({ localSlot: 0, onControl: (message, slot) => controls.push([message, slot]), onClose: slot => closed.push(slot) });
+  const fake = () => ({ sent: [], setTurnHandler(handler) { this.turn = handler; }, sendTurn(...args) { this.sent.push(['turn', ...args]); }, sendControl(message) { this.sent.push(['control', message]); }, close() { this.onClose('closed'); } });
+  const first = fake(), second = fake();
+  mesh.add(1, first); mesh.add(2, second);
+  first.onOpen();
+  assert.equal(mesh.ready([0, 1, 2]), false, 'A partial mesh cannot start');
+  second.onOpen();
+  assert.equal(mesh.ready([0, 1, 2]), true);
+  first.onControl({ t: 'ready' }); second.onControl({ t: 'ready' });
+  assert.deepEqual(controls.map(entry => entry[1]), [1, 2], 'Sender identity comes from its direct connection');
+  first.turn(0, new Uint8Array([1])); second.turn(0, new Uint8Array([2]));
+  mesh.setTurnHandler((frame, bytes, slot) => turns.push([frame, bytes[0], slot]));
+  assert.deepEqual(turns, [[0, 1, 1], [0, 2, 2]], 'Buffered turns retain each sender');
+  mesh.sendTurn(1, new Uint8Array()); mesh.sendControl({ t: 'start' }, 2);
+  assert.equal(first.sent.length, 1); assert.equal(second.sent.length, 2);
+  mesh.remove(1); first.onControl({ t: 'stale' });
+  assert.equal(controls.length, 2, 'Removed peers cannot inject stale controls');
+  assert.equal(closed.length, 0, 'Intentional removal does not report an unrelated disconnect');
+  const queue = new Lockstep({ x: {}, memory: {}, slots: [0, 1, 2], localSlot: 0 });
+  assert.equal(queue.receiveTurn(7, 0, new Uint8Array()).ok, false);
+  assert.equal(queue.receiveTurn(0, 0, new Uint8Array()).ok, false);
+  mesh.close();
+  const makeReplica = (localSlot, peers, slots = [0, 1, 2]) => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const state = { frame: 0, applied: [] };
+    const x = { openbw_out_len: () => 0, openbw_out_clear() {}, openbw_in_ptr: () => 0,
+      openbw_apply: (owner, length) => state.applied.push([state.frame, owner, [...new Uint8Array(memory.buffer, 0, length)]]),
+      openbw_step: () => state.frame++ };
+    const lockstep = new Lockstep({ x, memory, slots, localSlot, delay: 2,
+      send: message => { for (const replica of peers) if (replica.localSlot !== localSlot) replica.lockstep.receiveTurn(localSlot, message.f, message.d); } });
+    return { localSlot, state, lockstep };
+  };
+  const replicas = [];
+  for (const localSlot of [0, 1]) replicas.push(makeReplica(localSlot, replicas));
+  replicas[0].lockstep.receiveTurn(2, 0, new Uint8Array([9]));
+  const recovered = replicas[0].lockstep.departureSnapshot([2]).turns;
+  for (const replica of replicas) replica.lockstep.scheduleDeparture(2, [2], recovered);
+  for (let round = 0; round < 8; round++) for (const replica of replicas) replica.lockstep.tick();
+  assert.deepEqual(replicas[0].state.applied, replicas[1].state.applied, 'Survivors recover the same final commands before a shared departure');
+  assert.deepEqual(replicas[0].state.applied, [[0, 2, [9]], [2, 2, [2, 0, 87, 1]]], 'Disconnect uses the existing framed surrender command exactly once');
+  assert.ok(replicas.every(replica => replica.state.frame > 2 && !replica.lockstep.slots.includes(2)), 'Survivors stop waiting only at the agreed turn');
+  const blocked = makeReplica(0, []);
+  blocked.lockstep.scheduleDeparture(0, [2], []);
+  assert.equal(blocked.lockstep.tick(), false);
+  assert.deepEqual(blocked.state.applied, [], 'Waiting for surviving input does not mutate native state partway through a turn');
+  for (const lost of [[2], [0], [1, 3]]) {
+    const slots = lost.length > 1 ? [0, 1, 2, 3] : [0, 1, 2];
+    const survivors = slots.filter(slot => !lost.includes(slot)), peers = [], wire = [], failures = [];
+    for (const localSlot of survivors) peers.push(makeReplica(localSlot, peers, slots));
+    for (const replica of peers) replica.departures = new PeerDepartures({
+      lockstep: replica.lockstep, player: replica.localSlot, playerSlots: Object.fromEntries(slots.map(slot => [slot, slot])), detach: () => {},
+      send: (message, target = null) => { for (const peer of peers) if (peer !== replica && (target === null || peer.localSlot === target)) wire.push([peer, message, replica.localSlot]); },
+      onError: error => failures.push(error.message),
+    });
+    peers[0].lockstep.receiveTurn(lost[0], 0, new Uint8Array([9]));
+    for (const slot of lost) peers[0].departures.lost(slot);
+    let remaining = 1000;
+    while (wire.length && remaining-- > 0) {
+      const [peer, message, sender] = wire.shift(); peer.departures.handle(message, sender);
+    }
+    assert.ok(remaining > 0, 'Departure agreement terminates');
+    assert.deepEqual(failures, []);
+    assert.ok(peers.every(peer => !peer.lockstep.networkPaused && lost.every(slot => !peer.departures.has(slot))), 'Every survivor accepts the same departed players');
+    for (let round = 0; round < 8; round++) for (const peer of peers) peer.lockstep.tick();
+    assert.deepEqual(peers[0].state.applied, peers[1].state.applied, 'Coordinated departures preserve all final commands');
+    assert.ok(peers.every(peer => peer.lockstep.frame > 2 && lost.every(slot => !peer.lockstep.slots.includes(slot))), 'The surviving game continues');
+    assert.equal(peers[0].departures.coordinator(), Math.min(...survivors), 'Authority moves to the lowest surviving player');
+    for (const peer of peers) peer.departures.close();
+  }
+  const lastPlayer = makeReplica(1, [], [0, 1]);
+  const lastRecovery = new PeerDepartures({ lockstep: lastPlayer.lockstep, player: 1, playerSlots: { 0: 0, 1: 1 }, send() {}, detach() {}, onError: error => assert.fail(error.message) });
+  lastRecovery.lost(0);
+  for (let tick = 0; tick < 6; tick++) lastPlayer.lockstep.tick();
+  assert.deepEqual(lastPlayer.lockstep.slots, [1], 'The final survivor continues without waiting for the host');
+  assert.deepEqual(lastPlayer.state.applied, [[1, 0, [2, 0, 87, 1]]]);
+  lastRecovery.close();
+  console.log('Mesh ownership, buffered input recovery, shared departure turns, host migration and simultaneous departure checks passed.');
+  process.exit(0);
+}
+
 if (process.argv[2] === '--test-lobby') {
   const source = readFileSync('web/openbw.js', 'utf8');
   const extract = name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0];
-  const functions = ['mpAllLoaded', 'mpUpdateLobby', 'mpCancelCountdown', 'mpCountdown', 'mpOnControl'].map(extract);
+  const functions = ['mpPlayers', 'mpMeshReady', 'mpAllLoaded', 'mpCanStart', 'mpLoadState', 'mpUpdateLobby', 'mpCancelCountdown', 'mpCountdown', 'mpOnControl'].map(extract);
   assert.ok(functions.every(Boolean), 'Actual ready/countdown lobby functions exist');
   const make = new Function('assert', `${functions.join('\n')}
     let mpRole = 'host', mpConnected = true, mpLocked = false, mpCountingDown = false, mpCountdownTimer = 0;
-    const mpReadyFlags = [false, false], mpRaceRevisions = [0, 0], sent = [], started = [];
+    let mpPlayer = 0, mpCapacity = 4, mpRosterVersion = 1, mpStarted = false, mpAdmissionLocked = false, mpSealing = false;
+    const mpRoom = null, mpCode = '12345678', mpServerVersion = 1;
+    const mpReadyFlags = Array(8).fill(false), mpRaceRevisions = Array(8).fill(0), sent = [], started = [];
+    const mpMembers = Array.from({ length: 8 }, (_, player) => player < 3 ? { id: 'player-' + player, connected: true, peers: [0, 1, 2].filter(peer => peer !== player) } : null);
     const hashes = { mapHash: 'a'.repeat(14), engineHash: 'b'.repeat(64), assetHashes: Array(3).fill('c'.repeat(14)) };
     const mpPrepared = { ...hashes };
-    const mpLoadStates = [{ ready: true, phase: 'Loaded', percent: 100, stagePercent: 100, ...hashes }, { ready: true, phase: 'Loaded', percent: 100, stagePercent: 100, ...hashes }];
+    const mpLoadStates = Array.from({ length: 8 }, (_, player) => ({ ready: player < 3, phase: 'Loaded', percent: 100, stagePercent: 100, ...hashes }));
     const field = () => ({ value: '1', disabled: false, checked: false, textContent: '', classList: { toggle() {} } });
-    const mp = { r: [field(), field()], readyStates: [field(), field()], loadLabels: [field(), field()], loadBars: [field(), field()], loadRetry: field(), ready: field(), start: field(), cancel: field(), giSpeed: field() };
-    const mpLink = { sendControl: message => sent.push(message) };
-    const mpMine = () => mpRole === 'host' ? 0 : 1, mpTheirs = () => mpRole === 'host' ? 1 : 0;
-    const mpSlots = () => mp.r.map((race, index) => ({ slot: index, race: Number(race.value) }));
-    const RACES = [-1, 0, 1, 2].map(value => ({ v: value })), MAPS = [{ file: 'map', starts: 2 }];
+    const fields = () => Array.from({ length: 8 }, field);
+    const mp = { r: fields(), s: fields(), n: fields(), readyStates: fields(), loadLabels: fields(), loadBars: fields(), loadRetry: field(), ready: field(), start: field(), cancel: field(), giSpeed: field(), giPlayers: field(), expires: field() };
+    const mpLink = { ready: () => true, sendControl: message => sent.push(message) };
+    const mpMine = () => mpPlayer;
+    const mpPublishLobby = () => mpUpdateLobby();
+    const failedPeers = [], mpPeerFailure = (...args) => failedPeers.push(args);
+    const RACES = [-1, 0, 1, 2].map(value => ({ v: value })), MAPS = [{ file: 'map', starts: 4 }];
     const mpMap = 'map', COUNTDOWN = 5, LOCK_AT = 2;
-    let mpPeerRace = 1;
-    const resolveRace = race => race < 0 ? 1 : race, pickStartSlots = () => [0, 1];
+    const resolveRace = race => race < 0 ? 1 : race, pickStartSlots = () => [0, 1, 2];
     const mpBoot = (...args) => started.push(args), mpSay = () => {};
     const setTimeout = () => 1, clearTimeout = () => {};
     mpCountdown(5);
-    assert.equal(sent.length, 0, 'Host cannot count down without both ready');
-    mpReadyFlags.fill(true);
-    mpOnControl({ t: 'loading', phase: 'Game files', percent: 40, stagePercent: 50, ready: false });
-    assert.equal(mpLoadStates[1].percent, 40, 'Peer download progress is retained');
-    assert.equal(mpReadyFlags[1], false, 'A downloading peer cannot remain ready');
+    assert.equal(sent.length, 0, 'Host cannot count down without everyone ready');
+    mpOnControl({ t: 'mesh-failed', peer: 3, member: 'departed' }, 1);
+    mpOnControl({ t: 'mesh-failed', peer: 3 }, 1);
+    assert.equal(failedPeers.length, 0, 'A stale failure for a departed peer cannot evict another player');
+    for (const player of [0, 1, 2]) mpReadyFlags[player] = true;
+    mpOnControl({ t: 'loading', phase: 'Game files', percent: 40, stagePercent: 50, ready: false }, 2);
+    assert.equal(mpLoadStates[2].percent, 40, 'Third-player download progress is retained');
+    assert.equal(mpReadyFlags[2], false, 'A downloading player cannot remain ready');
     assert.equal(mp.start.disabled, true, 'Peer progress cannot enable premature Start');
-    mpOnControl({ t: 'loading', phase: 'Loaded', percent: 100, stagePercent: 100, ready: true, ...hashes });
+    mpOnControl({ t: 'loading', phase: 'Loaded', percent: 100, stagePercent: 100, ready: true, ...hashes }, 2);
     assert.equal(mpAllLoaded(), true, 'Matching verified completion restores the dependency gate');
-    mpReadyFlags.fill(true); mpLoadStates[1].ready = false; mpCountdown(5);
+    for (const player of [0, 1, 2]) mpReadyFlags[player] = true;
+    mpLoadStates[2].ready = false; mpCountdown(5);
     assert.equal(sent.length, 0, 'Host cannot count down while the peer is downloading');
-    mpLoadStates[1].ready = true; mpLoadStates[1].engineHash = 'd'.repeat(64); mpCountdown(5);
+    mpLoadStates[2].ready = true; mpLoadStates[2].engineHash = 'd'.repeat(64); mpCountdown(5);
     assert.equal(sent.length, 0, 'Different preloaded engines cannot start');
-    mpLoadStates[1].engineHash = hashes.engineHash;
-    mpReadyFlags.fill(true); mpCountdown(5);
+    mpLoadStates[2].engineHash = hashes.engineHash;
+    mpMembers[2].peers = [0]; mpCountdown(5);
+    assert.equal(sent.length, 0, 'A missing guest-to-guest link prevents Start');
+    mpMembers[2].peers = [0, 1]; mpCountdown(5);
     assert.equal(mpCountingDown, true); assert.equal(mp.start.disabled, true);
-    mpOnControl({ t: 'ready', ready: false, revisions: [0, 0] });
+    mpOnControl({ t: 'ready', ready: false, roster: 1, revisions: [0, 0, 0, 0] }, 1);
     assert.equal(mpCountingDown, false, 'Unready cancels countdown');
-    mpReadyFlags.fill(true); mpOnControl({ t: 'race', race: 2, revision: 1 });
-    assert.deepEqual(mpReadyFlags, [false, false], 'Race changes invalidate both ready flags');
-    mpOnControl({ t: 'ready', ready: true, revisions: [0, 0] });
+    mpReadyFlags.fill(true); mpOnControl({ t: 'race', race: 2, revision: 1 }, 2);
+    assert.ok(mpReadyFlags.every(ready => ready === false), 'Any race change invalidates every ready flag');
+    mpOnControl({ t: 'ready', ready: true, roster: 1, revisions: [0, 0, 0, 0] }, 1);
     assert.equal(mpReadyFlags[1], false, 'Stale readiness for an old race revision is rejected');
-    mpOnControl({ t: 'ready', ready: true, revisions: [0, 1] });
+    mpOnControl({ t: 'ready', ready: true, roster: 1, revisions: [0, 0, 1, 0] }, 1);
     assert.equal(mpReadyFlags[1], true);
-    const start = { t: 'start', revisions: [0, 1], slots: [{ slot: 0, race: 1 }, { slot: 1, race: 2 }], you: 1 };
-    mpOnControl(start); assert.equal(started.length, 0, 'Peer cannot force the host to start');
-    mpRole = 'join'; mpReadyFlags.fill(false); mpOnControl(start);
+    const start = { t: 'start', roster: 1, revisions: [0, 0, 1, 0], slots: [{ slot: 2, race: 1 }, { slot: 0, race: 1 }, { slot: 3, race: 2 }], playerSlots: { 0: 2, 1: 0, 2: 3 } };
+    mpOnControl(start, 1); assert.equal(started.length, 0, 'A guest cannot force the host to start');
+    mpRole = 'join'; mpPlayer = 1; mpReadyFlags.fill(false); mpOnControl(start, 0);
     assert.equal(started.length, 0, 'Joiner refuses premature start');
-    mpReadyFlags.fill(true); mpOnControl({ ...start, slots: [{ slot: 0, race: 1 }, { slot: 0, race: 2 }] });
+    for (const player of [0, 1, 2]) mpReadyFlags[player] = true;
+    mpOnControl(start, 2); assert.equal(started.length, 0, 'Only the host can start the game');
+    mpOnControl({ ...start, slots: [{ slot: 0, race: 1 }, { slot: 0, race: 1 }, { slot: 3, race: 2 }] }, 0);
     assert.equal(started.length, 0, 'Duplicate player slots are rejected');
-    mpOnControl(start); assert.equal(started.length, 1, 'Ready consensus permits a valid start');
+    mpOnControl(start, 0); assert.equal(started.length, 1, 'Every occupied player being ready permits a valid start');
+    assert.equal(started[0][1], 0, 'Each guest receives its assigned native start slot');
+    assert.equal(mpReadyFlags[3], false, 'Unoccupied map slots do not require Ready');
+    mpMembers[3] = { id: 'joining', connected: false, peers: [] };
+    assert.equal(mpCanStart(), false, 'A joining fourth player blocks Start');
   `);
   make(assert);
+  const pickSlots = new Function(`${extract('pickStartSlots')}\nreturn pickStartSlots;`)();
+  for (const count of [2, 3, 4, 8]) {
+    const slots = pickSlots(count, count);
+    assert.equal(new Set(slots).size, count);
+    assert.ok(slots.every(slot => slot >= 0 && slot < count));
+  }
+  assert.throws(() => pickSlots(5, 4), /map/);
   const preparedBoot = source.match(/async function instantiateWasm\([^]*?\n\}/)?.[0];
   assert.ok(preparedBoot, 'Actual prepared engine boot function exists');
   const instantiate = new Function('fetch', 'DEV', 'BUILD', 'missionDigest', `${preparedBoot}\nreturn instantiateWasm;`)(() => { throw new Error('Unexpected fetch after Start'); }, true, 'test', () => {});
   const prepared = await WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
   assert.ok((await instantiate('openbw.wasm', {}, false, prepared)).instance instanceof WebAssembly.Instance, 'Prepared engine starts without a network fetch');
-  console.log('Lobby readiness, race revision, countdown cancellation and start authority checks passed.');
+  console.log('Multi-player readiness, full mesh, roster/race revision, map capacity, start authority and prepared boot checks passed.');
   process.exit(0);
 }
 

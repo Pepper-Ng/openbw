@@ -17,7 +17,7 @@
 // be on different deploys, and a version mismatch must fail loudly instead of desyncing.
 // v2: map hash changed from SHA-256 (crypto.subtle) to cyrb53 (pure JS) — a v1 peer would
 // compute a different hash and fail the terrain check, so the version bump rejects the pair.
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
 
 const EMPTY = new Uint8Array(0);
 
@@ -70,6 +70,7 @@ export class RoomSetup {
     this.code = '';
     this.token = '';
     this.expiresAt = 0;
+    this.admission = Promise.resolve();
   }
 
   async call(path, method = 'GET', value = null) {
@@ -92,7 +93,7 @@ export class RoomSetup {
   }
 
   async create(offer) {
-    const value = await this.call('/rooms', 'POST', { offer });
+    const value = await this.call('/rooms', 'POST', Array.isArray(offer) ? { offers: offer } : { offer });
     this.remember(value, value.code);
     return value.code;
   }
@@ -101,11 +102,32 @@ export class RoomSetup {
     if (!/^\d{8}$/.test(code)) throw new Error('Enter an eight-digit game code.');
     const value = await this.call(`/rooms/${code}/join`, 'POST', {});
     this.remember(value, code);
+    this.slot = value.slot;
+    this.member = value.id;
     if (typeof value.offer !== 'string') throw new Error('Invalid game offer.');
     return value.offer;
   }
 
   async sendAnswer(answer) { await this.call(`/rooms/${this.code}/answer`, 'POST', { answer }); }
+
+  async poll(after = -1) {
+    const value = await this.call(`/rooms/${this.code}/answer?wait=1&after=${after}`);
+    if (Number.isFinite(value.expiresAt)) this.expiresAt = value.expiresAt;
+    return value;
+  }
+
+  async replaceOffer(slot, offer, member = null) {
+    return this.call(`/rooms/${this.code}/offer`, 'POST', { slot, offer, member });
+  }
+
+  setLocked(locked) {
+    this.admission = this.admission.catch(() => {}).then(() => this.call(`/rooms/${this.code}/lock`, 'POST', { locked }));
+    return this.admission;
+  }
+
+  detach() {
+    this.controller.abort(); this.code = ''; this.token = '';
+  }
 
   async waitForAnswer(status = () => {}) {
     while (!this.controller.signal.aborted) {
@@ -261,6 +283,55 @@ export class PeerLink {
   }
 }
 
+export class PeerMesh {
+  constructor({ localSlot, onControl = () => {}, onOpen = () => {}, onClose = () => {} }) {
+    this.localSlot = localSlot;
+    this.links = new Map();
+    this.onControl = onControl; this.onOpen = onOpen; this.onClose = onClose;
+    this._onTurn = null; this._queued = [];
+  }
+
+  add(slot, link) {
+    if (!Number.isInteger(slot) || slot < 0 || slot > 7 || slot === this.localSlot) throw new Error('Invalid mesh player.');
+    this.remove(slot);
+    const record = { link, open: false, closed: false };
+    this.links.set(slot, record);
+    const current = () => this.links.get(slot) === record;
+    link.frameOf = () => this.frameOf ? this.frameOf() : 0;
+    link.onOpen = () => { if (current()) { record.open = true; this.onOpen(slot); } };
+    link.onClose = why => {
+      if (!current() || record.closed) return;
+      record.open = false; record.closed = true; this.onClose(slot, why);
+    };
+    link.onControl = message => { if (current()) this.onControl(message, slot); };
+    link.setTurnHandler((frame, bytes) => {
+      if (!current()) return;
+      if (this._onTurn) this._onTurn(frame, bytes, slot);
+      else if (this._queued.length < 20000) this._queued.push([frame, bytes, slot]);
+    });
+    return link;
+  }
+
+  connected(slot) { return this.links.get(slot)?.open === true; }
+  ready(slots) { return slots.every(slot => slot === this.localSlot || this.connected(slot)); }
+  sendTurn(frame, bytes) { for (const record of this.links.values()) if (record.open) record.link.sendTurn(frame, bytes); }
+  sendControl(message, slot = null) {
+    for (const [peer, record] of this.links) if (record.open && (slot === null || slot === peer)) record.link.sendControl(message);
+  }
+  setTurnHandler(handler) {
+    this._onTurn = handler;
+    const queued = this._queued; this._queued = [];
+    for (const [frame, bytes, slot] of queued) if (this.links.has(slot)) handler(frame, bytes, slot);
+  }
+  remove(slot) {
+    const record = this.links.get(slot);
+    this.links.delete(slot);
+    this._queued = this._queued.filter(turn => turn[2] !== slot);
+    record?.link.close();
+  }
+  close() { for (const slot of [...this.links.keys()]) this.remove(slot); }
+}
+
 // A drop-in alternative to PeerLink that speaks to the native openbw_bridge relay over a
 // WebSocket instead of doing a copy-paste WebRTC handshake. Same runtime surface
 // (setTurnHandler / sendTurn / sendControl / frameOf / onControl / onOpen / onClose), so the
@@ -355,6 +426,9 @@ export class Lockstep {
     this.nextLocalFrame = 0;  // next frame we still owe a local batch for
     this.turns = new Map();   // frame -> Map(slot -> Uint8Array)
     this.stalledSince = 0;
+    this.history = new Map();
+    this.departures = new Map();
+    this.networkPaused = false;
   }
 
   #batch(f) {
@@ -371,6 +445,7 @@ export class Lockstep {
    * Returns a verdict so the host can drop a peer that sends bad frames.
    */
   receiveTurn(slot, frame, bytes) {
+    if (!this.slots.includes(slot) || slot === this.localSlot) return { ok: false, why: 'Turn from an inactive player slot' };
     if (!Number.isInteger(frame) || frame < 0)
       return { ok: false, why: `malformed frame ${frame}` };
     if (frame < this.frame)
@@ -386,6 +461,33 @@ export class Lockstep {
 
   /** How far ahead of the current frame a peer's turn may legitimately be. */
   horizon() { return this.delay * 4 + 8; }
+
+  departureSnapshot(slots) {
+    const turns = [];
+    for (const [frame, batches] of [...this.history, ...this.turns]) {
+      for (const slot of slots) if (batches.has(slot)) turns.push([slot, frame, b64urlEncode(batches.get(slot))]);
+    }
+    if (JSON.stringify(turns).length > 48000) throw new Error('Too much pending input to reconcile a disconnected player safely.');
+    return { frame: this.frame, turns };
+  }
+
+  scheduleDeparture(at, slots, entries) {
+    if (!Number.isInteger(at) || at < this.frame || at > this.frame + this.horizon() * 2 + 2 || !slots.length || slots.some(slot => slot === this.localSlot || !this.slots.includes(slot))) throw new Error('Invalid departure boundary.');
+    const recovered = new Map();
+    for (const [slot, frame, encoded] of entries) {
+      if (!slots.includes(slot) || !Number.isInteger(frame) || frame < 0 || frame >= at || typeof encoded !== 'string' || encoded.length > 65536 || !/^[A-Za-z0-9_-]*$/.test(encoded)) throw new Error('Invalid recovered player input.');
+      recovered.set(`${slot}:${frame}`, b64urlDecode(encoded));
+    }
+    for (const slot of slots) for (let frame = this.frame; frame < at; frame++) {
+      const bytes = recovered.get(`${slot}:${frame}`) || EMPTY;
+      const batch = this.#batch(frame), existing = batch.get(slot);
+      if (existing && (existing.length !== bytes.length || existing.some((value, index) => value !== bytes[index]))) throw new Error('Conflicting final player inputs.');
+      batch.set(slot, bytes);
+    }
+    let pending = this.departures.get(at);
+    if (!pending) { pending = new Set(); this.departures.set(at, pending); }
+    for (const slot of slots) pending.add(slot);
+  }
 
   /** Pull locally generated commands out of the wasm (copy: the buffer is reused). */
   #drainLocal() {
@@ -425,6 +527,8 @@ export class Lockstep {
    * on a peer (the caller should render a "waiting" state but keep rendering/input alive).
    */
   tick() {
+    if (this.networkPaused) return false;
+    const leaving = this.departures.get(this.frame);
     // Owe a batch for every frame through frame+delay. On the first tick this also
     // bootstraps the initial `delay` frames with empty batches, so peers immediately have
     // something to consume and nobody deadlocks waiting for turn 0.
@@ -456,11 +560,18 @@ export class Lockstep {
       }
     }
 
-    if (this.missing(this.frame).length) {
+    if (this.missing(this.frame).some(slot => !leaving?.has(slot))) {
       if (!this.stalledSince) this.stalledSince = Date.now();
       return false;
     }
     this.stalledSince = 0;
+    if (leaving) {
+      for (const slot of [...leaving].sort((first, second) => first - second)) {
+        this.#apply(slot, new Uint8Array([2, 0, 87, 1]));
+        this.dropSlot(slot);
+      }
+      this.departures.delete(this.frame);
+    }
 
     // Apply in slot order so every peer applies in the same order — to both replicas when
     // spectating, keeping them bit-identical.
@@ -469,6 +580,10 @@ export class Lockstep {
       if (this.onTurn && m.get(s)?.length) this.onTurn(this.frame, s, m.get(s));
       this.#apply(s, m.get(s), this.x, this.memory);
       if (this.shadow) this.#apply(s, m.get(s), this.shadow.x, this.shadow.memory);
+    }
+    if (this.slots.length > 1) {
+      this.history.set(this.frame, new Map(m));
+      while (this.history.size > this.horizon() * 2 + 8) this.history.delete(this.history.keys().next().value);
     }
     this.turns.delete(this.frame);
 
@@ -488,6 +603,114 @@ export class Lockstep {
    */
   dropSlot(slot) {
     this.slots = this.slots.filter((s) => s !== slot);
+    for (const batch of this.turns.values()) batch.delete(slot);
     this.stalledSince = 0;
+  }
+}
+
+export class PeerDepartures {
+  constructor({ lockstep, player, playerSlots, send, detach, onError = () => {} }) {
+    this.lockstep = lockstep; this.player = player; this.playerSlots = playerSlots;
+    this.send = send; this.detach = detach; this.onError = onError;
+    this.active = new Set(Object.keys(playerSlots).map(Number));
+    this.missing = new Set(); this.epoch = 0; this.phase = null; this.timer = null;
+    this.closed = false;
+  }
+
+  coordinator(missing = this.missing) { return Math.min(...[...this.active].filter(player => !missing.has(player))); }
+  isCoordinator() { return this.coordinator() === this.player; }
+  has(player) { return this.active.has(player) && !this.missing.has(player); }
+  close() { this.closed = true; clearTimeout(this.timer); }
+
+  lost(player) {
+    if (this.closed || !this.active.has(player) || player === this.player || this.missing.has(player)) return;
+    this.missing.add(player); this.detach(player); this.lockstep.networkPaused = true;
+    try { this.#refresh(); } catch (error) { this.#fail(error); }
+  }
+
+  #id(missing) { return `${this.epoch}:${[...missing].sort((first, second) => first - second).join(',')}`; }
+  #validMissing(players) { return Array.isArray(players) && players.length > 0 && players.length < this.active.size && new Set(players).size === players.length && players.every(player => Number.isInteger(player) && this.active.has(player)); }
+  #fail(error) { if (!this.closed) { this.close(); this.onError(error); } }
+  #arm() {
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      if (this.closed || !this.phase) return;
+      const unresponsive = this.isCoordinator() ? this.phase.survivors.filter(player => !this.phase.reports.has(player)) : [this.phase.leader];
+      if (!unresponsive.length) { this.#fail(new Error('Could not agree on the final player inputs.')); return; }
+      for (const player of unresponsive) this.lost(player);
+    }, 10000);
+  }
+  #refresh() {
+    if (this.closed || !this.missing.size) return;
+    const id = this.#id(this.missing);
+    if (this.phase?.id === id) return;
+    const leader = this.coordinator();
+    const survivors = [...this.active].filter(player => !this.missing.has(player));
+    this.phase = { id, leader, survivors, reports: new Map() };
+    this.#arm();
+    if (leader === this.player) {
+      this.send({ t: 'depart-prepare', epoch: this.epoch, missing: [...this.missing], phase: id });
+      this.#report();
+    } else this.send({ t: 'depart-request', epoch: this.epoch, missing: [...this.missing] }, leader);
+  }
+  #report() {
+    const snapshot = this.lockstep.departureSnapshot([...this.missing].map(player => this.playerSlots[player]));
+    const message = { t: 'depart-report', epoch: this.epoch, phase: this.phase.id, ...snapshot };
+    if (this.isCoordinator()) this.#record(message, this.player);
+    else this.send(message, this.phase.leader);
+  }
+  #record(message, player) {
+    if (!this.phase || !this.isCoordinator() || message.phase !== this.phase.id || !this.phase.survivors.includes(player)) return;
+    if (!Number.isInteger(message.frame) || Math.abs(message.frame - this.lockstep.frame) > this.lockstep.horizon() * 2 || !Array.isArray(message.turns) || message.turns.length > 1024 || JSON.stringify(message).length > 60000) throw new Error('Invalid departure report.');
+    const slots = [...this.missing].map(peer => this.playerSlots[peer]);
+    for (const entry of message.turns) {
+      if (!Array.isArray(entry) || entry.length !== 3 || !slots.includes(entry[0]) || !Number.isInteger(entry[1]) || entry[1] < 0 || entry[1] > message.frame + this.lockstep.horizon() || typeof entry[2] !== 'string' || entry[2].length > 65536 || !/^[A-Za-z0-9_-]*$/.test(entry[2])) throw new Error('Invalid final player inputs.');
+    }
+    this.phase.reports.set(player, { frame: message.frame, turns: message.turns });
+    if (this.phase.reports.size !== this.phase.survivors.length) return;
+    const recovered = new Map(), frames = [...this.phase.reports.values()].map(report => report.frame);
+    for (const report of this.phase.reports.values()) for (const entry of report.turns) {
+      const key = `${entry[0]}:${entry[1]}`, existing = recovered.get(key);
+      if (existing && existing[2] !== entry[2]) throw new Error('Players disagree about a final input batch.');
+      recovered.set(key, entry);
+    }
+    const minimum = Math.min(...frames);
+    const at = Math.max(1, ...frames, ...[...recovered.values()].map(entry => entry[1] + 1));
+    const turns = [...recovered.values()].filter(entry => entry[1] >= minimum).sort((first, second) => first[1] - second[1] || first[0] - second[0]);
+    const plan = { t: 'depart-commit', epoch: this.epoch, phase: this.phase.id, missing: [...this.missing], at, turns };
+    if (JSON.stringify(plan).length > 60000) throw new Error('Final player inputs exceed the safe departure message size.');
+    this.send(plan);
+    this.#commit(plan, this.player);
+  }
+  #commit(message, player) {
+    if (!this.#validMissing(message.missing)) return;
+    const missing = new Set(message.missing);
+    if (player !== this.coordinator(missing) || message.phase !== this.#id(missing) || message.missing.some(peer => !this.missing.has(peer)) || !Array.isArray(message.turns) || message.turns.length > 1024 || JSON.stringify(message).length > 60000) return;
+    this.lockstep.scheduleDeparture(message.at, message.missing.map(peer => this.playerSlots[peer]), message.turns);
+    for (const peer of missing) { this.active.delete(peer); this.missing.delete(peer); }
+    clearTimeout(this.timer); this.phase = null; this.epoch++;
+    this.lockstep.networkPaused = this.missing.size > 0;
+    this.#refresh();
+  }
+
+  handle(message, player) {
+    if (typeof message?.t !== 'string' || !message.t.startsWith('depart-')) return false;
+    if (this.closed || !this.active.has(player) || message.epoch !== this.epoch) return true;
+    try {
+      if (message.t === 'depart-commit') { this.#commit(message, player); return true; }
+      if (message.t === 'depart-report') { this.#record(message, player); return true; }
+      if (!['depart-request', 'depart-prepare'].includes(message.t) || !this.#validMissing(message.missing) || message.missing.includes(player)) return true;
+      if (message.missing.includes(this.player)) { this.#fail(new Error('You have been disconnected from the other players.')); return true; }
+      const announced = new Set(message.missing);
+      if (message.t === 'depart-prepare' && (player !== this.coordinator(announced) || message.phase !== this.#id(announced))) return true;
+      for (const peer of announced) if (!this.missing.has(peer)) { this.missing.add(peer); this.detach(peer); }
+      this.lockstep.networkPaused = true;
+      this.#refresh();
+      if (message.t === 'depart-prepare') {
+        if (this.phase.id === message.phase) this.#report();
+        else this.send({ t: 'depart-request', epoch: this.epoch, missing: [...this.missing] }, this.coordinator());
+      } else if (this.isCoordinator()) this.send({ t: 'depart-prepare', epoch: this.epoch, phase: this.phase.id, missing: [...this.missing] }, player);
+    } catch (error) { this.#fail(error); }
+    return true;
   }
 }

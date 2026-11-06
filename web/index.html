@@ -203,7 +203,8 @@
   #mp button { margin-top: 0; }
   /* Lobby laid out like the original: player slots on the left, game info on the right. */
   #mp .lobby { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 10px 0; }
-  #mp .slots { display: flex; flex-direction: column; gap: 6px; }
+  #mp .slots { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; scrollbar-gutter: stable; }
+  #mp .slot[hidden] { display: none; }
   #mp .slot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 160px) 80px; gap: 10px; align-items: center; padding: 10px 8px;
     background: #182128; border: 1px solid #39454d; border-radius: 4px; }
   #mp .slot .nm { flex: 1 1 auto; color: #e2e8f0; font-weight: 600; font-size: 13px; }
@@ -212,6 +213,7 @@
   #mp .ginfo { display: flex; flex-wrap: wrap; gap: 8px 20px; border-bottom: 1px solid #39454d; padding: 4px 0 10px; }
   #mp .ready-state { font-size: 11px; color: #a9b6bd; text-align: right; }
   #mp .ready-state.is-ready { color: #85c89c; }
+  #mp .mp-actions { position: sticky; bottom: 0; z-index: 1; background: #101618; border-top: 1px solid #39454d; padding: 6px 0; }
   #mp-ready-label { display: flex; align-items: center; gap: 8px; padding: 8px; min-height: 28px; }
   #mp-ready { accent-color: #85c89c; width: 18px; height: 18px; }
   #mp svg { width: 18px; height: 18px; flex-shrink: 0; }
@@ -680,7 +682,7 @@
     </label>
     <div id="lobby-hint" class="hint"></div>
     <div id="mp">
-      <h2>Multiplayer (1v1)</h2>
+      <h2>Multiplayer</h2>
       <div class="row" id="mp-setup">
         <button id="mp-host"><i data-lucide="plus"></i>Create Game</button>
         <button id="mp-join"><i data-lucide="log-in"></i>Join Game</button>
@@ -705,7 +707,7 @@
       <!-- Lobby: player slots + game info, host starts a 5s countdown. -->
       <div id="mp-lobby" style="display:none">
         <div class="lobby">
-          <div class="slots">
+          <div class="slots" id="mp-rows">
             <div class="slot" id="mp-s0"><span class="nm" id="mp-n0">Player 1</span>
               <select id="mp-r0" aria-label="Player 1 race"></select><span id="mp-ready-0" class="ready-state">Not ready</span><div class="load-status"><span id="mp-load-0">Waiting for files</span><progress id="mp-load-progress-0" max="100" value="0" aria-label="Player 1 download progress"></progress></div></div>
             <div class="slot" id="mp-s1"><span class="nm" id="mp-n1">Open</span>
@@ -714,10 +716,11 @@
           <div class="ginfo">
             <div><label>Type</label><span>Melee</span></div>
             <div><label>Map</label><span id="mp-gi-map">&mdash;</span></div>
+            <div><label>Players</label><span id="mp-gi-players">0 / 2</span></div>
             <div><label>Speed</label><span id="mp-gi-speed">Fastest</span></div>
           </div>
         </div>
-        <div class="row"><label id="mp-ready-label"><input id="mp-ready" type="checkbox">Ready</label><button id="mp-start" disabled><i data-lucide="play"></i>Start Game</button></div>
+        <div class="row mp-actions" id="mp-actions"><label id="mp-ready-label"><input id="mp-ready" type="checkbox">Ready</label><button id="mp-start" disabled><i data-lucide="play"></i>Start Game</button></div>
         <button id="mp-load-retry" type="button" hidden><i data-lucide="rotate-cw"></i>Retry Download</button>
       </div>
 

@@ -34,7 +34,7 @@ function validSignal(value) {
   if (typeof value !== 'string' || value.length < 16 || value.length > 24000 || !/^[A-Za-z0-9_-]+$/.test(value)) return false;
   try {
     const signal = JSON.parse(gunzipSync(Buffer.from(value, 'base64url'), { maxOutputLength: 65536 }).toString('utf8'));
-    return signal?.v === 4 && typeof signal.sdp === 'string' && signal.sdp.startsWith('v=0') && signal.sdp.length <= 60000;
+    return signal?.v === 5 && typeof signal.sdp === 'string' && signal.sdp.startsWith('v=0') && signal.sdp.length <= 60000;
   } catch { return false; }
 }
 
@@ -47,6 +47,13 @@ function authorized(request, token) {
 export function createSignallingServer({ now = Date.now, maxRooms = 500, createLimit = 12, joinLimit = 40, webRoot = null } = {}) {
   const rooms = new Map();
   const attempts = new Map();
+  const snapshot = room => ({
+    version: room.version, expiresAt: room.expiresAt, joining: room.members.some(Boolean), locked: room.locked,
+    members: room.members.filter(Boolean).map(member => ({ slot: member.slot, id: member.id, answer: member.answer })),
+    unavailable: room.offers.flatMap((offer, index) => offer ? [] : [index + 1]),
+    ...(room.members[0]?.answer ? { answer: room.members[0].answer } : {}),
+  });
+  const changed = room => { room.version++; room.waiter?.(200, snapshot(room)); };
   const remove = (code, message = 'Game setup closed.') => {
     const room = rooms.get(code);
     if (!room) return;
@@ -54,7 +61,15 @@ export function createSignallingServer({ now = Date.now, maxRooms = 500, createL
     rooms.delete(code);
   };
   const sweep = () => {
-    for (const [code, room] of rooms) if (now() >= room.expiresAt) remove(code, 'Game code expired.');
+    for (const [code, room] of rooms) {
+      if (now() >= room.expiresAt) { remove(code, 'Game code expired.'); continue; }
+      for (let index = 0; index < room.members.length; index++) {
+        const member = room.members[index];
+        if (member && !member.answer && now() >= member.expiresAt) {
+          room.members[index] = null; room.offers[index] = null; changed(room);
+        }
+      }
+    }
     for (const [key, limit] of attempts) if (now() >= limit.until) attempts.delete(key);
   };
   const allowed = (request, kind, maximum) => {
@@ -93,16 +108,17 @@ export function createSignallingServer({ now = Date.now, maxRooms = 500, createL
         if (!allowed(request, 'create', createLimit)) { reply(response, 429, { error: 'Too many game codes. Try again shortly.' }); return; }
         if (rooms.size >= maxRooms) { reply(response, 503, { error: 'Game setup is busy. Try again shortly.' }); return; }
         const input = await body(request);
-        if (!validSignal(input.offer)) { reply(response, 400, { error: 'Invalid connection offer.' }); return; }
+        const offers = input.offers ?? [input.offer];
+        if (!Array.isArray(offers) || offers.length < 1 || offers.length > 7 || !offers.every(validSignal)) { reply(response, 400, { error: 'Invalid connection offers or map capacity.' }); return; }
         if (rooms.size >= maxRooms) { reply(response, 503, { error: 'Game setup is busy. Try again shortly.' }); return; }
         let code;
         do { code = String(randomInt(100000000)).padStart(8, '0'); } while (rooms.has(code));
-        const room = { offer: input.offer, hostToken: randomBytes(32).toString('base64url'), guestToken: null, answer: null, expiresAt: now() + UNUSED_ROOM_MS, waiter: null };
+        const room = { offers, members: Array(offers.length).fill(null), hostToken: randomBytes(32).toString('base64url'), used: false, locked: false, version: 0, expiresAt: now() + UNUSED_ROOM_MS, waiter: null };
         rooms.set(code, room);
         reply(response, 201, { code, token: room.hostToken, expiresAt: room.expiresAt });
         return;
       }
-      const match = url.pathname.match(/^\/signal\/rooms\/(\d{8})(?:\/(join|answer))?$/);
+      const match = url.pathname.match(/^\/signal\/rooms\/(\d{8})(?:\/(join|answer|offer|lock))?$/);
       if (!match) { reply(response, 404, { error: 'Unknown setup endpoint.' }); return; }
       const [, code, action] = match;
       if (action === 'join' && request.method === 'POST' && !allowed(request, 'join', joinLimit)) { reply(response, 429, { error: 'Too many join attempts. Try again shortly.' }); return; }
@@ -111,38 +127,69 @@ export function createSignallingServer({ now = Date.now, maxRooms = 500, createL
       if (action === 'join' && request.method === 'POST') {
         await body(request);
         if (rooms.get(code) !== room || now() >= room.expiresAt) { reply(response, 404, { error: 'Game code expired or was not found.' }); return; }
-        if (room.guestToken) { reply(response, 409, { error: 'This game already has a joining player.' }); return; }
-        room.guestToken = randomBytes(32).toString('base64url');
-        room.expiresAt = now() + NEGOTIATION_MS;
-        room.waiter?.(202, { joining: true, expiresAt: room.expiresAt });
-        reply(response, 200, { offer: room.offer, token: room.guestToken, expiresAt: room.expiresAt });
+        if (room.locked) { reply(response, 409, { error: 'This game is starting.' }); return; }
+        const index = room.offers.findIndex((offer, slot) => offer && !room.members[slot]);
+        if (index < 0) { reply(response, 409, { error: 'This game has no open player slots.' }); return; }
+        const member = { slot: index + 1, id: randomBytes(12).toString('hex'), token: randomBytes(32).toString('base64url'), answer: null, expiresAt: now() + NEGOTIATION_MS };
+        room.members[index] = member;
+        if (!room.used) { room.used = true; room.expiresAt = now() + NEGOTIATION_MS; }
+        changed(room);
+        reply(response, 200, { offer: room.offers[index], token: member.token, slot: member.slot, id: member.id, expiresAt: room.expiresAt });
         return;
       }
       if (action === 'answer' && request.method === 'POST') {
-        if (!authorized(request, room.guestToken)) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
+        const member = room.members.find(member => member && authorized(request, member.token));
+        if (!member) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
         const input = await body(request);
         if (rooms.get(code) !== room || now() >= room.expiresAt) { reply(response, 404, { error: 'Game setup expired.' }); return; }
+        if (room.members[member.slot - 1] !== member) { reply(response, 409, { error: 'Player slot changed.' }); return; }
         if (!validSignal(input.answer)) { reply(response, 400, { error: 'Invalid connection answer.' }); return; }
-        if (room.answer && room.answer !== input.answer) { reply(response, 409, { error: 'An answer was already submitted.' }); return; }
-        room.answer = input.answer;
-        room.waiter?.(200, { answer: room.answer });
+        if (member.answer && member.answer !== input.answer) { reply(response, 409, { error: 'An answer was already submitted.' }); return; }
+        member.answer = input.answer;
+        changed(room);
         reply(response, 200, { ok: true });
+        return;
+      }
+      if (action === 'offer' && request.method === 'POST') {
+        if (!authorized(request, room.hostToken)) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
+        const input = await body(request);
+        if (!Number.isInteger(input.slot) || input.slot < 1 || input.slot > room.offers.length || !validSignal(input.offer)) { reply(response, 400, { error: 'Invalid player slot or offer.' }); return; }
+        if (rooms.get(code) !== room || now() >= room.expiresAt) { reply(response, 404, { error: 'Game setup expired.' }); return; }
+        if (room.members[input.slot - 1] && room.members[input.slot - 1].id !== input.member) { reply(response, 409, { error: 'Player slot changed.' }); return; }
+        room.members[input.slot - 1] = null; room.offers[input.slot - 1] = input.offer;
+        changed(room);
+        reply(response, 200, snapshot(room));
+        return;
+      }
+      if (action === 'lock' && request.method === 'POST') {
+        if (!authorized(request, room.hostToken)) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
+        const input = await body(request);
+        if (typeof input.locked !== 'boolean') { reply(response, 400, { error: 'Invalid admission state.' }); return; }
+        if (rooms.get(code) !== room || now() >= room.expiresAt) { reply(response, 404, { error: 'Game setup expired.' }); return; }
+        room.locked = input.locked; changed(room);
+        reply(response, 200, snapshot(room));
         return;
       }
       if (action === 'answer' && request.method === 'GET') {
         if (!authorized(request, room.hostToken)) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
-        if (room.answer) { reply(response, 200, { answer: room.answer }); return; }
-        if (url.searchParams.get('wait') !== '1') { reply(response, 202, { joining: !!room.guestToken, expiresAt: room.expiresAt }); return; }
+        if (room.used) room.expiresAt = now() + NEGOTIATION_MS;
+        const after = url.searchParams.get('after');
+        if (after !== null ? Number(after) !== room.version : room.members.some(member => member?.answer)) { reply(response, 200, snapshot(room)); return; }
+        if (url.searchParams.get('wait') !== '1') { reply(response, 202, snapshot(room)); return; }
         if (room.waiter) { reply(response, 409, { error: 'Game setup is already being checked.' }); return; }
         const finish = (status, value) => { clearTimeout(timeout); room.waiter = null; reply(response, status, value); };
-        const timeout = setTimeout(() => finish(202, { joining: !!room.guestToken, expiresAt: room.expiresAt }), 15000);
+        const timeout = setTimeout(() => finish(202, snapshot(room)), 15000);
         room.waiter = finish;
         response.on('close', () => { clearTimeout(timeout); if (room.waiter === finish) room.waiter = null; });
         return;
       }
       if (!action && request.method === 'DELETE') {
-        if (!authorized(request, room.hostToken) && !authorized(request, room.guestToken)) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
-        remove(code);
+        if (authorized(request, room.hostToken)) remove(code);
+        else {
+          const index = room.members.findIndex(member => member && authorized(request, member.token));
+          if (index < 0) { reply(response, 403, { error: 'Invalid setup owner.' }); return; }
+          room.members[index] = null; room.offers[index] = null; changed(room);
+        }
         reply(response, 200, { ok: true });
         return;
       }
@@ -159,12 +206,12 @@ export function createSignallingServer({ now = Date.now, maxRooms = 500, createL
 
 async function testServer() {
   const { RoomSetup, PROTOCOL } = await import('./net.js');
-  assert.equal(PROTOCOL, 4, 'Room validation matches the client protocol');
+  assert.equal(PROTOCOL, 5, 'Room validation matches the client protocol');
   let clock = 1000;
   const server = createSignallingServer({ now: () => clock });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const signal = gzipSync(JSON.stringify({ v: 4, sdp: 'v=0\r\na=ice-ufrag:local\r\n' })).toString('base64url');
+  const signal = gzipSync(JSON.stringify({ v: 5, sdp: 'v=0\r\na=ice-ufrag:local\r\n' })).toString('base64url');
   const call = async (path, method = 'GET', value = null, token = null) => {
     const response = await fetch(base + path, { method, headers: { ...(value ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: value ? JSON.stringify(value) : undefined });
     return { status: response.status, value: await response.json() };
@@ -211,7 +258,41 @@ async function testServer() {
     await host.close();
     await guest.close();
     assert.equal((await call(`/signal/rooms/${code}/join`, 'POST', {})).status, 404, 'Claimed setup is deleted after connection setup');
-    console.log('Signalling tests passed: eight-digit codes, ten-minute unused expiry, ownership, single guest, answer exchange, deletion and origin checks.');
+    for (const capacity of [2, 3, 4, 8]) {
+      const multi = await call('/signal/rooms', 'POST', { offers: Array(capacity - 1).fill(signal) });
+      assert.equal(multi.status, 201, `Create a ${capacity}-player room`);
+      const multiPath = `/signal/rooms/${multi.value.code}`;
+      const joinedSlots = [];
+      for (let index = 1; index < capacity; index++) {
+        const member = await call(multiPath + '/join', 'POST', {});
+        assert.equal(member.status, 200);
+        joinedSlots.push(member.value.slot);
+      }
+      assert.deepEqual(joinedSlots, Array.from({ length: capacity - 1 }, (_, index) => index + 1), 'Each guest reserves a different map slot');
+      assert.equal((await call(multiPath + '/join', 'POST', {})).status, 409, 'A full map rejects another player');
+      await call(multiPath, 'DELETE', null, multi.value.token);
+    }
+    const shared = await call('/signal/rooms', 'POST', { offers: [signal, signal] });
+    const sharedPath = `/signal/rooms/${shared.value.code}`;
+    const reservations = await Promise.all([call(sharedPath + '/join', 'POST', {}), call(sharedPath + '/join', 'POST', {})]);
+    assert.deepEqual(reservations.map(result => result.value.slot).sort(), [1, 2], 'Concurrent joins cannot claim the same slot');
+    const departed = reservations[0].value;
+    assert.equal((await call(sharedPath, 'DELETE', null, departed.token)).status, 200);
+    const live = await call(sharedPath + '/answer?after=-1', 'GET', null, shared.value.token);
+    assert.equal(live.value.members.length, 1, 'A guest leaving preserves the room and other guests');
+    assert.deepEqual(live.value.unavailable, [departed.slot], 'A consumed offer is not reused');
+    assert.equal((await call(sharedPath + '/offer', 'POST', { slot: departed.slot, offer: signal }, reservations[1].value.token)).status, 403);
+    assert.equal((await call(sharedPath + '/offer', 'POST', { slot: departed.slot, offer: signal }, shared.value.token)).status, 200);
+    assert.equal((await call(sharedPath + '/lock', 'POST', { locked: true }, shared.value.token)).value.locked, true);
+    assert.equal((await call(sharedPath + '/join', 'POST', {})).status, 409, 'Countdown seals admissions atomically');
+    await call(sharedPath + '/lock', 'POST', { locked: false }, shared.value.token);
+    const replacement = await call(sharedPath + '/join', 'POST', {});
+    assert.equal(replacement.value.slot, departed.slot, 'A fresh connection offer reopens a departed slot');
+    assert.notEqual(replacement.value.id, departed.id);
+    assert.equal((await call(sharedPath + '/answer', 'POST', { answer: signal }, departed.token)).status, 403, 'A departed token cannot affect the replacement');
+    assert.equal((await call(sharedPath + '/offer', 'POST', { slot: departed.slot, member: departed.id, offer: signal }, shared.value.token)).status, 409, 'Late cleanup cannot evict a replacement player');
+    await call(sharedPath, 'DELETE', null, shared.value.token);
+    console.log('Signalling tests passed: eight-digit codes, expiry, ownership, map-capacity reservations, answer exchange, deletion and origin checks.');
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
 
