@@ -453,6 +453,7 @@
   #campaign-code-status.err { color: #f87171; }
   @media (max-width: 480px) { #campaign-code-tools { grid-template-columns: minmax(0, 1fr); } }
   #campaign-missions { border: 0; padding: 0; margin: 0; min-width: 0; }
+  #campaign-missions .campaign-episode { margin: 18px 8px 6px; font-size: 14px; color: #aeb8bf; }
   #campaign-missions legend { position: absolute; width: 1px; height: 1px; overflow: hidden; }
   #campaign-missions .mission-row { display: flex; align-items: center; gap: 12px; padding: 12px 8px; margin: 0; border-bottom: 1px solid #30383c; cursor: pointer; min-height: 28px; }
   #campaign-missions .mission-row:has(input:checked) { background: #25333a; box-shadow: inset 3px 0 #e2bd73; }
@@ -649,14 +650,15 @@
       <button id="mode-campaign" type="button" role="tab" aria-selected="false"><i data-lucide="book-open"></i>Campaign</button>
     </div>
     <div id="campaign-setup" hidden>
-      <h2>Terran Campaign</h2>
-      <div id="campaign-progress"><span>0 of 10 completed</span><progress max="10" value="0" aria-label="Campaign progress"></progress></div>
+      <h2>Campaign</h2>
+      <div id="campaign-progress"><span>0 of 11 completed</span><progress max="11" value="0" aria-label="Campaign progress"></progress></div>
       <div id="campaign-code-tools">
         <div><label for="campaign-code">Progress Code</label><div class="campaign-code-row"><input id="campaign-code" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Current campaign progress code"><button id="campaign-code-copy" type="button" title="Copy progress code" aria-label="Copy progress code"><i data-lucide="copy"></i></button></div></div>
         <div><label for="campaign-code-input">Resume Code</label><div class="campaign-code-row"><input id="campaign-code-input" type="text" maxlength="12" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="Six-character campaign resume code" placeholder="000000"><button id="campaign-code-apply" type="button" disabled><i data-lucide="log-in"></i>Apply</button></div></div>
         <div id="campaign-code-status" role="status" aria-live="polite"></div>
       </div>
       <select id="mission-select" hidden aria-label="Mission">
+        <optgroup label="Terran Campaign">
         <option value="terran01">1. Wasteland</option>
         <option value="terran02">2. Backwater Station</option>
         <option value="terran03">3. Desperate Alliance</option>
@@ -667,6 +669,10 @@
         <option value="terran08">8. The Big Push</option>
         <option value="terran09">9. New Gettysburg</option>
         <option value="terran10">10. The Hammer Falls</option>
+        </optgroup>
+        <optgroup label="Zerg Campaign">
+          <option value="zerg01">1. Among the Ruins</option>
+        </optgroup>
       </select>
       <div id="campaign-launch">
         <div id="campaign-launch-info"><strong id="campaign-selected-name">1. Wasteland</strong><div id="mission-size" role="status" aria-live="polite"></div></div>

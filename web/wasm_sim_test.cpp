@@ -1792,6 +1792,128 @@ static void hammer_mission_cases(data_loading::data_files_loader<>& load_data_fi
 	}
 }
 
+static void among_ruins_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 0;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		int opening_budget = 64;
+		for (const auto& action : st.game->triggers.at(1).actions) if (action.type == 4 || action.type == 7) {
+			int duration = action.type == 7 ? functions.trigger_transmission_duration(action) : action.time_n;
+			opening_budget += (std::max(42, duration) + 41) / 42 + 3;
+		}
+		for (int tick = 0; tick != opening_budget; ++tick) functions.next_frame();
+		if (scenario == 7) {
+			for (unit_t* worker : ptr(st.player_units[3])) if (functions.unit_is(worker, UnitTypes::Zerg_Drone)) {
+				unit_t* mineral = functions.find_nearest_unit(worker, functions.map_bounds(), [&](unit_t* unit) { return functions.unit_is_mineral_field(unit) && functions.is_reachable(worker, unit); });
+				require(mineral, "original Drone has reachable original minerals");
+				functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToMinerals), mineral);
+			}
+			for (int tick = 0; tick != 6000 && st.current_minerals[3] < 500; ++tick) functions.next_frame();
+			require(st.current_minerals[3] >= 500 && st.total_minerals_gathered[3] >= 300, "original Drones gather actual minerals for Zerg construction");
+			auto build_paid = [&](UnitTypes id) -> unit_t* {
+				unit_t* worker = nullptr;
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && !functions.unit_dying(unit)) { worker = unit; break; }
+				require(worker, "paid Zerg construction consumes an existing Drone");
+				const auto* type = functions.get_unit_type(id);
+				const auto* order = functions.get_order_type(Orders::DroneStartBuild);
+				require(functions.unit_build_order_valid(worker, order, type, 3), "original mission permits this Drone construction order");
+				bool placed = false;
+				xy selected_position{};
+				int selected_distance = 0x7fffffff;
+				for (int vertical = 1; vertical < 64; ++vertical) for (int horizontal = 1; horizontal < 64; ++horizontal) {
+					xy position = xy(horizontal * 32, vertical * 32) + type->placement_size / 2;
+					if (!functions.is_reachable(worker->sprite->position, position - xy(0, 7)) || !functions.can_place_building(worker, 3, type, position, false, false)) continue;
+					int distance = functions.xy_length(position - worker->sprite->position);
+					if (distance < selected_distance) { selected_position = position; selected_distance = distance; placed = true; }
+				}
+				require(placed, "original creep or geyser supports legal native placement");
+				functions.place_building(worker, order, type, selected_position);
+				for (int tick = 0; tick != 3000; ++tick) {
+					functions.next_frame();
+					for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, id) && functions.u_completed(unit)) return unit;
+				}
+				return nullptr;
+			};
+			require(build_paid(UnitTypes::Zerg_Spawning_Pool), "Drone completes a paid native Spawning Pool on original creep");
+			unit_t* extractor = build_paid(UnitTypes::Zerg_Extractor);
+			require(extractor, "Drone completes a paid native Extractor on an original geyser");
+			require(functions.campaign_ai_produce(3, functions.get_unit_type(UnitTypes::Zerg_Drone)), "native Larva production pays for a replacement Drone");
+			unit_t* worker = nullptr;
+			for (int tick = 0; tick != 1200 && !worker; ++tick) {
+				functions.next_frame();
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && functions.u_completed(unit)) worker = unit;
+			}
+			require(worker, "replacement Drone hatches through native morphing");
+			functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToGas), extractor);
+			for (int tick = 0; tick != 3600 && st.current_gas[3] < 75; ++tick) functions.next_frame();
+			require(st.current_gas[3] >= 75, "Drone gathers actual Extractor gas for the Den and Hydralisk");
+			require(build_paid(UnitTypes::Zerg_Hydralisk_Den), "Drone completes a paid native Hydralisk Den");
+			require(functions.campaign_ai_produce(3, functions.get_unit_type(UnitTypes::Zerg_Hydralisk)), "native Larva production respects Hydralisk prerequisites and costs");
+			for (int tick = 0; tick != 1200 && !st.completed_unit_counts[3][UnitTypes::Zerg_Hydralisk]; ++tick) functions.next_frame();
+			require(st.completed_unit_counts[3][UnitTypes::Zerg_Hydralisk] > 0 && !st.players[3].victory_state, "a paid native Hydralisk hatches without substituting for enemy-building clearance");
+			printf("Among the Ruins native mineral/gas economy, Drone construction and Hydralisk production passed.\n");
+			continue;
+		}
+		auto create_building = [&](UnitTypes id) -> unit_t* {
+			const auto* type = functions.get_unit_type(id);
+			for (int vertical = 1; vertical < 64; ++vertical) for (int horizontal = 1; horizontal < 64; ++horizontal) {
+				xy position = xy(horizontal * 32, vertical * 32) + type->placement_size / 2;
+				if (functions.can_place_building(nullptr, 3, type, position, false, false)) return functions.trigger_create_unit(type, position, 3);
+			}
+			return nullptr;
+		};
+		if (scenario == 1 || scenario == 3 || scenario == 4) require(create_building(UnitTypes::Zerg_Spawning_Pool), "original objective fixture has a native Spawning Pool");
+		if (scenario == 2 || scenario == 3 || scenario == 4) require(create_building(UnitTypes::Zerg_Hydralisk_Den), "original objective fixture has a native Hydralisk Den");
+		if (scenario >= 1 && scenario <= 3) {
+			a_vector<unit_t*> buildings;
+			for (unit_t* unit : ptr(st.player_units[5])) if (functions.ut_building(unit)) buildings.push_back(unit);
+			for (unit_t* unit : buildings) functions.kill_unit(unit);
+		}
+		if (scenario == 5) {
+			a_vector<unit_t*> humans;
+			for (unit_t* unit : ptr(st.player_units[3])) humans.push_back(unit);
+			for (unit_t* unit : humans) functions.kill_unit(unit);
+		}
+		if (scenario == 6) {
+			int activation = 180 * 16;
+			while (st.current_frame < activation - 32) functions.next_frame();
+			require(!st.campaign_ai[5].town_active, "Zer1 does not start before the authored 180-second condition");
+			for (int tick = 0; tick != 128 && !st.campaign_ai[5].town_active; ++tick) functions.next_frame();
+			require(st.campaign_ai[5].town_active, "original trigger starts the original Zer1 town program");
+			for (int tick = 0; tick != 32; ++tick) functions.next_frame();
+			require(st.campaign_ai[5].build_requests[UnitTypes::Terran_Command_Center].first == 1 && st.campaign_ai[5].maximum_force == 500, "original enemy construction and force settings are interpreted without replacement AI");
+			bool combat = false;
+			for (int tick = 0; tick != 11000 && !combat; ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) { unit->hp = unit->unit_type->hitpoints; unit->defensive_matrix_hp = fp8::integer(1000); unit->defensive_matrix_timer = 100; }
+				functions.next_frame();
+				for (unit_t* unit : ptr(st.player_units[5])) {
+					const unit_t* gun = functions.unit_attacking_unit(unit);
+					if (gun->order_target.unit && gun->order_target.unit->owner == 3 && (gun->ground_weapon_cooldown || gun->air_weapon_cooldown)) combat = true;
+				}
+			}
+			require(combat && !st.players[3].victory_state, "original Zer1 forces reach native weapon combat without inventing victory or waves");
+			printf("Among the Ruins authored AI activation and native combat passed.\n");
+			continue;
+		}
+		for (int tick = 0; tick != 160 && !st.players[3].victory_state; ++tick) functions.next_frame();
+		if (scenario == 3) require(st.players[3].victory_state >= 3, "original victory requires enemy buildings cleared plus both Zerg tech structures");
+		else if (scenario == 5) require(st.players[3].victory_state == 2, "original whole-human-force loss reaches defeat");
+		else require(!st.players[3].victory_state, "each missing original objective prevents victory");
+		printf("Among the Ruins original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -1808,6 +1930,7 @@ int main(int argc, char** argv) {
 	bool big_push = campaign && argc > 4 && !strcmp(argv[4], "terran08");
 	bool gettysburg = campaign && argc > 4 && !strcmp(argv[4], "terran09");
 	bool hammer = campaign && argc > 4 && !strcmp(argv[4], "terran10");
+	bool among_ruins = campaign && argc > 4 && !strcmp(argv[4], "zerg01");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -1823,6 +1946,19 @@ int main(int argc, char** argv) {
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
 		if (combat_ai) { shared_combat_ai_checks(player.st()); return 0; }
+		if (among_ruins) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg, "Among the Ruins preserves original human Zerg slot three");
+			require(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 12 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 1, "Among the Ruins preserves original Zerg starting forces");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 200 && st.current_gas[3] == 0, "Among the Ruins original opening grants two hundred minerals and no gas");
+			require(!st.players[3].victory_state && !st.campaign_ai[5].town_active, "initial idle state neither wins nor bypasses the enemy AI activation deadline");
+			printf("Among the Ruins original Zerg initialization passed.\n");
+			among_ruins_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		if (hammer) {
 			player.st().strict_triggers = true;
 			state_functions functions(player.st());

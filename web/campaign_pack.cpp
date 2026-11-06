@@ -139,9 +139,10 @@ static void write_output(const char* path, const a_vector<uint8_t>& bytes) {
 }
 
 int main(int argc, char** argv) {
-	if (argc != 4) error("usage: campaign-pack SOURCE terran01 OUTPUT");
+	if (argc != 4) error("usage: campaign-pack SOURCE MISSION OUTPUT");
 	a_string mission = argv[2];
-	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "terran09" && mission != "terran11" && mission != "terran12" && mission != "--ai-script") error("unsupported preparation request");
+	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "terran09" && mission != "terran11" && mission != "terran12" && mission != "zerg01" && mission != "--ai-script") error("unsupported preparation request");
+	a_string mission_root = "campaign\\" + a_string(mission.compare(0, 4, "zerg") == 0 ? "zerg" : "terran") + "\\" + mission + "\\";
 	embedded_mpq_reader source(argv[1]);
 	paged_reader<embedded_mpq_reader> reader(source);
 	auto archive = make_mpq_archive_reader(reader);
@@ -151,7 +152,7 @@ int main(int argc, char** argv) {
 	}
 	auto extract = [&](const a_string& path) {
 		a_string resolved = path;
-		if (!archive.file_exists(resolved)) resolved = "campaign\\terran\\" + mission + "\\" + path;
+		if (!archive.file_exists(resolved)) resolved = mission_root + path;
 		auto entry = archive.open(resolved);
 		if (entry.size() > 16 * 1024 * 1024) error("mission dependency size limit exceeded");
 		a_vector<uint8_t> bytes(entry.size());
@@ -164,7 +165,7 @@ int main(int argc, char** argv) {
 		printf("Extracted %zu AI-script bytes\n", bytes.size());
 		return 0;
 	}
-	auto scenario = extract("campaign\\terran\\" + mission + "\\staredit\\scenario.chk");
+	auto scenario = extract(mission_root + "staredit\\scenario.chk");
 	a_vector<mission_file> files;
 	files.push_back({"staredit\\scenario.chk", scenario});
 	a_vector<uint8_t> strings;

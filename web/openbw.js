@@ -2341,7 +2341,7 @@ const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
 const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignProgress() {
@@ -2428,7 +2428,13 @@ function renderCampaignSelection() {
   const progress = campaignProgress(), completed = progress.completed;
   const list = $('campaign-missions');
   if (!list.querySelector('input')) {
+    let chapter = '';
     for (const option of $('mission-select').options) {
+      const label = option.parentElement.label || '';
+      if (label && label !== chapter) {
+        const heading = document.createElement('h3'); heading.className = 'campaign-episode'; heading.textContent = label;
+        list.append(heading); chapter = label;
+      }
       const row = document.createElement('label');
       row.className = 'mission-row';
       const radio = document.createElement('input');
@@ -2454,7 +2460,8 @@ function renderCampaignSelection() {
   $('campaign-tools').hidden = campaignDebug;
   $('campaign-code-tools').hidden = campaignDebug;
   $('campaign-code').value = campaignProgressCode(campaignSequentialProgress(progress));
-  $('campaign-progress').querySelector('span').textContent = `${cleared} of 10 completed${completed.length > cleared ? ` - ${completed.length - cleared} later victories recorded` : ''}`;
+  $('campaign-progress').querySelector('span').textContent = `${cleared} of ${campaignMissionIds.length} completed${completed.length > cleared ? ` - ${completed.length - cleared} later victories recorded` : ''}`;
+  $('campaign-progress').querySelector('progress').max = campaignMissionIds.length;
   $('campaign-progress').querySelector('progress').value = cleared;
 }
 function campaignAddress(mission, resume = null, fresh = false) {

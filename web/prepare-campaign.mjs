@@ -17,6 +17,7 @@ const missions = {
   terran08: { title: 'The Big Push', order: 8, source: 'terran09', scenarioHash: '083be62ec869ddf049f816eaf873355c57381b869581717234f3499b39ab23c7', units: 281, triggers: 13, sounds: 15 },
   terran09: { title: 'New Gettysburg', order: 9, source: 'terran11', scenarioHash: '1b55e907af8c4c5c6c5e0adcc775b8fe82e263d7afb9eba70ded40d11d5e412c', units: 255, triggers: 11, sounds: 22 },
   terran10: { title: 'The Hammer Falls', order: 10, source: 'terran12', scenarioHash: '2a3efca711b5a75ffd0ea569802fe0bd4dbfcfbfa0b0f308d897c0dca698fd7d', units: 331, triggers: 7, sounds: 14 },
+  zerg01: { title: 'Among the Ruins', episode: 2, order: 1, scenarioHash: 'f4794b4f8fc90f6ea9c4a585faa2c0a1de25450311256c7329a288d4dcd826ad', units: 101, triggers: 13, sounds: 15 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
@@ -446,7 +447,7 @@ export async function prepare(missionId = 'terran01') {
       return { path, bytes: content.length, sha256: sha256(content), ...(path.endsWith('.wav') ? { audio: waveMetadata(content) } : {}) };
     });
     const requirements = [...audit.gameplay.conditions.map(type => `condition.${type}`), ...audit.gameplay.actions.map(type => `action.${type}`), ...audit.briefing.actions.map(type => `briefing.${type}`)];
-    const manifest = { schemaVersion: 1, contentVersion: 1, id: missionId, episode: 1, order: mission.order, title: mission.title, humanSlot, race, sourceChkSha256: mission.scenarioHash, pack: { url: `data/campaign/${missionId}.mpq`, bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
+    const manifest = { schemaVersion: 1, contentVersion: 1, id: missionId, episode: mission.episode ?? 1, order: mission.order, title: mission.title, humanSlot, race, sourceChkSha256: mission.scenarioHash, pack: { url: `data/campaign/${missionId}.mpq`, bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
     writeFileSync(manifestTemporary, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(resolve(directory, `${missionId}.audit.json`), `${JSON.stringify(audit, null, 2)}\n`);
     renameSync(temporary, resolve(directory, `${missionId}.mpq`));

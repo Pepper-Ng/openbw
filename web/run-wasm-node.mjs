@@ -187,7 +187,7 @@ if (process.argv[2] === '--test-campaign-menu') {
   const progressFunctions = ['cyrb53', 'saveCampaignProgress', 'campaignSequentialProgress', 'campaignProgressCode', 'campaignDecodeCode', 'campaignApplyCode'].map(name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0]);
   assert.ok(progress && unlocked, 'Actual campaign progress functions exist');
   assert.ok(progressFunctions.every(Boolean), 'Actual portable progress functions exist');
-  const ids = Array.from({ length: 10 }, (value, index) => `terran${String(index + 1).padStart(2, '0')}`);
+  const ids = new Function(`return ${source.match(/const campaignMissionIds = (\[[^\n]+\]);/)[1]};`)();
   const stored = new Map();
   const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
   const functions = (debug, missionIds = ids) => new Function('localStorage', 'campaignMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', 'campaignCodeLimit', `${progress}\n${unlocked}\n${progressFunctions.join('\n')}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked, code: campaignProgressCode, decode: campaignDecodeCode, apply: campaignApplyCode, sequential: campaignSequentialProgress, save: saveCampaignProgress };`)(localStorage, missionIds, 'v2', 'v1', debug, 70);
@@ -206,6 +206,10 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(JSON.stringify([...stored]), beforeDebug, 'Debug unlocking does not write progress');
   stored.set('v2', '{invalid');
   assert.deepEqual(ids.filter(normal.unlocked), ids.slice(0, 1), 'Corrupt new progress cannot resurrect old win records');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 9).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg01'), false, 'Zerg continuation cannot bypass the final Terran victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 10).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg01'), true, 'Completing the Terran campaign unlocks the first Zerg mission');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -227,7 +231,7 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(JSON.stringify([...stored]), ahead);
   assert.equal(normal.apply(codes[70]), true);
   assert.equal(normal.sequential(), 70, 'Future campaign progress survives with only ten missions currently implemented');
-  const expanded = functions(false, ids.concat(Array.from({ length: 60 }, (_, index) => 'future-' + index)));
+  const expanded = functions(false, ids.concat(Array.from({ length: 70 - ids.length }, (_, index) => 'future-' + index)));
   assert.equal(expanded.sequential(), 70, 'The same portable prefix survives expansion of the mission catalogue');
   assert.equal(expanded.progress().completed.length, 70);
   normal.save(normal.progress());
@@ -250,7 +254,7 @@ if (process.argv[2] === '--test-campaign-menu') {
 const recoveryTest = process.argv[2] === '--test-campaign-save';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01'].includes(missionId), 'Unsupported test mission');
 const out = campaign || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -496,6 +500,18 @@ function testCampaign() {
     assert.ok(units.some(unit => unit[1] === 'Ion Cannon' && unit[2] === '6'), 'Original Ion Cannon retains its enemy owner');
     assert.equal(x.openbw_mission_countdown(), -1, 'The Hammer Falls has no survival countdown');
     console.log('The Hammer Falls initialization checks passed.');
+  } else if (missionId === 'zerg01') {
+    assert.equal(mission.episode, 2);
+    assert.equal(mission.race, 0, 'Original mission uses Zerg, not a Terran UI substitution');
+    assert.equal(mission.humanSlot, 3, 'Preserve the original Zerg human slot');
+    assert.equal(human.filter(unit => unit[1] === 'Drone').length, 2);
+    assert.equal(human.filter(unit => unit[1] === 'Zergling').length, 12);
+    assert.equal(human.filter(unit => unit[1] === 'Overlord').length, 1);
+    assert.equal(human.filter(unit => unit[1] === 'Hatchery').length, 1);
+    assert.ok(human.some(unit => unit[1] === 'Larva'), 'Original Hatchery supplies native Larva');
+    assert.ok(human.some(unit => unit[1].includes('Beacon')), 'Original Zerg beacon remains present');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Among the Ruins has no survival countdown');
+    console.log('Among the Ruins original Zerg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -517,7 +533,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200}[missionId], 'Preserve original mission minerals');
   if (missionId === 'terran08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Big Push trigger grants 100 gas');
   if (missionId === 'terran09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original New Gettysburg trigger grants 150 gas');
   if (missionId === 'terran10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original Hammer Falls trigger grants 150 gas');
@@ -690,6 +706,26 @@ function testCampaign() {
       assert.match(read(x.openbw_card()), new RegExp(`\\t${label}\\t`), 'Hero cloak card follows native cloak/decloak state');
     }
     console.log('Revolution normal hero rescue and cloak controls passed.');
+  }
+  if (missionId === 'zerg01') {
+    const hatchery = human.find(unit => unit[1] === 'Hatchery');
+    x.openbw_debug_select(Number(hatchery[0]), 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tSelect Larva\t/, 'Native Zerg Hatchery card selects Larva');
+    const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => Number(unit[2]) === mission.humanSlot && unit[1] === 'Larva');
+    assert.ok(larva);
+    x.openbw_debug_select(Number(larva[0]), 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tDrone\t/, 'Larva exposes native Drone morph');
+    x.openbw_out_clear(); x.openbw_key(1, 100, 0); x.openbw_key(0, 100, 0);
+    x.openbw_render(0);
+    const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(output.length > 0, 'Drone morph uses the normal synchronized command stream');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+    x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    const after = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+    assert.equal(after.filter(unit => Number(unit[2]) === mission.humanSlot && unit[1] === 'Drone').length, 3, 'A native Larva becomes the third Drone');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 150, 'Native Drone morph pays fifty minerals');
+    console.log('Among the Ruins native Hatchery/Larva controls and paid Drone morph passed.');
   }
   if (missionId === 'terran01') {
     x.openbw_debug_select(Number(human.find(unit => unit[1] === 'SCV')[0]), 0);
