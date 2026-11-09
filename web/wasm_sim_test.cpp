@@ -3390,6 +3390,84 @@ static void into_darkness_mission_cases(data_loading::data_files_loader<>& load_
 	}
 }
 
+static void homeland_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 1200; ++tick) step();
+		unit_t* heroes[3]{};
+		UnitTypes hero_types[] = {UnitTypes::Hero_Fenix_Dragoon, UnitTypes::Hero_Tassadar, UnitTypes::Hero_Zeratul};
+		for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) for (int index = 0; index != 3; ++index) if (functions.unit_is(unit, hero_types[index])) heroes[index] = unit;
+		unit_t* escort = nullptr;
+		for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) escort = unit;
+		require(heroes[0] && heroes[1] && heroes[2] && escort && !st.scripted_pause && !st.trigger_switches[0], "Homeland finishes its original introduction with all three original heroes and both enemy Nexus forces intact");
+		if (scenario < 4) {
+			if (scenario == 0) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			} else functions.kill_unit(heroes[scenario - 1]);
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original human-force or any required Fenix/Tassadar/Zeratul loss reaches Homeland defeat");
+		} else {
+			for (unit_t* hero : heroes) {
+				unit_id original_id = functions.get_unit_id(hero);
+				if (hero->owner != 7) {
+					functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {hero->sprite->position, nullptr});
+					for (int tick = 0; tick != 3000 && hero->owner != 7; ++tick) step();
+				}
+				require(functions.get_unit(original_id) == hero && hero->owner == 7, "normal original-army movement naturally rescues the same Homeland hero without an ownership grant");
+				functions.set_unit_order(hero, functions.get_order_type(Orders::HoldPosition));
+			}
+			if (scenario == 7) {
+				a_vector<unit_id> originals;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Dark_Templar)) originals.push_back(functions.get_unit_id(unit));
+				for (unit_id id : originals) {
+					unit_t* templar = functions.get_unit(id);
+					functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {templar->sprite->position, nullptr});
+					for (int tick = 0; tick != 1000 && templar->owner != 7; ++tick) step();
+					require(functions.get_unit(id) == templar && templar->owner == 7 && functions.u_cloaked(templar), "native rescue retains each original classic Dark Templar and its permanent cloak");
+				}
+				for (int tick = 0; tick != 96; ++tick) step();
+				require(st.unit_counts[7][UnitTypes::Hero_Dark_Templar] == 4 && !st.unit_counts[1][UnitTypes::Hero_Dark_Templar] && !st.players[7].victory_state && !st.trigger_switches[0], "all original hero and Dark Templar rescues preserve their identities without bypassing the Conclave objective");
+			} else {
+				int owner = scenario == 4 ? 4 : 0;
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus) && !functions.unit_dying(unit)) victims.push_back(unit);
+				require(victims.size() == size_t(owner == 4 ? 1 : 2), "original enemy Nexus counts supply both source ending gates");
+				int carriers_before = st.unit_counts[0][UnitTypes::Protoss_Carrier], shuttles_before = st.unit_counts[0][UnitTypes::Protoss_Shuttle];
+				if (scenario == 6) victims.resize(1);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				bool ending_paused = false;
+				for (int tick = 0; tick != 5000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+				if (scenario == 6) require(!ending_paused && !st.trigger_switches[0] && !st.players[7].victory_state && st.unit_counts[0][UnitTypes::Protoss_Nexus] > 0 && st.unit_counts[4][UnitTypes::Protoss_Nexus] > 0, "one destroyed Nexus cannot end Homeland while both enemy forces still own a Nexus");
+				else {
+					require(ending_paused && st.trigger_switches[0] && st.players[7].victory_state >= 3 && st.unit_counts[owner == 4 ? 0 : 4][UnitTypes::Protoss_Nexus] > 0 && st.building_counts[0] + st.building_counts[4] > 0, "either original enemy force losing all its Nexuses runs the original surrender ending and victory without requiring all buildings or both forces to be destroyed");
+					require(st.unit_counts[0][UnitTypes::Protoss_Carrier] >= carriers_before + 2 && st.unit_counts[0][UnitTypes::Protoss_Shuttle] >= shuttles_before + 1, "the original ending creates its two Carriers and Shuttle for the Conclave");
+					const auto& camera = st.locations.at(2).area;
+					require((camera.from + camera.to) / 2 == heroes[1]->sprite->position, "the original ending moves its location onto the naturally rescued Tassadar");
+				}
+			}
+		}
+		printf("Homeland original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3422,6 +3500,7 @@ int main(int argc, char** argv) {
 	bool hunt_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss04");
 	bool choosing_sides = campaign && argc > 4 && !strcmp(argv[4], "protoss05");
 	bool into_darkness = campaign && argc > 4 && !strcmp(argv[4], "protoss06");
+	bool homeland = campaign && argc > 4 && !strcmp(argv[4], "protoss07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3438,6 +3517,40 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (homeland) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 2 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 8 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 4 && st.unit_counts[7][UnitTypes::Protoss_Scout] == 1 && st.unit_counts[7][UnitTypes::Protoss_Observer] == 1 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Pylon] == 10, "Homeland retains its original human slot, full Protoss base and starting ground/air force");
+			for (UnitTypes hero : {UnitTypes::Hero_Fenix_Dragoon, UnitTypes::Hero_Tassadar, UnitTypes::Hero_Zeratul}) require(st.unit_counts[7][hero] + st.unit_counts[2][hero] == 1, "Homeland preserves the single original Fenix, Tassadar and Zeratul without substitutes");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			bool intro_paused = false;
+			for (int tick = 0; tick != 1200; ++tick) { functions.next_frame(); intro_paused = intro_paused || st.scripted_pause; }
+			require(intro_paused && !st.scripted_pause && st.current_minerals[7] == 2500 && st.current_gas[7] == 2500 && !st.countdown_active && !st.trigger_switches[0] && !st.players[7].victory_state, "Homeland runs its original paused introduction and preserves 2500 minerals/gas without an invented countdown or outcome");
+			require(st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 1 && st.campaign_ai[4].town_active && st.campaign_ai_scripts.size() == 3 && !st.campaign_ai[7].town_active && st.unit_counts[0][UnitTypes::Protoss_Nexus] == 2 && st.unit_counts[4][UnitTypes::Protoss_Nexus] == 1, "Homeland starts its three original main/area-town programs while retaining both Conclave forces and all three enemy Nexuses");
+			bool conclave_air_fire = false, shrine_ground_fire = false;
+			int combat_budget = 4002 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time + st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(conclave_air_fire && shrine_ground_fire); ++tick) {
+				for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 4}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 0 && functions.u_flying(unit)) conclave_air_fire = true;
+					if (owner == 4 && !functions.u_flying(unit)) shrine_ground_fire = true;
+				}
+			}
+			require(conclave_air_fire && shrine_ground_fire, "original Pro7 area-town air and Pr7S ground parties fire native weapons at authored waits and funding");
+			printf("Homeland original Conclave air and shrine ground attacks passed.\n");
+			homeland_mission_cases(load_data_file, map_file);
+			printf("Homeland original initialization passed.\n");
+			return 0;
+		}
 		if (into_darkness) {
 			auto& st = player.st();
 			state_functions functions(st);

@@ -257,6 +257,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('protoss06'), false, 'Into the Darkness requires Choosing Sides victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 25).map(id => [id, true])) }));
   assert.equal(normal.unlocked('protoss06'), true, 'Completing Choosing Sides unlocks Into the Darkness');
+  assert.equal(normal.unlocked('protoss07'), false, 'Homeland requires Into the Darkness victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 26).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('protoss07'), true, 'Completing Into the Darkness unlocks Homeland');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -302,7 +305,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -666,6 +669,14 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[2] === '5' && !unit[1].includes('Beacon')).length, 8, 'Keep all eight original classic Dark Templars under rescue ownership');
     assert.equal(x.openbw_mission_countdown(), -1, 'Into the Darkness has no invented countdown');
     console.log('Into the Darkness original indoor force and rescue ownership checks passed.');
+  } else if (missionId === 'protoss07') {
+    assert.equal(mission.episode, 3); assert.equal(mission.order, 7); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 7);
+    for (const [type, count] of [['Probe', 2], ['Zealot', 8], ['Dragoon', 4], ['Scout', 1], ['Observer', 1], ['Nexus', 1], ['Pylon', 10]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    for (const hero of ['Fenix', 'Tassadar', 'Zeratul']) assert.equal(units.filter(unit => unit[1].includes(hero)).length, 1, 'Keep each single original Homeland hero');
+    assert.equal(units.filter(unit => unit[1] === 'Nexus' && unit[2] === '0').length, 2, 'Original Conclave force keeps both Nexuses');
+    assert.equal(units.filter(unit => unit[1] === 'Nexus' && unit[2] === '4').length, 1, 'Original shrine force keeps its Nexus');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Homeland has no invented countdown');
+    console.log('Homeland original full base, heroes and Conclave Nexus checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -687,7 +698,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'protoss07') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 2500, 'Original Homeland grants 2500 gas');
   if (missionId === 'protoss06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Into the Darkness has no injected gas');
   if (missionId === 'protoss05') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Choosing Sides starts without gas');
   if (missionId === 'protoss04') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original mission-4 gas remains zero before rescue');
@@ -1080,7 +1092,7 @@ function testCampaign() {
     assert.equal(owned().filter(unit => unit[1] === 'Probe').length, 0, 'Rescue must not grant an invented worker');
     console.log('First Strike normal Fenix/Antioch rescue and original meeting dialogue passed.');
   }
-  if (['protoss01', 'protoss02', 'protoss03', 'protoss05'].includes(missionId)) {
+  if (['protoss01', 'protoss02', 'protoss03', 'protoss05', 'protoss07'].includes(missionId)) {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
     const nexus = owned().find(unit => unit[1] === 'Nexus');
     const initialProbes = owned().filter(unit => unit[1] === 'Probe').length;
@@ -1163,8 +1175,12 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 0, 'Control checks cannot inject minerals into the original mission');
     console.log(`${mission.title} native paid Storm and normal movement controls passed.`);
   }
-  if (missionId === 'protoss03') {
+  if (['protoss03', 'protoss07'].includes(missionId)) {
     const scout = human.find(unit => unit[1] === 'Scout');
+    if (missionId === 'protoss07') {
+      const current = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/), cameraX = Math.max(0, Math.min(Number(scout[3]) - 640, x.openbw_map_w() * 32 - 1280)), cameraY = Math.max(0, Math.min(Number(scout[4]) - 400, x.openbw_map_h() * 32 - 800));
+      x.openbw_pan(cameraX - Number(current[1]), cameraY - Number(current[2]));
+    }
     const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
     x.openbw_debug_select(Number(scout[0]), 0); x.openbw_render(0); x.openbw_out_clear();
     x.openbw_key(1, 109, 0); x.openbw_key(0, 109, 0); x.openbw_render(0);
@@ -1177,7 +1193,7 @@ function testCampaign() {
     for (let tick = 0; tick < 96; tick++) x.openbw_step();
     const moved = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === scout[0]);
     assert.ok(moved && Math.hypot(Number(moved[3]) - Number(scout[3]), Number(moved[4]) - Number(scout[4])) > 64, 'The same original Scout flies through native movement without teleportation');
-    console.log('Higher Ground original Scout normal flight passed.');
+    console.log(`${mission.title} original Scout normal flight passed.`);
   }
   if (['zerg09', 'zerg10'].includes(missionId)) {
     const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Larva' && unit[2] === '3');

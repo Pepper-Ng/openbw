@@ -33,6 +33,7 @@ const missions = {
   protoss04: { title: 'The Hunt for Tassadar', episode: 3, order: 4, scenarioHash: '9cf4f218e0b29b7e61743fd6383dab6c3aec4a5e12c6fade0b0fc37ae44c67b3', units: 201, triggers: 13, sounds: 21 },
   protoss05: { title: 'Choosing Sides', episode: 3, order: 5, scenarioHash: '0911c2cf8b484c266e26ed3c439cd917e0dc0cd9a7cb62985bc4800f7b64afe5', units: 257, triggers: 11, sounds: 13 },
   protoss06: { title: 'Into the Darkness', episode: 3, order: 6, scenarioHash: '30f0a374867c7b57cf51e5c445041020eebbe4a1fcbc074359a581a5bc5f5eee', units: 210, triggers: 23, sounds: 18 },
+  protoss07: { title: 'Homeland', episode: 3, order: 7, scenarioHash: 'a813922890e6eafe4feda27b591715c465e98e8ee40e3717b5c2b0735e403a83', units: 362, triggers: 10, sounds: 16 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
