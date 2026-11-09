@@ -3256,6 +3256,140 @@ static void choosing_sides_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void into_darkness_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 9; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* tassadar = nullptr;
+		unit_t* zealot = nullptr;
+		unit_t* zeratul = nullptr;
+		for (unit_t* unit : ptr(st.player_units[7])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Tassadar)) tassadar = unit;
+			if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) zealot = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Zeratul)) zeratul = unit;
+		require(tassadar && zealot && zeratul, "original Tassadar is naturally rescued while the same original Zeratul remains to be found");
+		auto location_center = [&](int location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto approach_location = [&](unit_t* unit, int location) {
+			xy destination = location_center(location);
+			functions.move_unit(unit, destination);
+			auto placement = functions.find_unit_placement(unit, destination, true);
+			require(placement.first, "native terrain supplies a legal isolated source-region approach");
+			functions.move_unit(unit, placement.second);
+			functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		};
+		if (scenario < 2) {
+			if (scenario == 0) functions.kill_unit(tassadar);
+			else {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			}
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original Tassadar or whole-human-force loss reaches Into the Darkness defeat");
+		} else if (scenario < 5) {
+			int door_location = scenario == 2 ? 1 : scenario == 3 ? 8 : 16;
+			unit_t* door = nullptr;
+			for (unit_t* unit : functions.find_units(st.locations.at(door_location - 1).area)) if (functions.unit_is_door(unit)) door = unit;
+			require(door && !functions.u_no_collide(door) && !functions.u_disabled(door), "the original auto/security/cell door begins physically closed");
+			approach_location(zealot, door_location);
+			if (scenario != 2) {
+				for (int tick = 0; tick != 160; ++tick) step();
+				require(!functions.u_no_collide(door) && !st.trigger_switches[scenario == 3 ? 1 : 5], "a locked original security door cannot open before its separate control trigger");
+				approach_location(zealot, scenario == 3 ? 28 : 30);
+			}
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(functions.u_no_collide(door) && functions.u_disabled(door), "the original auto/control trigger opens its native door even when its placement owner is unused");
+			if (scenario != 2) require(st.trigger_switches[scenario == 3 ? 1 : 5] && !st.unit_counts[7][UnitTypes::Special_Map_Revealer], "the original security control sets its authored switch and removes its temporary revealer");
+			require(!st.players[7].victory_state && zeratul->owner == 2, "opening original installation doors cannot bypass Zeratul rescue");
+		} else if (scenario == 5) {
+			approach_location(zealot, 17);
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(st.trigger_switches[3] && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 1 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && !st.players[7].victory_state, "the original field trigger creates exactly one Dragoon and two Zealots without an invented teleport or victory");
+		} else if (scenario == 6) {
+			unit_t* marine = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.is_in_bounds(unit->sprite->position, st.locations.at(33).area)) marine = unit;
+			require(marine, "original rescuable Terran squad supplies the native contact and ambush fixture");
+			unit_id marine_id = functions.get_unit_id(marine);
+			approach_location(zealot, 34);
+			for (int tick = 0; tick != 800 && marine->owner != 7; ++tick) step();
+			require(functions.get_unit(marine_id) == marine && marine->owner == 7, "normal proximity rescues the same original Marine without direct ownership changes");
+			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
+			int hydralisks_before = st.unit_counts[6][UnitTypes::Zerg_Hydralisk] + st.dead_unit_counts[6][UnitTypes::Zerg_Hydralisk];
+			int infested_before = st.unit_counts[6][UnitTypes::Zerg_Infested_Terran] + st.dead_unit_counts[6][UnitTypes::Zerg_Infested_Terran];
+			approach_location(marine, 11);
+			for (int tick = 0; tick != 1000 && st.unit_counts[6][UnitTypes::Zerg_Hydralisk] + st.dead_unit_counts[6][UnitTypes::Zerg_Hydralisk] < hydralisks_before + 3; ++tick) step();
+			require(st.unit_counts[6][UnitTypes::Zerg_Hydralisk] + st.dead_unit_counts[6][UnitTypes::Zerg_Hydralisk] == hydralisks_before + 3 && st.unit_counts[6][UnitTypes::Zerg_Infested_Terran] + st.dead_unit_counts[6][UnitTypes::Zerg_Infested_Terran] == infested_before + 1, "a rescued original Marine runs the first source dialogue and exact Hydralisk/Infested Terran ambush");
+			int zerglings_before = st.unit_counts[6][UnitTypes::Zerg_Zergling] + st.dead_unit_counts[6][UnitTypes::Zerg_Zergling];
+			infested_before = st.unit_counts[6][UnitTypes::Zerg_Infested_Terran] + st.dead_unit_counts[6][UnitTypes::Zerg_Infested_Terran];
+			approach_location(marine, 40);
+			for (int tick = 0; tick != 1000 && st.unit_counts[6][UnitTypes::Zerg_Zergling] + st.dead_unit_counts[6][UnitTypes::Zerg_Zergling] < zerglings_before + 8; ++tick) step();
+			require(st.unit_counts[6][UnitTypes::Zerg_Zergling] + st.dead_unit_counts[6][UnitTypes::Zerg_Zergling] == zerglings_before + 8 && st.unit_counts[6][UnitTypes::Zerg_Infested_Terran] + st.dead_unit_counts[6][UnitTypes::Zerg_Infested_Terran] == infested_before + 1 && !st.players[7].victory_state, "the second original Marine contact creates its exact eight Zerglings and one Infested Terran without inventing victory");
+		} else if (scenario == 7) {
+			unit_id zeratul_id = functions.get_unit_id(zeratul);
+			approach_location(zealot, 30);
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(st.trigger_switches[5], "the original cell control runs before the isolated final rescue approach");
+			xy destination = zeratul->sprite->position;
+			bool approach_found = false;
+			for (int offset_y = -192; offset_y <= 192 && !approach_found; offset_y += 16) for (int offset_x = -192; offset_x <= 192 && !approach_found; offset_x += 16) {
+				xy candidate = destination + xy(offset_x, offset_y);
+				if (functions.xy_length(candidate - destination) < 128 || !functions.unit_type_can_fit_at(zealot->unit_type, candidate) || !functions.is_reachable(zeratul, candidate)) continue;
+				functions.move_unit(zealot, candidate);
+				auto placement = functions.find_unit_placement(zealot, candidate, false);
+				if (!placement.first || functions.xy_length(placement.second - destination) < 128 || !functions.is_reachable(zeratul, placement.second)) continue;
+				functions.move_unit(zealot, placement.second);
+				approach_found = true;
+			}
+			require(approach_found, "native terrain and ground reachability supply a legal isolated cell approach outside rescue range");
+			functions.issue_order(zealot, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			bool ending_paused = false;
+			for (int tick = 0; tick != 6000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			zeratul = functions.get_unit(zeratul_id);
+			require(zeratul && zeratul->owner == 7 && ending_paused && st.players[7].victory_state >= 3 && st.unit_counts[7][UnitTypes::Hero_Tassadar] == 1 && st.non_building_counts[3] + st.non_building_counts[6] > 0, "native contact rescues the same original Zeratul and runs all original ending dialogue and victory with enemies remaining");
+		} else {
+			require(!st.campaign_ai[3].town_active && !st.campaign_ai[3].suicide && st.campaign_ai[3].attacking.empty(), "original placed Zerg troops begin without a town or an invented suicide assault");
+			approach_location(zealot, 29);
+			for (int tick = 0; tick != 800 && st.campaign_ai[3].attacking.empty(); ++tick) step();
+			require(!st.campaign_ai[3].town_active && !st.campaign_ai[3].attacking.empty() && !st.campaign_ai[7].town_active && !st.players[7].victory_state, "the original contact-triggered Suic orders placed Zerg troops into a native assault without inventing a town or victory");
+			require(st.campaign_ai_scripts.empty() && !st.campaign_ai[3].suicide, "the original two-instruction Suic program stops after dispatching its placed troops");
+			unit_t* distant = nullptr;
+			for (unit_id id : st.campaign_ai[3].attacking) {
+				unit_t* unit = functions.get_unit(id);
+				if (!unit || functions.unit_dying(unit)) continue;
+				bool near_human = false;
+				for (unit_t* target : ptr(st.player_units[7])) if (!functions.unit_dying(target) && functions.units_distance(unit, target) < 512) near_human = true;
+				if (!near_human) { distant = unit; break; }
+			}
+			require(distant, "an original distant assault member supplies the post-script retargeting check");
+			functions.set_unit_order(distant, functions.get_order_type(Orders::PlayerGuard));
+			distant->auto_target_unit = nullptr;
+			for (int tick = 0; tick != 16; ++tick) step();
+			require(distant->order_type->id == Orders::AttackMove && !st.campaign_ai[3].town_active && st.campaign_ai_scripts.empty(), "standalone attackers retain native strategic orders after Suic has stopped without running town economy");
+			unit_id removed_id = functions.get_unit_id(distant);
+			functions.kill_unit(distant);
+			for (int tick = 0; tick != 16; ++tick) step();
+			require(std::find(st.campaign_ai[3].attacking.begin(), st.campaign_ai[3].attacking.end(), removed_id) == st.campaign_ai[3].attacking.end() && !st.current_minerals[3] && !st.current_gas[3], "standalone assault cleanup removes dead native handles without granting resources");
+		}
+		printf("Into the Darkness original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3287,6 +3421,7 @@ int main(int argc, char** argv) {
 	bool higher_ground = campaign && argc > 4 && !strcmp(argv[4], "protoss03");
 	bool hunt_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss04");
 	bool choosing_sides = campaign && argc > 4 && !strcmp(argv[4], "protoss05");
+	bool into_darkness = campaign && argc > 4 && !strcmp(argv[4], "protoss06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3303,6 +3438,18 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (into_darkness) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 2 && !st.building_counts[7] && !st.unit_counts[7][UnitTypes::Protoss_Probe] && st.unit_counts[7][UnitTypes::Hero_Tassadar] + st.unit_counts[2][UnitTypes::Hero_Tassadar] == 1 && st.unit_counts[2][UnitTypes::Hero_Zeratul] == 1 && st.unit_counts[5][UnitTypes::Hero_Dark_Templar] == 8, "Into the Darkness retains its original field force, single heroes and rescuable classic Dark Templars without a base");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.unit_counts[7][UnitTypes::Hero_Tassadar] == 1 && !st.unit_counts[2][UnitTypes::Hero_Tassadar] && st.unit_counts[2][UnitTypes::Hero_Zeratul] == 1 && !st.current_minerals[7] && !st.current_gas[7] && !st.countdown_active && !st.players[7].victory_state && st.campaign_ai_scripts.empty() && !st.campaign_ai[7].town_active && !st.trigger_switches[1] && !st.trigger_switches[5], "Into the Darkness naturally rescues Tassadar but retains Zeratul, security switches, zero resources and dormant source suicide activation");
+			into_darkness_mission_cases(load_data_file, map_file);
+			printf("Into the Darkness original initialization passed.\n");
+			return 0;
+		}
 		if (choosing_sides) {
 			auto& st = player.st();
 			state_functions functions(st);

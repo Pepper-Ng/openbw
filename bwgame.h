@@ -19229,8 +19229,8 @@ struct state_functions {
 
 	void progress_campaign_ai_scripts() {
 		const auto& bytes = st.global->ai_script;
-		if (st.campaign_ai_scripts.empty()) return;
-		size_t table = data_loading::value_at<uint32_t, true>(bytes.data());
+		bool has_scripts = !st.campaign_ai_scripts.empty();
+		size_t table = has_scripts ? data_loading::value_at<uint32_t, true>(bytes.data()) : 0;
 		for (auto& script : st.campaign_ai_scripts) {
 			if (script.wait) { --script.wait; continue; }
 			auto& ai = st.campaign_ai.at(script.owner);
@@ -19400,7 +19400,15 @@ struct state_functions {
 			}
 		}
 		st.campaign_ai_scripts.erase(std::remove_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return !script.position; }), st.campaign_ai_scripts.end());
-		for (int owner = 0; owner != 8; ++owner) if (st.campaign_ai[owner].town_active) progress_campaign_ai_town(owner);
+		for (int owner = 0; owner != 8; ++owner) {
+			auto& ai = st.campaign_ai[owner];
+			if (ai.town_active) {
+				if (has_scripts) progress_campaign_ai_town(owner);
+			} else if (st.current_frame % 8 == 0 && st.players[owner].controller == player_t::controller_computer_game && (ai.suicide || !ai.attacking.empty())) {
+				progress_campaign_ai_attackers(owner);
+				if (ai.suicide) launch_campaign_ai_suicide(owner);
+			}
+		}
 	}
 
 	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0, bool allow_transport = false) {
@@ -19684,6 +19692,45 @@ struct state_functions {
 		}
 	}
 
+	void progress_campaign_ai_attackers(int owner) {
+		auto& ai = st.campaign_ai.at(owner);
+		auto remove_dead = [&](a_vector<unit_id>& units) {
+			units.erase(std::remove_if(units.begin(), units.end(), [&](unit_id id) {
+				unit_t* unit = get_unit(id);
+				return !unit || unit_dying(unit) || unit->owner != owner;
+			}), units.end());
+		};
+		remove_dead(ai.attacking);
+		remove_dead(ai.attack_party);
+		if (!ai.attacking.empty()) {
+			unit_t* target = campaign_ai_attack_target(owner, ai.attacking, ai.military_region);
+			if (!target) target = campaign_ai_attack_target(owner, ai.attacking);
+			if (target) {
+				ai.military_region = get_region_at(target->sprite->position)->index;
+				ai.military_target = get_unit_id(target);
+				for (unit_id id : ai.attacking) {
+					unit_t* unit = get_unit(id);
+					if (unit->order_type->id != Orders::Guard && unit->order_type->id != Orders::PlayerGuard && unit->order_type->id != Orders::ComputerAI && unit->order_type->id != Orders::Nothing) continue;
+					if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit) && unit_can_attack_target(unit, unit->auto_target_unit) && unit_target_in_weapon_movement_range(unit, unit->auto_target_unit)) continue;
+					if (!u_flying(unit) && !is_reachable(unit, target)) continue;
+					unit->auto_target_unit = nullptr;
+					issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
+				}
+			}
+		}
+	}
+
+	void launch_campaign_ai_suicide(int owner) {
+		auto& ai = st.campaign_ai.at(owner);
+		ai.attack_party.clear();
+		for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (!ut_building(unit) && !ut_worker(unit) && !us_hidden(unit) && u_completed(unit) && !unit_dying(unit) && !ut_turret(unit) && unit_can_attack(unit)) ai.attack_party.push_back(get_unit_id(unit));
+		}
+		launch_campaign_ai_attack(owner);
+		ai.attack_party.clear();
+		ai.suicide = false;
+	}
+
 	void progress_campaign_ai_town(int owner) {
 		if (st.current_frame % 8) return;
 		auto& ai = st.campaign_ai.at(owner);
@@ -19716,30 +19763,7 @@ struct state_functions {
 			unit_id id = get_unit_id(unit);
 			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end();
 		};
-		auto remove_dead = [&](a_vector<unit_id>& units) {
-			units.erase(std::remove_if(units.begin(), units.end(), [&](unit_id id) {
-				unit_t* unit = get_unit(id);
-				return !unit || unit_dying(unit) || unit->owner != owner;
-			}), units.end());
-		};
-		remove_dead(ai.attacking);
-		remove_dead(ai.attack_party);
-		if (!ai.attacking.empty()) {
-			unit_t* target = campaign_ai_attack_target(owner, ai.attacking, ai.military_region);
-			if (!target) target = campaign_ai_attack_target(owner, ai.attacking);
-			if (target) {
-				ai.military_region = get_region_at(target->sprite->position)->index;
-				ai.military_target = get_unit_id(target);
-				for (unit_id id : ai.attacking) {
-					unit_t* unit = get_unit(id);
-					if (unit->order_type->id != Orders::Guard && unit->order_type->id != Orders::PlayerGuard && unit->order_type->id != Orders::ComputerAI && unit->order_type->id != Orders::Nothing) continue;
-					if (unit->auto_target_unit && !unit_dying(unit->auto_target_unit) && unit_target_is_enemy(unit, unit->auto_target_unit) && unit_can_attack_target(unit, unit->auto_target_unit) && unit_target_in_weapon_movement_range(unit, unit->auto_target_unit)) continue;
-					if (!u_flying(unit) && !is_reachable(unit, target)) continue;
-					unit->auto_target_unit = nullptr;
-					issue_order(unit, false, get_order_type(Orders::AttackMove), {target->sprite->position, nullptr});
-				}
-			}
-		}
+		progress_campaign_ai_attackers(owner);
 		type_indexed_array<int, UnitTypes> reserves{};
 		type_indexed_array<int, UnitTypes> deployed{};
 		for (unit_id id : ai.attacking) ++deployed[campaign_ai_type(get_unit(id)->unit_type->id)];
@@ -19797,13 +19821,7 @@ struct state_functions {
 			}
 		}
 		if (ai.suicide) {
-			ai.attack_party.clear();
-			for (unit_t* unit : ptr(st.player_units[owner])) {
-				if (!ut_building(unit) && !ut_worker(unit) && !us_hidden(unit) && u_completed(unit) && !unit_dying(unit) && !ut_turret(unit) && unit_can_attack(unit)) ai.attack_party.push_back(get_unit_id(unit));
-			}
-			launch_campaign_ai_attack(owner);
-			ai.attack_party.clear();
-			ai.suicide = false;
+			launch_campaign_ai_suicide(owner);
 		}
 		if (ai.attack_preparing && !ai.attack_launched) {
 			bool ready = true;
