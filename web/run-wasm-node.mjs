@@ -224,6 +224,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg05'), false, 'The Amerigo requires the Agent of the Swarm victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 14).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg05'), true, 'Completing Agent of the Swarm unlocks The Amerigo');
+  assert.equal(normal.unlocked('zerg06'), false, 'The Dark Templar requires The Amerigo victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 15).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg06'), true, 'Completing The Amerigo unlocks The Dark Templar');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -269,7 +272,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -558,6 +561,12 @@ function testCampaign() {
     assert.equal(human.filter(unit => unit[1] === 'Hunter Killer').length, 2, 'Native opening proximity rescues the two original Hunter Killers');
     assert.equal(x.openbw_mission_countdown(), -1, 'The Amerigo has no invented countdown');
     console.log('The Amerigo original Zerg initialization checks passed.');
+  } else if (missionId === 'zerg06') {
+    assert.equal(mission.episode, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    for (const [type, count] of [['Drone', 4], ['Hydralisk', 4], ['Mutalisk', 2], ['Guardian', 2], ['Overlord', 3], ['Hatchery', 1], ['Infested Kerrigan', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(units.filter(unit => unit[1] === 'Tassadar').length, 0, 'Tassadar must be created by the original challenge trigger');
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Dark Templar has no invented countdown');
+    console.log('The Dark Templar original Zerg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -579,7 +588,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'zerg06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 250, 'Original Dark Templar trigger grants 250 gas');
   if (missionId === 'zerg04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 250, 'Original Agent of the Swarm trigger grants 250 gas');
     assert.equal(x.openbw_mission_countdown(), 600, 'Original ten-minute hatch countdown');
@@ -881,12 +891,13 @@ function testCampaign() {
     assert.equal(read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[1] === 'Hunter Killer' && unit[2] === String(mission.humanSlot)).length, 6, 'The same normal move rescues the original Hunter Killers');
     console.log('Egression normal right-click Chrysalis pickup and original Hunter Killer rescue passed.');
   }
-  if (missionId === 'zerg05') {
+  if (['zerg05', 'zerg06'].includes(missionId)) {
     const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');
     x.openbw_debug_select(Number(kerrigan[0]), 0); x.openbw_render(0);
     assert.match(read(x.openbw_card()), /\tCloak\t/);
     assert.match(read(x.openbw_card()), /\tConsume\t/);
-    assert.doesNotMatch(read(x.openbw_card()), /Psionic Storm/, 'The original mission disables Storm');
+    if (missionId === 'zerg05') assert.doesNotMatch(read(x.openbw_card()), /Psionic Storm/, 'The original Amerigo mission disables Storm');
+    else assert.match(read(x.openbw_card()), /Psionic Storm/, 'The original Dark Templar mission permits Storm');
     const energy = Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]);
     for (const expected of ['Decloak', 'Cloak']) {
       x.openbw_out_clear(); x.openbw_key(1, 99, 0); x.openbw_key(0, 99, 0); x.openbw_render(0);
@@ -901,7 +912,23 @@ function testCampaign() {
       assert.ok(read(x.openbw_card()).includes(`\t${expected}\t`), `Native Kerrigan state offers ${expected}: ${read(x.openbw_card())}`);
       if (expected === 'Decloak') assert.ok(Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]) <= energy - 24, 'Original hero cloak charges the native twenty-five-energy cost');
     }
-    console.log('The Amerigo original Kerrigan paid cloak, decloak and disabled-Storm controls passed.');
+    if (missionId === 'zerg06') {
+      const storm = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t')).find(line => line[1] === 'Psionic Storm');
+      assert.ok(storm?.[0], 'Mission-enabled Storm has a usable native command-card hotkey');
+      const beforeStorm = Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]);
+      const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      x.openbw_out_clear(); x.openbw_key(1, storm[0].charCodeAt(0), 0); x.openbw_key(0, storm[0].charCodeAt(0), 0);
+      const targetX = Number(kerrigan[3]) + 64 - Number(camera[1]), targetY = Number(kerrigan[4]) + 96 - Number(camera[2]);
+      x.openbw_mouse_button(1, 1, targetX, targetY, 1); x.openbw_mouse_button(0, 1, targetX, targetY, 1); x.openbw_render(0);
+      const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      assert.ok(output.length > 0, 'Storm uses normal synchronized targeted-spell input');
+      new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+      x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+      for (let tick = 0; tick < 96; tick++) x.openbw_step();
+      x.openbw_render(0);
+      assert.ok(Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]) <= beforeStorm - 70, 'Native Psionic Storm pays its seventy-five-energy cost, allowing normal regeneration');
+    }
+    console.log(`${mission.title} original Kerrigan paid cloak/decloak and authored Storm availability controls passed.`);
   }
   if (missionId === 'terran06') {
     const raynor = human.find(unit => unit[1] === 'Jim Raynor'), worker = human.find(unit => unit[1] === 'SCV');

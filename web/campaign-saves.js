@@ -1,7 +1,7 @@
 export const campaignSaveVersion = 1;
 export const campaignSaveKeys = ['slot:1', 'slot:2', 'slot:3'];
 
-const validMission = value => /^(?:terran(?:0[1-9]|10)|zerg0[1-5])$/.test(value);
+const validMission = value => /^(?:terran(?:0[1-9]|10)|zerg0[1-6])$/.test(value);
 const validKey = value => campaignSaveKeys.includes(value) || typeof value === 'string' && value.startsWith('auto:') && validMission(value.slice(5));
 const integer = (value, maximum) => Number.isInteger(value) && value >= 0 && value <= maximum;
 

@@ -2338,6 +2338,104 @@ static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_f
 	}
 }
 
+static void dark_templar_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		auto tassadar_actor = [&]() -> unit_t* {
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Tassadar) && !functions.unit_dying(unit)) return unit;
+			return nullptr;
+		};
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 1200; ++tick) step();
+		unit_t* kerrigan = nullptr;
+		unit_t* companion = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan)) kerrigan = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Hydralisk)) companion = unit;
+		}
+		require(kerrigan && companion && !st.trigger_switches[0] && !st.players[3].victory_state, "The Dark Templar starts before its original camp-clear/challenge gate");
+		require(functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Personnel_Cloaking)) && functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Psionic_Storm)) && !st.tech_researched[3][TechTypes::Psionic_Storm], "original mission permits Kerrigan's native hero cloak and Storm without granting ordinary-unit research");
+		auto center = [&](int location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto clear_camp = [&](int location) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : functions.find_units(st.locations.at(location - 1).area)) if (unit->owner == 1 && !functions.ut_turret(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		};
+		if (scenario == 0) functions.kill_unit(kerrigan);
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		}
+		if (scenario == 2) clear_camp(4);
+		if (scenario >= 3) { clear_camp(4); clear_camp(5); }
+		for (int tick = 0; tick != 2200 && !st.players[3].victory_state; ++tick) step();
+		if (scenario <= 1) require(st.players[3].victory_state == 2, "original Kerrigan loss or whole-force loss reaches defeat");
+		if (scenario == 2) require(!st.trigger_switches[0] && !tassadar_actor() && !st.players[3].victory_state, "clearing only one original Protoss camp cannot start the challenge or win");
+		if (scenario >= 3) {
+			require(st.trigger_switches[0] && !st.scripted_pause && !st.players[3].victory_state && !tassadar_actor(), "clearing both original regions completes the challenge dialogue but is not victory");
+			if (scenario == 3) {
+				xy previous = companion->sprite->position;
+				functions.move_unit(companion, center(6) + xy(48, 0));
+				functions.set_unit_order(companion, functions.get_order_type(Orders::HoldPosition));
+				functions.move_unit(kerrigan, center(6));
+				functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+				for (int tick = 0; tick != 320; ++tick) step();
+				require(!tassadar_actor() && !st.trigger_switches[1], "an accompanying original Hydralisk prevents Kerrigan from satisfying the alone predicate");
+				functions.move_unit(companion, previous);
+				unit_t* tassadar = nullptr;
+				for (int tick = 0; tick != 320 && !tassadar; ++tick) {
+					step();
+					tassadar = tassadar_actor();
+				}
+				require(tassadar && functions.u_hallucination(tassadar) && st.trigger_switches[1], "Kerrigan alone creates exactly the original hallucinated Tassadar through source UPRP properties");
+				unit_id tassadar_id = functions.get_unit_id(tassadar);
+				fp8 initial_life = tassadar->hp + tassadar->shield_points;
+				functions.issue_order(kerrigan, false, kerrigan->unit_type->attack_unit, {tassadar->sprite->position, tassadar});
+				bool damaged = false;
+				for (int tick = 0; tick != 600 && tassadar_actor(); ++tick) {
+					step();
+					unit_t* current = functions.get_unit(tassadar_id);
+					if (current && current->hp + current->shield_points < initial_life) damaged = true;
+				}
+				require(damaged && !tassadar_actor(), "native Kerrigan weapons can damage the authored illusion before the original ending removes it");
+				bool paused = false;
+				for (int tick = 0; tick != 2200 && !st.players[3].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+				require(st.players[3].victory_state >= 3 && paused, "the original illusion ending, dialogue and paused victory complete without a replacement objective");
+			}
+			if (scenario == 4) {
+				functions.move_unit(companion, center(6));
+				functions.set_unit_order(companion, functions.get_order_type(Orders::HoldPosition));
+				for (int tick = 0; tick != 600; ++tick) step();
+				require(!tassadar_actor() && !st.players[3].victory_state, "a non-Kerrigan visitor cannot trigger Tassadar or victory");
+			}
+			if (scenario == 5) {
+				require(!st.players[3].victory_state && !tassadar_actor(), "waiting after camp destruction cannot bypass the original challenge");
+				functions.move_unit(kerrigan, center(6));
+				functions.set_unit_order(kerrigan, functions.get_order_type(Orders::Nothing));
+				bool observed_illusion = false;
+				for (int tick = 0; tick != 2200 && !st.players[3].victory_state; ++tick) { step(); if (tassadar_actor()) observed_illusion = true; }
+				require(observed_illusion && st.players[3].victory_state >= 3, "Kerrigan arriving alone completes the original illusion ending without an invented kill objective");
+			}
+		}
+		printf("The Dark Templar original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2359,6 +2457,7 @@ int main(int argc, char** argv) {
 	bool new_dominion = campaign && argc > 4 && !strcmp(argv[4], "zerg03");
 	bool agent_swarm = campaign && argc > 4 && !strcmp(argv[4], "zerg04");
 	bool amerigo = campaign && argc > 4 && !strcmp(argv[4], "zerg05");
+	bool dark_templar = campaign && argc > 4 && !strcmp(argv[4], "zerg06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2375,6 +2474,38 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (dark_templar) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 4 && st.unit_counts[3][UnitTypes::Zerg_Mutalisk] == 2 && st.unit_counts[3][UnitTypes::Zerg_Guardian] == 2 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 3 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1, "The Dark Templar retains its original human slot and starting Zerg force");
+			for (int tick = 0; tick != 1200; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 250 && st.current_gas[3] == 250 && !st.scripted_pause && !st.players[3].victory_state, "The Dark Templar preserves original opening resources and dialogue without an invented outcome");
+			require(st.campaign_ai[1].town_active && st.campaign_ai_scripts.size() == 1 && !st.campaign_ai[3].town_active && !st.unit_counts[2][UnitTypes::Hero_Tassadar], "original Zer6 starts while Tassadar remains reserved for the authored challenge");
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 21502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[1].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Zer6 ground and Scout waves fire native weapons at authored timing without extra funding");
+			printf("The Dark Templar original Protoss ground and air attacks passed.\n");
+			dark_templar_mission_cases(load_data_file, map_file);
+			printf("The Dark Templar original initialization and AI startup passed.\n");
+			return 0;
+		}
 		if (amerigo) {
 			require(player.st().players[3].controller == player_t::controller_occupied && player.st().players[3].race == race_t::zerg && player.st().unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] == 1 && player.st().unit_counts[3][UnitTypes::Zerg_Zergling] == 6, "The Amerigo retains original Kerrigan and six Zerglings with human slot three");
 			amerigo_mission_cases(load_data_file, map_file);
