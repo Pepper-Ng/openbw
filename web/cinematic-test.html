@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terran Cinematic Test</title>
+  <style>
+    html, body { margin: 0; min-height: 100%; background: #080a0c; color: #dce5e9; font: 14px/1.5 system-ui, sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 16px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    h1 { font-size: 16px; font-weight: 600; margin: 0; }
+    a { color: #a8c5d4; }
+    video { display: block; width: 100%; max-height: calc(100dvh - 110px); aspect-ratio: 4 / 3; object-fit: contain; background: #000; }
+    #status { min-height: 22px; margin-top: 8px; color: #aebac2; font-size: 12px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>Terran Cinematic</h1><a href="./?campaign=1">Campaign Menu</a></header>
+    <video id="cinematic" controls playsinline preload="auto">
+      <source src="data/cinematic-test/terran1-mp3.mp4" type="video/mp4">
+    </video>
+    <div id="status" role="status" aria-live="polite">Loading...</div>
+  </main>
+  <script>
+    const video = document.getElementById('cinematic');
+    const status = document.getElementById('status');
+    video.addEventListener('loadedmetadata', () => {
+      status.textContent = `${video.videoWidth} x ${video.videoHeight} - ${Math.round(video.duration)} seconds`;
+    });
+    video.addEventListener('playing', () => { status.textContent = 'Playing'; });
+    video.addEventListener('pause', () => { if (!video.ended) status.textContent = 'Paused'; });
+    video.addEventListener('ended', () => { status.textContent = 'Finished'; });
+    video.addEventListener('error', () => {
+      status.textContent = `Video could not be played (error ${video.error?.code || 'unknown'}).`;
+    });
+  </script>
+</body>
+</html>
