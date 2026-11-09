@@ -227,6 +227,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg06'), false, 'The Dark Templar requires The Amerigo victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 15).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg06'), true, 'Completing The Amerigo unlocks The Dark Templar');
+  assert.equal(normal.unlocked('zerg07'), false, 'The Culling requires The Dark Templar victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 16).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg07'), true, 'Completing The Dark Templar unlocks The Culling');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -272,7 +275,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -567,6 +570,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Tassadar').length, 0, 'Tassadar must be created by the original challenge trigger');
     assert.equal(x.openbw_mission_countdown(), -1, 'The Dark Templar has no invented countdown');
     console.log('The Dark Templar original Zerg initialization checks passed.');
+  } else if (missionId === 'zerg07') {
+    assert.equal(mission.episode, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    assert.equal(human.length, 20, 'The Culling starts with only its original mobile force');
+    for (const [type, count] of [['Drone', 4], ['Hydralisk', 8], ['Mutalisk', 4], ['Overlord', 4], ['Hatchery', 0], ['Larva', 0], ['Infested Kerrigan', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Culling has no invented visible countdown');
+    console.log('The Culling original baseless Zerg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -588,7 +597,17 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'zerg07') {
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Culling trigger grants 200 gas');
+    const army = human.filter(unit => ['Hydralisk', 'Mutalisk'].includes(unit[1]));
+    army.forEach((unit, index) => x.openbw_debug_select(Number(unit[0]), index ? 1 : 0));
+    x.openbw_render(0); x.openbw_out_clear(); x.openbw_key(1, 104, 0); x.openbw_key(0, 104, 0); x.openbw_render(0);
+    const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(output.length > 0, 'Holding the original army uses normal synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+    x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+  }
   if (missionId === 'zerg06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 250, 'Original Dark Templar trigger grants 250 gas');
   if (missionId === 'zerg04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 250, 'Original Agent of the Swarm trigger grants 250 gas');
@@ -633,13 +652,13 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const locationDrivenDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03'].includes(missionId);
-  if (locationDrivenDialogue) assert.equal(dialogue.length, 0, 'Original mission dialogue is location-triggered, not invented at idle startup');
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07'].includes(missionId);
+  if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
     assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), transmissionTime(event[7], event[10], event[8]), 'Original gameplay transmission uses its stored duration and modifier');
   }
-  const soundIndices = locationDrivenDialogue ? briefing.filter(action => action[0] === 8).map(action => action[2]) : dialogue.map(event => event[6]);
+  const soundIndices = noOpeningDialogue ? briefing.filter(action => action[0] === 8).map(action => action[2]) : dialogue.map(event => event[6]);
   assert.ok(soundIndices.length > 0, 'Original mission supplies narration audio');
   for (const soundIndex of soundIndices) {
     const path = read(x.openbw_mission_string(soundIndex)).replaceAll('\\', '/').toLowerCase();
@@ -890,6 +909,47 @@ function testCampaign() {
     assert.equal(x.openbw_mission_countdown(), -1, 'Normal carried Chrysalis does not invent a recovery countdown');
     assert.equal(read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[1] === 'Hunter Killer' && unit[2] === String(mission.humanSlot)).length, 6, 'The same normal move rescues the original Hunter Killers');
     console.log('Egression normal right-click Chrysalis pickup and original Hunter Killer rescue passed.');
+  }
+  if (missionId === 'zerg07') {
+    const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
+    const press = symbol => { x.openbw_key(1, symbol.charCodeAt(0), 0); x.openbw_key(0, symbol.charCodeAt(0), 0); x.openbw_render(0); };
+    const applyQueued = () => {
+      const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      assert.ok(output.length > 0, 'Original Culling base construction/morph uses synchronized input');
+      new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+      x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    };
+    const worker = owned().find(unit => unit[1] === 'Drone');
+    assert.ok(worker);
+    x.openbw_debug_select(Number(worker[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    let site = null;
+    for (let vertical = -224; vertical <= 64 && !site; vertical += 32) for (let horizontal = -256; horizontal <= 256 && !site; horizontal += 32) {
+      const mapX = Math.floor(Number(worker[3]) / 32) * 32 + horizontal, mapY = Math.floor(Number(worker[4]) / 32) * 32 + 16 + vertical;
+      if (mapX < Number(camera[1]) + 160 || mapX > Number(camera[1]) + 1120 || mapY < Number(camera[2]) + 64 || mapY > Number(camera[2]) + 650) continue;
+      if ((x.openbw_debug_build_check(131, mapX, mapY) & 3) === 3) site = [mapX - Number(camera[1]), mapY - Number(camera[2])];
+    }
+    assert.ok(site, 'A legal Hatchery site is reachable from the original baseless start');
+    press('b'); press('h');
+    x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1); x.openbw_render(0); applyQueued();
+    let hatchery = null, completed = false;
+    for (let tick = 0; tick < 3600 && !completed; tick++) {
+      x.openbw_step();
+      if (tick % 16) continue;
+      hatchery = owned().find(unit => unit[1] === 'Hatchery');
+      if (hatchery) { x.openbw_debug_select(Number(hatchery[0]), 0); x.openbw_render(0); completed = /\tSelect Larva\t/.test(read(x.openbw_card())) && !/\tCancel\t/.test(read(x.openbw_card())); }
+    }
+    assert.ok(completed, 'The original Drone completes a Hatchery through normal native construction');
+    assert.equal(owned().filter(unit => unit[1] === 'Drone').length, 3, 'Building consumes the original Drone rather than granting an extra structure');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 500, 'Original 800 minerals pay the normal 300-mineral Hatchery cost');
+    for (let tick = 0; tick < 64; tick++) x.openbw_step();
+    x.openbw_debug_select(Number(hatchery[0]), 0); x.openbw_render(0); press('s');
+    assert.match(read(x.openbw_card()), /^Larva\t/, 'The newly built Hatchery supplies native Larva');
+    press('d'); applyQueued();
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    assert.equal(owned().filter(unit => unit[1] === 'Drone').length, 4, 'Native Larva production replaces the consumed Drone');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 450, 'Native Drone production pays fifty additional minerals without test funding');
+    console.log('The Culling original paid Hatchery construction, native Larva/Drone production and no-invented-dialogue checks passed.');
   }
   if (['zerg05', 'zerg06'].includes(missionId)) {
     const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');

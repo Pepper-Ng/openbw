@@ -13059,8 +13059,9 @@ struct state_functions {
 				u->sprite = nullptr;
 			}
 		}
-		if (u_status_flag(u, (unit_t::status_flags_t)0x4000)) {
-			error("update_dead_unit: fixme some creep stuff?");
+		if (u_status_flag(u, unit_t::status_flag_4000)) {
+			if (!remove_creep_provider(u)) return;
+			u_unset_status_flag(u, unit_t::status_flag_4000);
 		}
 		if (u->sprite) {
 			if (update_tiles && st.players[u->owner].controller == player_t::controller_occupied) {

@@ -2436,6 +2436,69 @@ static void dark_templar_mission_cases(data_loading::data_files_loader<>& load_d
 	}
 }
 
+static void culling_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			if (scenario == 3 || scenario == 4) for (unit_t* unit : ptr(st.player_units[4])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		require(!st.trigger_switches[10] && st.campaign_ai_scripts.empty() && !st.players[3].victory_state, "The Culling starts before its original Garm activation gate");
+		if (scenario <= 2) {
+			unit_t* last_building = nullptr;
+			if (scenario == 2) for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is(unit, UnitTypes::Zerg_Extractor)) last_building = unit;
+			if (scenario == 2) require(last_building, "original Extractor supplies the remaining-building negative case");
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[scenario == 0 ? 3 : 4])) if (scenario == 0 || (functions.ut_building(unit) && unit != last_building)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 700 && !st.players[3].victory_state; ++tick) step();
+			if (scenario == 0) require(st.players[3].victory_state == 2, "the original whole-human-force loss reaches defeat");
+			if (scenario == 1) {
+				require(st.players[3].victory_state >= 3 && st.non_building_counts[4] > 0, "the authored Garm-building predicate reaches victory even while enemy mobile units remain");
+				auto pending_creep = [&]() {
+					int count = 0;
+					for (unit_t* unit : ptr(st.dead_units)) if (functions.u_status_flag(unit, unit_t::status_flag_4000)) ++count;
+					return count;
+				};
+				require(pending_creep() > 0, "original mass Garm destruction exercises the bounded creep queue retry path");
+				for (int tick = 0; tick != 12000 && pending_creep(); ++tick) step();
+				require(!pending_creep(), "pending dead creep providers finish their existing recession scheduling instead of leaking indefinitely");
+			}
+			if (scenario == 2) require(!st.players[3].victory_state && st.building_counts[4] > 0, "a surviving Garm building prevents the authored victory");
+		} else if (scenario <= 4) {
+			unit_t* overlord = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Overlord)) overlord = unit;
+			require(overlord, "original Overlord supplies normal contact-trigger movement");
+			const auto& area = st.locations.at(scenario == 3 ? 2 : 4).area;
+			xy destination = (area.from + area.to) / 2;
+			functions.move_unit(overlord, xy(destination.x, area.from.y - 64));
+			functions.issue_order(overlord, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(st.trigger_switches[10] && st.campaign_ai_scripts.size() == 4 && st.campaign_ai[4].area_towns.size() == 3 && st.current_frame < 300 * 16, "normal Overlord contact with either original satellite region starts the four Garm programs before the timer");
+		} else {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : functions.find_units(st.locations.at(3).area)) if (unit->owner == 4 && functions.ut_building(unit)) victims.push_back(unit);
+			require(!victims.empty(), "original south camp contains the activation-trigger buildings");
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 8; ++tick) step();
+			require(!st.trigger_switches[10] && st.campaign_ai_scripts.empty(), "clearing the south camp does not skip the source ten-second wait");
+			for (int tick = 0; tick != 480; ++tick) step();
+			require(st.trigger_switches[10] && st.campaign_ai_scripts.size() == 4 && st.campaign_ai[4].area_towns.size() == 3 && !st.players[3].victory_state, "the original south-camp delay activates Garm AI without inventing victory");
+		}
+		printf("The Culling original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2458,6 +2521,7 @@ int main(int argc, char** argv) {
 	bool agent_swarm = campaign && argc > 4 && !strcmp(argv[4], "zerg04");
 	bool amerigo = campaign && argc > 4 && !strcmp(argv[4], "zerg05");
 	bool dark_templar = campaign && argc > 4 && !strcmp(argv[4], "zerg06");
+	bool culling = campaign && argc > 4 && !strcmp(argv[4], "zerg07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2474,6 +2538,41 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (culling) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 8 && st.unit_counts[3][UnitTypes::Zerg_Mutalisk] == 4 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 4 && st.building_counts[3] == 0 && !st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan], "The Culling retains its original mobile force without a granted base or Kerrigan");
+			for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 800 && st.current_gas[3] == 200 && !st.players[3].victory_state && !st.trigger_switches[10] && st.campaign_ai_scripts.empty(), "The Culling preserves original resources and dormant Garm town scripts before activation");
+			while (st.current_frame < 300 * 16 + 128) {
+				for (unit_t* unit : ptr(st.player_units[3])) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+				for (unit_t* unit : ptr(st.player_units[4])) if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				functions.next_frame();
+				if (st.current_frame < 300 * 16) require(!st.trigger_switches[10] && st.campaign_ai_scripts.empty(), "the original timer cannot activate Garm towns before five game minutes when other gates are untouched");
+			}
+			require(st.trigger_switches[10] && st.campaign_ai_scripts.size() == 4 && st.campaign_ai[4].town_active && st.campaign_ai[4].area_towns.size() == 3 && !st.campaign_ai[3].town_active, "the original five-minute trigger starts all four Garm programs with one main and three area towns");
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 18502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[4].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Garm ground and Mutalisk parties fire native weapons at authored timing without extra funding");
+			printf("The Culling original Garm ground and air attacks passed.\n");
+			culling_mission_cases(load_data_file, map_file);
+			printf("The Culling original mobile start and timed Garm activation passed.\n");
+			return 0;
+		}
 		if (dark_templar) {
 			auto& st = player.st();
 			state_functions functions(st);
