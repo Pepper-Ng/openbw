@@ -2299,6 +2299,7 @@ struct state_functions {
 		if (!worker) return;
 		destroy_carrying_images(worker);
 		worker->worker.resources_carried = 0;
+		if (!unit_is(powerup, UnitTypes::Powerup_Flag) && powerup->owner != worker->owner) set_unit_owner(powerup, worker->owner, false);
 		hide_unit(powerup);
 		set_unit_order(powerup, get_order_type(Orders::Nothing));
 		powerup->user_action_flags |= 1;
@@ -16156,6 +16157,7 @@ struct state_functions {
 		u_set_status_flag(u, unit_t::status_flag_can_turn, ut_can_turn(u));
 		u_set_status_flag(u, unit_t::status_flag_can_move, ut_can_move(u));
 		u_set_status_flag(u, unit_t::status_flag_ground_unit, !ut_flyer(u));
+		if (unit_is_special_beacon(u)) u_set_status_flag(u, unit_t::status_flag_no_collide);
 		if (u->unit_type->elevation_level < 12) u->pathing_flags |= 1;
 		else u->pathing_flags &= ~1;
 		u->building.addon = nullptr;
@@ -18962,7 +18964,7 @@ struct state_functions {
 			return true;
 		case TechTypes::Personnel_Cloaking:
 			if (!ut_hero(u) && !player_has_researched(owner, TechTypes::Personnel_Cloaking)) return false;
-			if (!unit_is_ghost(u)) return false;
+			if (!unit_is_ghost(u) && !unit_is(u, UnitTypes::Hero_Infested_Kerrigan)) return false;
 			return true;
 		case TechTypes::Restoration:
 			if (!player_has_researched(owner, TechTypes::Restoration)) return false;
@@ -19063,7 +19065,8 @@ struct state_functions {
 	template<typename T>
 	int trigger_command_count(const T& count_obj, int owner, int player, int unit_id, bool completed_units) const {
 		int r = 0;
-		for (int p : trigger_players(owner, player)) {
+		for (int p : all_player_slots) {
+			if (player < 12 ? p != player : player != 17 && !trigger_players_pred(owner, player, p)) continue;
 			if (completed_units) {
 				if (unit_id == 229) r += count_obj.completed_non_building_counts[p] + count_obj.completed_building_counts[p];
 				else if (unit_id == 230) r += count_obj.completed_non_building_counts[p];
@@ -19928,6 +19931,17 @@ struct state_functions {
 			return trigger_count_comparison(c, trigger_command_count(st, owner, c.group, c.unit_id, c.num_n != 1));
 		case 3: // bring
 			return trigger_count_comparison(c, trigger_command_count(trigger_bring_count(st.locations.at(c.location - 1)), owner, c.group, c.unit_id, c.num_n != 1));
+		case 7:
+		case 17:
+			{
+				auto counts = trigger_bring_count(st.locations.at(c.location - 1));
+				int current = trigger_command_count(counts, owner, 13, c.unit_id, false);
+				for (int player = 0; player != 8; ++player) {
+					int other = trigger_command_count(counts, owner, player, c.unit_id, false);
+					if (c.type == 7 ? other > current : other < current) return false;
+				}
+				return true;
+			}
 		case 4:
 			{
 				int amount = 0;
@@ -20100,7 +20114,7 @@ struct state_functions {
 		}
 
 		if (unit_dying(u)) return false;
-		if (!trigger_players_pred(owner, player, u->owner)) return false;
+		if (player < 12 ? u->owner != player : player != 17 && !trigger_players_pred(owner, player, u->owner)) return false;
 		if (uid == 229) return true;
 		else if (uid == 230) {
 			if (u->unit_type->group_flags & GroupFlags::Men) return true;
@@ -20127,7 +20141,7 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 11 || type == 12 || type == 15 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 7 || type == 11 || type == 12 || type == 15 || type == 17 || type == 22;
 	}
 
 	static bool campaign_action_supported(int type) {
@@ -23165,18 +23179,6 @@ struct game_load_functions : state_functions {
 				for (int index = int(TechTypes::Restoration); index != int(TechTypes::None); ++index) {
 					game_st.tech_available[owner][TechTypes(index)] = false;
 					st.tech_researched[owner][TechTypes(index)] = false;
-				}
-			}
-			for (const auto& trigger : game_st.triggers) for (const auto& action : trigger.actions) {
-				if (!action.type) break;
-				if (action.flags & 2 || action.type != 38 || action.extra_n != int(UnitTypes::Powerup_Young_Chrysalis) || !action.location || action.location > st.locations.size() || !action.group2_n || action.group2_n > st.locations.size()) continue;
-				const auto& area = st.locations[action.group2_n - 1].area;
-				for (unit_t* unit : ptr(st.visible_units)) {
-					if (!unit_is(unit, UnitTypes::Special_Zerg_Beacon) || st.players[unit->owner].controller != player_t::controller_occupied || !trigger.enabled[unit->owner]) continue;
-					xy position = unit->sprite->position;
-					if (position.x < area.from.x || position.x > area.to.x || position.y < area.from.y || position.y > area.to.y) continue;
-					if (trigger_find_unit(unit->owner, st.locations[action.location - 1], action.group_n, action.extra_n)) continue;
-					create_initial_unit(get_unit_type(UnitTypes::Powerup_Young_Chrysalis), position, unit->owner);
 				}
 			}
 		}

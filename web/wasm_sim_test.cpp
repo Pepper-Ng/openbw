@@ -2096,6 +2096,9 @@ static void egression_mission_cases(data_loading::data_files_loader<>& load_data
 		auto& st = player.st();
 		st.strict_triggers = true;
 		state_functions functions(st);
+		int original_chrysalises = 0;
+		for (int owner : all_player_slots) original_chrysalises += st.unit_counts[owner][UnitTypes::Powerup_Young_Chrysalis];
+		require(original_chrysalises == 1 && st.unit_counts[11][UnitTypes::Powerup_Young_Chrysalis] == 1, "Egression retains its single original neutral Chrysalis without a synthetic duplicate");
 		for (int tick = 0; tick != 64; ++tick) functions.next_frame();
 		unit_t* standing = nullptr;
 		unit_t* carrier = nullptr;
@@ -2228,6 +2231,7 @@ static void agent_swarm_mission_cases(data_loading::data_files_loader<>& load_da
 			continue;
 		}
 		require(kerrigan && st.current_frame >= 600 * 16 && st.unit_counts[3][UnitTypes::Special_Mature_Chrysalis] == 0, "the original countdown expires naturally before its trigger replaces the Chrysalis with Kerrigan");
+		require(functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Personnel_Cloaking)) && !functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Psionic_Storm)), "original hatched Kerrigan can cloak but cannot bypass mission-disabled Psionic Storm");
 		for (int tick = 0; tick != 1800; ++tick) step();
 		require(!st.scripted_pause && !st.players[3].victory_state, "the original hatch dialogue and scene cleanup complete without an invented outcome");
 		unit_t* command_center = nullptr;
@@ -2256,6 +2260,76 @@ static void agent_swarm_mission_cases(data_loading::data_files_loader<>& load_da
 	}
 }
 
+static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 4; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 600; ++tick) step();
+		unit_t* kerrigan = nullptr;
+		unit_t* zergling = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan)) kerrigan = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Zergling)) zergling = unit;
+		}
+		require(kerrigan && zergling && st.campaign_ai_scripts.empty() && !st.scripted_pause && !st.players[3].victory_state, "The Amerigo preserves its original squad and completes the opening without an invented town AI or outcome");
+		require(functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Personnel_Cloaking)) && !functions.unit_can_use_tech(kerrigan, functions.get_tech_type(TechTypes::Psionic_Storm)), "original Amerigo Kerrigan retains hero cloak eligibility and mission-disabled Psionic Storm");
+		auto position_at = [&](int location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		if (scenario == 0) {
+			unit_t* civilian = nullptr;
+			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == (UnitTypes)15) civilian = unit;
+			require(civilian, "original computer Civilian provides the location-condition fixture");
+			st.locations.push_back(st.locations.at(17));
+			st.locations.back().area = functions.square_at(civilian->sprite->position, 1);
+			trigger::condition condition{};
+			condition.location = int(st.locations.size()); condition.unit_id = 15; condition.type = 7;
+			require(functions.test_trigger_condition(condition, 6) && !functions.test_trigger_condition(condition, 3), "Command Most At Location uses the executing player, not the unused group field");
+			condition.type = 17;
+			require(!functions.test_trigger_condition(condition, 6) && functions.test_trigger_condition(condition, 3), "Command Least At Location compares the executing player's actual local count");
+			st.locations.back().area = rect(xy(0, 0), xy(1, 1));
+			require(functions.test_trigger_condition(condition, 6), "Command Least At Location permits a zero-count tie");
+			condition.type = 7;
+			require(functions.test_trigger_condition(condition, 6), "Command Most At Location permits a zero-count tie");
+			unit_t* door = nullptr;
+			for (unit_t* unit : functions.find_units(st.locations.at(21).area)) if (unit->unit_type->id == (UnitTypes)208) door = unit;
+			require(door && !functions.u_no_collide(door), "the original prison door begins closed");
+			functions.move_unit(zergling, position_at(24));
+			functions.set_unit_order(zergling, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 600; ++tick) step();
+			require(functions.u_no_collide(door) && functions.u_disabled(door), "the original prison control trigger opens the native door and removes collision");
+			require(st.unit_counts[3][(UnitTypes)53] == 2 && st.unit_counts[0][(UnitTypes)53] == 0, "native proximity naturally rescues the two original Hunter Killers during the opening");
+			functions.move_unit(zergling, position_at(3) - xy(0, 80));
+			functions.issue_order(zergling, false, functions.get_order_type(Orders::Move), {position_at(3), nullptr});
+			bool teleported = false;
+			for (int tick = 0; tick != 800; ++tick) { step(); if (functions.xy_length(zergling->sprite->position - position_at(6)) < 192) teleported = true; }
+			require(teleported, "native movement onto the original beacon activates the repeatable sector-five-to-six teleporter");
+			require(!st.players[3].victory_state, "door controls, reinforcements and teleporting do not invent victory");
+		} else {
+			if (scenario == 1) functions.move_unit(kerrigan, position_at(20));
+			if (scenario == 2) functions.kill_unit(kerrigan);
+			if (scenario == 3) functions.move_unit(zergling, position_at(20));
+			bool paused = false;
+			for (int tick = 0; tick != 1800 && !st.players[3].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+			if (scenario == 1) require(st.players[3].victory_state >= 3 && paused, "Kerrigan reaches the original Supercomputer download sequence and victory");
+			if (scenario == 2) require(st.players[3].victory_state == 2, "original Kerrigan loss reaches defeat");
+			if (scenario == 3) require(!st.players[3].victory_state, "a non-Kerrigan actor cannot satisfy the original Supercomputer objective");
+		}
+		printf("The Amerigo original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2276,6 +2350,7 @@ int main(int argc, char** argv) {
 	bool egression = campaign && argc > 4 && !strcmp(argv[4], "zerg02");
 	bool new_dominion = campaign && argc > 4 && !strcmp(argv[4], "zerg03");
 	bool agent_swarm = campaign && argc > 4 && !strcmp(argv[4], "zerg04");
+	bool amerigo = campaign && argc > 4 && !strcmp(argv[4], "zerg05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2292,6 +2367,12 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (amerigo) {
+			require(player.st().players[3].controller == player_t::controller_occupied && player.st().players[3].race == race_t::zerg && player.st().unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] == 1 && player.st().unit_counts[3][UnitTypes::Zerg_Zergling] == 6, "The Amerigo retains original Kerrigan and six Zerglings with human slot three");
+			amerigo_mission_cases(load_data_file, map_file);
+			printf("The Amerigo original initialization and indoor control checks passed.\n");
+			return 0;
+		}
 		if (agent_swarm) {
 			auto& st = player.st();
 			state_functions functions(st);
@@ -2353,10 +2434,10 @@ int main(int argc, char** argv) {
 			for (unit_t* unit : ptr(st.player_units[3])) {
 				if (functions.unit_is(unit, UnitTypes::Special_Zerg_Beacon)) chrysalis = unit;
 				if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) worker = unit;
-				if (functions.unit_is(unit, UnitTypes::Powerup_Young_Chrysalis)) ++portable_count;
 			}
+			for (int owner : all_player_slots) portable_count += st.unit_counts[owner][UnitTypes::Powerup_Young_Chrysalis];
 			require(chrysalis && worker, "Egression preserves its original standing Chrysalis and Drone");
-			require(portable_count == 1, "original tracking initialization produces exactly one portable Chrysalis");
+			require(portable_count == 1 && st.unit_counts[11][UnitTypes::Powerup_Young_Chrysalis] == 1, "Egression retains exactly its original neutral portable Chrysalis");
 			require(!st.players[3].victory_state && !st.campaign_ai[3].town_active, "Egression neither invents an opening outcome nor enables human AI");
 			require(st.campaign_ai[1].town_active && st.campaign_ai_scripts.size() == 1, "Egression starts its original Protoss Zer2 town program");
 			printf("Egression original initialization, standing Chrysalis and AI startup passed.\n");
@@ -2364,7 +2445,7 @@ int main(int argc, char** argv) {
 			functions.set_unit_order(worker, functions.get_order_type(Orders::HoldPosition));
 			for (int tick = 0; tick != 64 && !worker->worker.powerup; ++tick) functions.next_frame();
 			require(worker->worker.powerup && functions.unit_is(worker->worker.powerup, UnitTypes::Powerup_Young_Chrysalis), "a Drone entering the original Chrysalis picks up its native portable form");
-			require(!functions.unit_dying(chrysalis) && functions.us_hidden(worker->worker.powerup), "pickup carries one native Chrysalis while preserving the original source beacon");
+			require(!functions.unit_dying(chrysalis) && functions.us_hidden(worker->worker.powerup) && worker->worker.powerup->owner == worker->owner, "pickup carries the original Chrysalis with native worker ownership while preserving the source beacon");
 			printf("Egression native Chrysalis pickup passed.\n");
 			bool ground_fire = false, air_fire = false;
 			int combat_budget = 17002 + 4 * 180 * 15 + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time + 2000;

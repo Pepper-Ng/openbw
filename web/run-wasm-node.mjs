@@ -221,6 +221,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg04'), false, 'Agent of the Swarm requires The New Dominion victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 13).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg04'), true, 'Completing The New Dominion unlocks Agent of the Swarm');
+  assert.equal(normal.unlocked('zerg05'), false, 'The Amerigo requires the Agent of the Swarm victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 14).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg05'), true, 'Completing Agent of the Swarm unlocks The Amerigo');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -266,7 +269,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -548,6 +551,13 @@ function testCampaign() {
     for (const [type, count] of [['Drone', 3], ['Hydralisk', 4], ['Zergling', 6], ['Queen', 2], ['Overlord', 2], ['Hatchery', 1], ['Mature Crysalis', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
     assert.equal(human.filter(unit => unit[1] === 'Infested Kerrigan').length, 0, 'Kerrigan must be created by the original hatch trigger');
     console.log('Agent of the Swarm original Zerg initialization checks passed.');
+  } else if (missionId === 'zerg05') {
+    assert.equal(mission.episode, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    assert.equal(human.filter(unit => unit[1] === 'Infested Kerrigan').length, 1);
+    assert.equal(human.filter(unit => unit[1] === 'Zergling').length, 6);
+    assert.equal(human.filter(unit => unit[1] === 'Hunter Killer').length, 2, 'Native opening proximity rescues the two original Hunter Killers');
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Amerigo has no invented countdown');
+    console.log('The Amerigo original Zerg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -561,7 +571,7 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'zerg05' ? [3, 4, 5, 6, 8] : missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -569,7 +579,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'zerg04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 250, 'Original Agent of the Swarm trigger grants 250 gas');
     assert.equal(x.openbw_mission_countdown(), 600, 'Original ten-minute hatch countdown');
@@ -842,8 +852,8 @@ function testCampaign() {
     }
   }
   if (missionId === 'zerg02') {
-    const worker = human.find(unit => unit[1] === 'Drone'), chrysalis = human.find(unit => unit[1] === 'Young Chrysalis');
-    assert.ok(worker && chrysalis, 'Original Drone and native tracked Chrysalis exist');
+    const worker = human.find(unit => unit[1] === 'Drone'), chrysalis = human.find(unit => unit[1].includes('Beacon'));
+    assert.ok(worker && chrysalis, 'Original Drone and standing Chrysalis marker exist');
     const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
     x.openbw_pan(-Number(camera[1]), -Number(camera[2]));
     x.openbw_debug_select(Number(worker[0]), 0); x.openbw_render(0); x.openbw_out_clear();
@@ -858,10 +868,10 @@ function testCampaign() {
       x.openbw_step();
       if (tick % 16) continue;
       consume();
-      const current = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === chrysalis[0]);
-      carried = !!current && current[5] !== chrysalis[5];
+      const current = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Young Chrysalis' && unit[2] === String(mission.humanSlot));
+      carried = !!current;
     }
-    assert.ok(carried, 'Native Drone movement collects the same Chrysalis and changes its powerup order');
+    assert.ok(carried, 'Native Drone movement collects the original neutral Chrysalis and transfers its ownership');
     for (let tick = 0; tick < 64; tick++) x.openbw_step();
     consume();
     const rescueDialogue = events.find(event => event[3] === 7);
@@ -870,6 +880,28 @@ function testCampaign() {
     assert.equal(x.openbw_mission_countdown(), -1, 'Normal carried Chrysalis does not invent a recovery countdown');
     assert.equal(read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[1] === 'Hunter Killer' && unit[2] === String(mission.humanSlot)).length, 6, 'The same normal move rescues the original Hunter Killers');
     console.log('Egression normal right-click Chrysalis pickup and original Hunter Killer rescue passed.');
+  }
+  if (missionId === 'zerg05') {
+    const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');
+    x.openbw_debug_select(Number(kerrigan[0]), 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tCloak\t/);
+    assert.match(read(x.openbw_card()), /\tConsume\t/);
+    assert.doesNotMatch(read(x.openbw_card()), /Psionic Storm/, 'The original mission disables Storm');
+    const energy = Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]);
+    for (const expected of ['Decloak', 'Cloak']) {
+      x.openbw_out_clear(); x.openbw_key(1, 99, 0); x.openbw_key(0, 99, 0); x.openbw_render(0);
+      const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      assert.ok(output.length > 0, 'Kerrigan cloak and decloak use synchronized input');
+      new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+      x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+      for (let tick = 0; tick < 128; tick++) {
+        x.openbw_step(); x.openbw_render(0);
+        if (read(x.openbw_card()).includes(`\t${expected}\t`)) break;
+      }
+      assert.ok(read(x.openbw_card()).includes(`\t${expected}\t`), `Native Kerrigan state offers ${expected}: ${read(x.openbw_card())}`);
+      if (expected === 'Decloak') assert.ok(Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]) <= energy - 24, 'Original hero cloak charges the native twenty-five-energy cost');
+    }
+    console.log('The Amerigo original Kerrigan paid cloak, decloak and disabled-Storm controls passed.');
   }
   if (missionId === 'terran06') {
     const raynor = human.find(unit => unit[1] === 'Jim Raynor'), worker = human.find(unit => unit[1] === 'SCV');

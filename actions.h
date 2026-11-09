@@ -781,7 +781,7 @@ struct action_functions: state_functions {
 		for (unit_t* u : selected_units(owner)) {
 			if (u->owner != owner) continue;
 			const tech_type_t* tech = nullptr;
-			if (unit_is_ghost(u)) tech = get_tech_type(TechTypes::Personnel_Cloaking);
+			if (unit_is_ghost(u) || unit_is(u, UnitTypes::Hero_Infested_Kerrigan)) tech = get_tech_type(TechTypes::Personnel_Cloaking);
 			else if (unit_is_wraith(u)) tech = get_tech_type(TechTypes::Cloaking_Field);
 			if (!tech) continue;
 			if (!unit_can_use_tech(u, tech)) continue;
@@ -798,7 +798,7 @@ struct action_functions: state_functions {
 		for (unit_t* u : selected_units(owner)) {
 			if (u->owner != owner) continue;
 			const tech_type_t* tech = nullptr;
-			if (unit_is_ghost(u)) tech = get_tech_type(TechTypes::Personnel_Cloaking);
+			if (unit_is_ghost(u) || unit_is(u, UnitTypes::Hero_Infested_Kerrigan)) tech = get_tech_type(TechTypes::Personnel_Cloaking);
 			else if (unit_is_wraith(u)) tech = get_tech_type(TechTypes::Cloaking_Field);
 			if (!tech) continue;
 			if (!unit_can_use_tech(u, tech)) continue;

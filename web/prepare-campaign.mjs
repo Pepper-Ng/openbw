@@ -21,6 +21,7 @@ const missions = {
   zerg02: { title: 'Egression', episode: 2, order: 2, scenarioHash: '5819629c7bf99c941ab64225de24e4aa60c5164ad5c00345258aa62fe6a0eadf', units: 146, triggers: 9, sounds: 8 },
   zerg03: { title: 'The New Dominion', episode: 2, order: 3, scenarioHash: 'a62ddf17410b37aa406aaf6a0024edb1aae9f69521e5abeab7a537baf638f7d7', units: 131, triggers: 6, sounds: 8 },
   zerg04: { title: 'Agent of the Swarm', episode: 2, order: 4, scenarioHash: '535c6d75f4225224abf36965627d7e7889c3e3b245a97d95843933d5cfb9de2a', units: 195, triggers: 7, sounds: 17 },
+  zerg05: { title: 'The Amerigo', episode: 2, order: 5, scenarioHash: 'd758f917aebef2775b76bf90a5637fc7308ef4540334b05567e3c0caa6666e45', units: 137, triggers: 36, sounds: 21 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({

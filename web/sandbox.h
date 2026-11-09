@@ -1299,8 +1299,8 @@ struct play_ui : ui_functions {
 			if (u_burrowed(u)) card.push_back({'u', "Unburrow", C_UNBURROW, U::None});
 			else card.push_back({'u', "Burrow", C_BURROW, U::None});
 		}
-		bool cloakable = (unit_is_wraith(u) && unit_can_use_tech(u, get_tech_type(TechTypes::Cloaking_Field), my_player)) ||
-		                 (unit_is_ghost(u) && unit_can_use_tech(u, get_tech_type(TechTypes::Personnel_Cloaking), my_player));
+		bool cloakable = unit_can_use_tech(u, get_tech_type(TechTypes::Cloaking_Field), my_player) ||
+		                 unit_can_use_tech(u, get_tech_type(TechTypes::Personnel_Cloaking), my_player);
 		if (cloakable) {
 			if (u_cloaked(u)) card.push_back({'c', "Decloak", C_DECLOAK, U::None});
 			else card.push_back({'c', "Cloak", C_CLOAK, U::None});
