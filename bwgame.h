@@ -281,6 +281,8 @@ struct state_base_copyable {
 			type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
 		};
 		a_vector<area_town> area_towns;
+		struct valued_region { size_t index; bool contested; };
+		a_vector<valued_region> valued_regions;
 		struct defense_request { int category; int amount; UnitTypes type; };
 		struct defense_region {
 			bool owned = false;
@@ -19250,12 +19252,12 @@ struct state_functions {
 					script.wait = read(2);
 					break;
 				} else if (opcode == 3) {
-					if (st.players.at(script.owner).controller != player_t::controller_computer_game) error("campaign town requires computer owner");
+					if (st.players.at(script.owner).controller != player_t::controller_computer_game) { script.position = 0; break; }
 					ai.home = (script.area.from + script.area.to) / 2;
 					ai.town_active = true;
 					script.town = 0;
 				} else if (opcode == 4) {
-					if (st.players.at(script.owner).controller != player_t::controller_computer_game) error("campaign area town requires computer owner");
+					if (st.players.at(script.owner).controller != player_t::controller_computer_game) { script.position = 0; break; }
 					auto existing = std::find_if(ai.area_towns.begin(), ai.area_towns.end(), [&](const auto& town) { return town.area.from == script.area.from && town.area.to == script.area.to; });
 					if (existing == ai.area_towns.end()) {
 						if (ai.area_towns.size() >= 8) error("campaign area town limit exceeded");
@@ -19360,6 +19362,16 @@ struct state_functions {
 						set_unit_order(unit, get_order_type(Orders::EnterTransport), selected->first);
 						selected->second -= unit->unit_type->space_required;
 					}
+				}
+				else if (opcode == 42) {
+					if (st.players.at(script.owner).controller != player_t::controller_computer_game) continue;
+					size_t region = get_region_at((script.area.from + script.area.to) / 2)->index;
+					bool occupied = false;
+					for (int enemy_owner = 0; enemy_owner != 8; ++enemy_owner) {
+						if (enemy_owner == script.owner || st.alliances[script.owner][enemy_owner]) continue;
+						for (unit_t* unit : ptr(st.player_units[enemy_owner])) if (!unit_dying(unit) && !us_hidden(unit) && !ut_turret(unit) && get_region_at(unit->sprite->position)->index == region) occupied = true;
+					}
+					if (!occupied && std::none_of(ai.valued_regions.begin(), ai.valued_regions.end(), [&](const auto& value) { return value.index == region; })) ai.valued_regions.push_back({region, false});
 				}
 				else if (opcode == 45) {
 					ai.nuke_interval = read(1) * 60 * 15;
@@ -19525,6 +19537,15 @@ struct state_functions {
 			}
 		}
 		if (ai.maximum_force) for (auto& region : ai.regions) for (int& needed : region.needed) needed = std::min(needed, ai.maximum_force);
+		for (auto value = ai.valued_regions.begin(); value != ai.valued_regions.end();) {
+			auto& region = ai.regions.at(value->index);
+			bool occupied = std::any_of(region.targets.begin(), region.targets.end(), [&](unit_id id) { return get_unit(id) != nullptr; });
+			if (occupied) value->contested = true;
+			bool building = false;
+			for (unit_t* unit : ptr(st.player_units[owner])) if (ut_building(unit) && !unit_dying(unit) && get_region_at(unit->sprite->position)->index == value->index) building = true;
+			if (value->contested && !occupied && !building) value = ai.valued_regions.erase(value);
+			else { region.defended = true; ++value; }
+		}
 	}
 
 	size_t campaign_ai_unit_town(int owner, const unit_t* unit) const {

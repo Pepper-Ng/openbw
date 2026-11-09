@@ -2626,6 +2626,130 @@ static void eye_for_eye_mission_cases(data_loading::data_files_loader<>& load_da
 	}
 }
 
+static void invasion_aiur_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* drone = nullptr;
+		unit_t* hydralisk = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) drone = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Hydralisk)) hydralisk = unit;
+		}
+		require(drone && hydralisk && !st.countdown_active && !st.trigger_switches[0] && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal], "original mission begins before harvesting, with no manufactured portable crystal");
+		if (scenario < 4) {
+			unit_t* overlord = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Overlord)) overlord = unit;
+			require(overlord, "original Overlord supplies mission-9 contact-gate movement");
+			int locations[] = {22, 24, 3, 4};
+			const auto& area = st.locations.at(locations[scenario]).area;
+			xy destination = (area.from + area.to) / 2;
+			functions.move_unit(overlord, xy(destination.x, area.from.y - 64));
+			functions.issue_order(overlord, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			for (int tick = 0; tick != 800 && !st.trigger_switches[scenario == 1 ? 11 : 10]; ++tick) step();
+			for (int tick = 0; tick != 64; ++tick) step();
+			int owner = scenario == 1 ? 4 : 7;
+			auto& ai = st.campaign_ai[owner];
+			require(st.trigger_switches[scenario == 1 ? 11 : 10] && ai.town_active && ai.area_towns.size() == 1 && !st.players[3].victory_state, "native contact starts both original main/area-town programs without a replacement wave");
+			require(!ai.valued_regions.empty(), "authored VluA programs mark original center regions for native regional defense");
+			if (scenario == 0) {
+				size_t selected = ~(size_t)0;
+				for (const auto& value : ai.valued_regions) if (!ai.regions[value.index].owned && st.game->regions.regions.at(value.index).walkable()) { selected = value.index; break; }
+				require(selected != ~(size_t)0, "source value-area list includes a walkable region without owned primary buildings");
+				const auto& region = st.game->regions.regions.at(selected);
+				xy position(region.center.x.integer_part(), region.center.y.integer_part());
+				functions.move_unit(hydralisk, position);
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(ai.regions[selected].defended && std::any_of(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.region == selected; }), "original defenseuse requests assign real native defenders to a valued-region incursion");
+				functions.start_campaign_ai_script(owner, 1098214486u, functions.square_at(position, 16));
+				for (int tick = 0; tick != 8; ++tick) step();
+				require(std::count_if(ai.valued_regions.begin(), ai.valued_regions.end(), [&](const auto& value) { return value.index == selected; }) == 1, "repeated VluA execution cannot duplicate an already valued region");
+				functions.move_unit(hydralisk, xy(638, 469));
+				functions.update_campaign_ai_regions(owner);
+				require(!ai.regions[selected].defended && std::none_of(ai.valued_regions.begin(), ai.valued_regions.end(), [&](const auto& value) { return value.index == selected; }), "a building-free valued region expires after its original one-defense lifecycle");
+				size_t occupied = functions.get_region_at(hydralisk->sprite->position)->index;
+				functions.start_campaign_ai_script(owner, 1098214486u, functions.square_at(hydralisk->sprite->position, 16));
+				functions.start_campaign_ai_script(3, 2037135706u, st.locations.at(3).area);
+				for (int tick = 0; tick != 8; ++tick) step();
+				require(std::none_of(ai.valued_regions.begin(), ai.valued_regions.end(), [&](const auto& value) { return value.index == occupied; }) && !st.campaign_ai[3].town_active && st.campaign_ai[3].area_towns.empty(), "VluA ignores already occupied enemy regions and area-town programs cannot take over the human player");
+				unit_t* building = nullptr;
+				for (unit_t* unit : ptr(st.player_units[owner])) if (functions.u_grounded_building(unit) && !functions.unit_dying(unit)) { building = unit; break; }
+				require(building, "original Protoss building supplies the persistent value-area case");
+				size_t building_region = functions.get_region_at(building->sprite->position)->index;
+				functions.start_campaign_ai_script(owner, 1098214486u, functions.square_at(building->sprite->position, 16));
+				for (int tick = 0; tick != 8; ++tick) step();
+				functions.move_unit(hydralisk, building->sprite->position);
+				functions.update_campaign_ai_regions(owner);
+				functions.move_unit(hydralisk, xy(638, 469));
+				functions.update_campaign_ai_regions(owner);
+				require(ai.regions[building_region].defended && std::any_of(ai.valued_regions.begin(), ai.valued_regions.end(), [&](const auto& value) { return value.index == building_region && value.contested; }), "a valued region with an original owned building remains eligible after an incursion ends");
+			}
+		} else if (scenario == 4) {
+			functions.move_unit(hydralisk, xy(1872, 2912));
+			functions.move_unit(drone, xy(528, 480));
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(!st.countdown_active && !st.trigger_switches[0] && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal] && !st.players[3].victory_state, "a non-Drone at the formation and an empty Drone at the return beacon cannot start harvesting or win");
+		} else if (scenario == 5) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2, "the original whole-human-force loss reaches mission-9 defeat");
+		} else {
+			functions.move_unit(drone, xy(1792, 2912));
+			functions.issue_order(drone, false, functions.get_order_type(Orders::Move), {xy(1872, 2912), nullptr});
+			for (int tick = 0; tick != 1200 && !st.countdown_active; ++tick) step();
+			require(st.countdown_active && st.countdown_timer == 600 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 3 && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal], "normal Drone movement starts source removal, harvest dialogue and the full ten-minute timer without creating a crystal early");
+			int harvesting_frame = st.current_frame;
+			for (int tick = 0; tick != 600 * 16 && st.countdown_timer > 1; ++tick) step();
+			require(st.countdown_timer == 1 && st.current_frame - harvesting_frame >= 598 * 16 && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal] && !st.players[3].victory_state, "the unshortened source harvest cannot finish or win before countdown expiry");
+			unit_t* crystal = nullptr;
+			unit_t* carrier = nullptr;
+			for (int tick = 0; tick != 1200 && !carrier; ++tick) {
+				step();
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					if (functions.unit_is(unit, UnitTypes::Powerup_Khaydarin_Crystal) && !functions.unit_dying(unit)) crystal = unit;
+					if (functions.ut_worker(unit) && unit->worker.powerup) carrier = unit;
+				}
+			}
+			require(st.trigger_switches[0] && crystal && carrier && carrier->worker.powerup == crystal && functions.us_hidden(crystal) && carrier->carrying_flags == 4 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && !st.players[3].victory_state, "source expiry recreates the Drone and exactly its native carried crystal without premature victory");
+			if (scenario == 7) {
+				unit_id crystal_id = functions.get_unit_id(crystal);
+				functions.kill_unit(carrier);
+				for (int tick = 0; tick != 64; ++tick) step();
+				crystal = functions.get_unit(crystal_id);
+				require(crystal && !functions.unit_dying(crystal) && !functions.us_hidden(crystal) && !st.players[3].victory_state, "native carrier loss drops the same crystal without inventing defeat or another harvest");
+				carrier = nullptr;
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && !functions.unit_dying(unit)) carrier = unit;
+				require(carrier, "another original Drone remains for crystal recovery");
+				functions.issue_order(carrier, false, functions.get_order_type(Orders::Move), {crystal->sprite->position, nullptr});
+				for (int tick = 0; tick != 8000 && !carrier->worker.powerup; ++tick) step();
+				require(carrier->worker.powerup == crystal && functions.us_hidden(crystal) && !st.countdown_timer, "an original Drone can walk to recover the same dropped crystal without resetting harvesting");
+			}
+			functions.issue_order(carrier, false, functions.get_order_type(Orders::Move), {xy(528, 480), nullptr});
+			for (int tick = 0; tick != 8000 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state >= 3 && carrier->worker.powerup == crystal, "normal native crystal delivery runs the original transmission and victory with enemy bases still present");
+		}
+		printf("The Invasion of Aiur original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2650,6 +2774,7 @@ int main(int argc, char** argv) {
 	bool dark_templar = campaign && argc > 4 && !strcmp(argv[4], "zerg06");
 	bool culling = campaign && argc > 4 && !strcmp(argv[4], "zerg07");
 	bool eye_for_eye = campaign && argc > 4 && !strcmp(argv[4], "zerg08");
+	bool invasion_aiur = campaign && argc > 4 && !strcmp(argv[4], "zerg09");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2666,6 +2791,45 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (invasion_aiur) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 6 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 2 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 3 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && !st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan], "The Invasion of Aiur retains its original human slot, base and force without granting Kerrigan");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 750 && st.current_gas[3] == 750 && !st.players[3].victory_state && st.campaign_ai[2].town_active && !st.campaign_ai[0].town_active && !st.campaign_ai[3].town_active && !st.campaign_ai[6].town_active && st.campaign_ai_scripts.size() == 1 && !st.trigger_switches[10] && !st.trigger_switches[11], "The Invasion of Aiur retains original resources and the initial Teal town without running town AI for rescuable or neutral force members");
+			unit_t* scout_target = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+				if (functions.unit_is(unit, UnitTypes::Zerg_Overlord)) scout_target = unit;
+			}
+			require(scout_target, "original Overlord activates the Orange combat-observation programs");
+			functions.move_unit(scout_target, xy(2048, 2624));
+			functions.issue_order(scout_target, false, functions.get_order_type(Orders::Move), {xy(2048, 2752), nullptr});
+			bool teal_ground_fire = false, orange_ground_fire = false, orange_air_fire = false;
+			int combat_budget = 4500 + 500 + 3 * (1500 + 500 + 180 * 15) + 2 * st.game->map_width + 5 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time;
+			for (int tick = 0; tick != combat_budget && !(teal_ground_fire && orange_ground_fire && orange_air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {2, 4}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 2 && !functions.u_flying(unit)) teal_ground_fire = true;
+					if (owner == 4 && !functions.u_flying(unit)) orange_ground_fire = true;
+					if (owner == 4 && functions.u_flying(unit)) orange_air_fire = true;
+				}
+			}
+			require(teal_ground_fire && orange_ground_fire && orange_air_fire && st.trigger_switches[11], "original Zer9 and contact-gated Z9ro ground/air parties fire native weapons at authored waits and funding");
+			printf("The Invasion of Aiur original Teal/Orange ground and air attacks passed.\n");
+			invasion_aiur_mission_cases(load_data_file, map_file);
+			printf("The Invasion of Aiur original initialization passed.\n");
+			return 0;
+		}
 		if (eye_for_eye) {
 			auto& st = player.st();
 			state_functions functions(st);

@@ -25,6 +25,7 @@ const missions = {
   zerg06: { title: 'The Dark Templar', episode: 2, order: 6, scenarioHash: 'f441dcbdc4878d16a0e71790464d9ef8d677aad0c85e2463d0fa4ff2616af1f1', units: 188, triggers: 9, sounds: 14 },
   zerg07: { title: 'The Culling', episode: 2, order: 7, scenarioHash: '2c39850f5a902c369130da3ebfce6d32d087e1d1d8fca1204ef6ef2f9a1b5e9d', units: 233, triggers: 8, sounds: 6 },
   zerg08: { title: 'Eye for an Eye', episode: 2, order: 8, scenarioHash: 'ea8af2d5458e5c27ad53419a80420f32619c60a7830eefd4742b767f3dc0cac2', units: 198, triggers: 39, sounds: 11 },
+  zerg09: { title: 'The Invasion of Aiur', episode: 2, order: 9, scenarioHash: 'fd99e4670f57110dd7720777a188d6447c7e23a02334c691f90790c5752f8205', units: 377, triggers: 14, sounds: 8 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
