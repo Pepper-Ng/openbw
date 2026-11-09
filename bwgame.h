@@ -12481,7 +12481,7 @@ struct state_functions {
 	}
 
 	int unit_target_acquisition_range(const unit_t* u) const {
-		if ((u_cloaked(u) || u_requires_detector(u)) && u->order_type->id == Orders::HoldPosition) {
+		if ((u_cloaked(u) || u_requires_detector(u)) && u->order_type->id != Orders::HoldPosition) {
 			if (unit_is_ghost(u)) return 0;
 		}
 		int bonus = 0;

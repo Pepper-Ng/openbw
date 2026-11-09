@@ -75,6 +75,7 @@ static void expansion_availability_checks(data_loading::data_files_loader<>& loa
 }
 
 static void cloaked_targeting_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	bool matches_classic = true;
 	for (UnitTypes type : {UnitTypes::Terran_Wraith, UnitTypes::Terran_Ghost}) for (bool hold : {false, true}) {
 		game_player player(load_data_file);
 		data_loading::mpq_file<> map_loader(map_file);
@@ -126,19 +127,25 @@ static void cloaked_targeting_checks(data_loading::data_files_loader<>& load_dat
 			fired = fired || attacker->ground_weapon_cooldown || attacker->air_weapon_cooldown;
 			damaged = damaged || target->defensive_matrix_hp < fp8::integer(64000);
 		}
-		if (fired != !(type == UnitTypes::Terran_Ghost && hold) || damaged != fired) {
+		bool expected_fire = type != UnitTypes::Terran_Ghost || hold;
+		printf("Cloaked targeting: unit=%s order=%s fired=%d damaged=%d expected=%d\n", type == UnitTypes::Terran_Ghost ? "Ghost" : "Wraith", hold ? "HoldPosition" : "Idle", fired, damaged, expected_fire);
+		if (fired != expected_fire || damaged != fired) {
 			printf("Cloaked combat diagnostic: type=%d hold=%d fired=%d damaged=%d frame=%d order=%d target=%d target_hp=%d\n", int(type), hold, fired, damaged, st.current_frame, int(attacker->order_type->id), attacker->order_target.unit == target, target->hp.integer_part());
 			printf("Cloaked acquisition diagnostic: hostile=%d attackable=%d visible=%d range=%d distance=%d source_owner=%d target_owner=%d source_controller=%d target_controller=%d\n", functions.unit_target_is_enemy(attacker, target), functions.unit_can_attack_target(attacker, target), functions.unit_can_see_target(attacker, target), functions.unit_target_acquisition_range(attacker), functions.units_distance(attacker, target), attacker->owner, target->owner, st.players[attacker->owner].controller, st.players[target->owner].controller);
 		}
-		require(fired == !(type == UnitTypes::Terran_Ghost && hold) && damaged == fired, "cloaked Wraith damages enemies in idle and Hold; cloaked Ghost damages enemies idle but preserves stealth on Hold");
+		matches_classic = matches_classic && fired == expected_fire && damaged == fired;
 		require(functions.u_cloaked(attacker), "automatic firing does not require decloaking");
 		if (hold) require(attacker->sprite->position == position, "Hold Position never chases the enemy");
-		if (!fired) {
+		if (type == UnitTypes::Terran_Ghost) {
 			functions.issue_order(attacker, false, functions.get_order_type(Orders::AttackUnit), {target->sprite->position, target});
-			for (int tick = 0; tick != 96 && !(fired && damaged); ++tick) { target->defensive_matrix_hp = fp8::integer(64000); target->defensive_matrix_timer = 250; functions.next_frame(); fired = fired || attacker->ground_weapon_cooldown || attacker->air_weapon_cooldown; damaged = damaged || target->defensive_matrix_hp < fp8::integer(64000); }
-			require(fired && damaged && functions.u_cloaked(attacker), "explicit Attack makes a held cloaked Ghost damage the target without decloaking");
+			bool manual_damage = false;
+			for (int tick = 0; tick != 96 && !manual_damage; ++tick) { target->defensive_matrix_hp = fp8::integer(64000); target->defensive_matrix_timer = 250; functions.next_frame(); manual_damage = target->defensive_matrix_hp < fp8::integer(64000); }
+			require(manual_damage && functions.u_cloaked(attacker), "explicit Attack makes an idle or held cloaked Ghost deal new damage without decloaking");
+			printf("Cloaked Ghost explicit Attack after %s: damaged=1 cloaked=1\n", hold ? "HoldPosition" : "Idle");
 		}
 	}
+	fflush(stdout);
+	require(matches_classic, "cloaked Ghost is silent idle, fires on Hold Position or explicit Attack; cloaked Wraith fires idle and on Hold Position");
 	printf("Cloaked Wraith/Ghost idle, Hold, explicit Attack and player cloak research guards passed.\n");
 }
 
@@ -1816,11 +1823,11 @@ static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_dat
 		require(st.current_minerals[0] == 250 && st.current_gas[0] == 150, "original New Gettysburg resources");
 		if (scenario == 0) {
 			functions.u_set_status_flag(kerrigan, unit_t::status_flag_cloaked);
-			require(functions.unit_target_acquisition_range(kerrigan) > 0, "cloaked Kerrigan retains normal idle target acquisition");
+			require(functions.unit_target_acquisition_range(kerrigan) == 0, "cloaked Ghost-family Kerrigan does not automatically acquire targets while idle");
 			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::AttackMove), kerrigan->sprite->position + xy(96, 0));
-			require(functions.unit_target_acquisition_range(kerrigan) > 0, "cloaked Kerrigan retains Attack-move target acquisition");
+			require(functions.unit_target_acquisition_range(kerrigan) == 0, "cloaked Kerrigan does not automatically acquire targets through Attack-move");
 			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
-			require(functions.unit_target_acquisition_range(kerrigan) == 0, "cloaked Ghost Hold Position preserves stealth without automatic target acquisition");
+			require(functions.unit_target_acquisition_range(kerrigan) > 0, "cloaked Ghost Hold Position permits automatic target acquisition");
 			functions.set_unit_order(kerrigan, kerrigan->unit_type->return_to_idle);
 			std::array<unit_t*, 2> targets{};
 			for (unit_t* unit : ptr(st.player_units[1])) {
@@ -1839,15 +1846,16 @@ static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_dat
 			for (unit_t* target : targets) {
 				xy target_position = target->sprite->position;
 				functions.move_unit(target, original_position + xy(96, 0));
-				for (const order_type_t* order : {functions.get_order_type(Orders::AttackMove), functions.get_order_type(kerrigan->unit_type->attack_unit->id)}) {
-					functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+				functions.set_unit_order(target, functions.get_order_type(Orders::HoldPosition));
+				for (const order_type_t* order : {functions.get_order_type(Orders::HoldPosition), functions.get_order_type(kerrigan->unit_type->attack_unit->id)}) {
+					functions.set_unit_order(kerrigan, kerrigan->unit_type->return_to_idle);
 					for (int tick = 0; tick != 64; ++tick) {
 						target->defensive_matrix_hp = fp8::integer(64000);
 						target->defensive_matrix_timer = 250;
 						functions.next_frame();
 					}
-					require(!kerrigan->ground_weapon_cooldown && !kerrigan->order_target.unit, "cloaked Hold Position does not automatically fire at the nearby enemy");
-					functions.issue_order(kerrigan, false, order, {original_position + xy(256, 0), order->id == Orders::AttackMove ? nullptr : target});
+					require(!kerrigan->ground_weapon_cooldown && !kerrigan->order_target.unit, "cloaked idle Kerrigan does not automatically fire at the nearby enemy");
+					functions.issue_order(kerrigan, false, order, {original_position, order->id == Orders::HoldPosition ? nullptr : target});
 					bool fired = false;
 					for (int tick = 0; tick != 96 && !fired; ++tick) {
 						target->defensive_matrix_hp = fp8::integer(64000);
@@ -1855,14 +1863,14 @@ static void gettysburg_mission_cases(data_loading::data_files_loader<>& load_dat
 						functions.next_frame();
 						fired = kerrigan->ground_weapon_cooldown && kerrigan->order_target.unit == target;
 					}
-					require(fired && functions.u_cloaked(kerrigan), "cloaked Kerrigan fires at an original Zealot or Dragoon through Attack-move and direct Attack");
+					require(fired && functions.u_cloaked(kerrigan), "cloaked Kerrigan fires at an original Zealot or Dragoon through Hold Position and direct Attack");
 				}
 				functions.move_unit(target, target_position);
 				functions.move_unit(kerrigan, original_position);
 			}
 			functions.set_secondary_order(kerrigan, functions.get_order_type(Orders::Decloak));
 			functions.set_unit_order(kerrigan, kerrigan->unit_type->return_to_idle);
-			printf("New Gettysburg Kerrigan cloaked Attack-move, direct Attack and Hold Position passed.\n");
+			printf("New Gettysburg Kerrigan cloaked idle/Attack-move suppression, Hold Position and direct Attack passed.\n");
 		}
 		if (scenario == 1) functions.kill_unit(kerrigan);
 		if (scenario == 2) {
