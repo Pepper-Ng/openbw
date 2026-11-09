@@ -964,7 +964,7 @@ size_t decompress_adpcm(uint8_t* input, size_t input_size, uint8_t* output, size
 	for (size_t i = 0; i != channels; ++i) {
 		auto sample = r.template get<int16_t>();
 		previous_sample[i] = sample;
-		if (out_pos - output_size < 2) error("decompress_adpcm: attempt to write past end");
+		if (output_size - out_pos < 2) return out_pos;
 		set_value_at<little_endian, int16_t>(output + out_pos, sample);
 		out_pos += 2;
 	}
@@ -991,7 +991,7 @@ size_t decompress_adpcm(uint8_t* input, size_t input_size, uint8_t* output, size
 				}
 				
 				previous_sample[channel] = sample;
-				if (out_pos - output_size < 2) error("decompress_adpcm: attempt to write past end");
+				if (output_size - out_pos < 2) return out_pos;
 				set_value_at<true, int16_t>(output + out_pos, sample);
 				out_pos += 2;
 				
@@ -1003,7 +1003,7 @@ size_t decompress_adpcm(uint8_t* input, size_t input_size, uint8_t* output, size
 				int n = in_value & 0x7f;
 				if (n == 0) {
 					if (step_index[channel] != 0) --step_index[channel];
-					if (out_pos - output_size < 2) error("decompress_adpcm: attempt to write past end");
+					if (output_size - out_pos < 2) return out_pos;
 					set_value_at<little_endian, int16_t>(output + out_pos, previous_sample[channel]);
 					out_pos += 2;
 				} else if (n == 1) {
@@ -1095,7 +1095,7 @@ struct mpq_archive_file_reader {
 		};
 
 		size_t current_sector_size = sector_data.size();
-		if (current_sector == compressed_sectors.size() - 2) current_sector_size = be.size % sector_size;
+		if (current_sector == compressed_sectors.size() - 2) current_sector_size = be.size - current_sector * sector_size;
 
 		if (sector_data_size == current_sector_size && sector_data_size <= sector_size) {
 			if (be.flags & 0x10000) make_encrypted_reader(r, sector_data_size, key + (uint32_t)current_sector, crypt_table).get_bytes(sector_data.data(), sector_data_size);
@@ -1121,11 +1121,13 @@ struct mpq_archive_file_reader {
 				if (compression_flags & 0x40) {
 					compression_flags &= ~0x40;
 					size_t out_size = decompress_adpcm(compressed_data.data(), input_size, sector_data.data(), current_sector_size, 1);
+					if (!compression_flags && out_size != current_sector_size) error("mpq: %s: incomplete ADPCM sector", filename);
 					if (compression_flags) swap_buffers(out_size);
 				}
 				if (compression_flags & 0x80) {
 					compression_flags &= ~0x80;
 					size_t out_size = decompress_adpcm(compressed_data.data(), input_size, sector_data.data(), current_sector_size, 2);
+					if (!compression_flags && out_size != current_sector_size) error("mpq: %s: incomplete ADPCM sector", filename);
 					if (compression_flags) swap_buffers(out_size);
 				}
 				if (compression_flags != 0) error("mpq: %s: unsupported compression flags %d", filename, compression_flags);

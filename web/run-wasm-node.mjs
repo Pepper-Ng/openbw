@@ -215,6 +215,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg02'), false, 'Egression cannot bypass the Among the Ruins victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 11).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg02'), true, 'Completing Among the Ruins unlocks Egression');
+  assert.equal(normal.unlocked('zerg03'), false, 'The New Dominion requires the Egression victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 12).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg03'), true, 'Completing Egression unlocks The New Dominion');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -260,7 +263,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -531,6 +534,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Hunter Killer' && unit[2] === '0').length, 6, 'The six original Hunter Killers begin with rescue ownership');
     assert.equal(x.openbw_mission_countdown(), -1, 'Egression has no opening recovery countdown');
     console.log('Egression original Zerg initialization checks passed.');
+  } else if (missionId === 'zerg03') {
+    assert.equal(mission.episode, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    for (const [type, count] of [['Drone', 2], ['Hydralisk', 4], ['Mutalisk', 4], ['Overlord', 3], ['Hatchery', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(human.filter(unit => unit[1] === 'Mature Crysalis').length, 1, 'Original mature Chrysalis and its native display label are preserved');
+    assert.equal(x.openbw_mission_countdown(), -1, 'The New Dominion has no invented opening countdown');
+    console.log('The New Dominion original Zerg initialization checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -552,7 +561,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'zerg03') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 50, 'Original New Dominion trigger grants fifty gas');
   if (missionId === 'terran08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Big Push trigger grants 100 gas');
   if (missionId === 'terran09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original New Gettysburg trigger grants 150 gas');
   if (missionId === 'terran10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Original Hammer Falls trigger grants 150 gas');
@@ -591,7 +601,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const locationDrivenDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02'].includes(missionId);
+  const locationDrivenDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03'].includes(missionId);
   if (locationDrivenDialogue) assert.equal(dialogue.length, 0, 'Original mission dialogue is location-triggered, not invented at idle startup');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {

@@ -22,6 +22,23 @@ static void require(bool result, const char* description) {
 	if (!result) error("campaign check failed: %s", description);
 }
 
+static void campaign_audio_bounds_checks() {
+	for (size_t channels : {size_t(1), size_t(2)}) {
+		a_vector<uint8_t> input{0, 2};
+		input.resize(2 + channels * 2, 0);
+		input.insert(input.end(), 8, 0x80);
+		std::array<uint8_t, 16> output;
+		output.fill(0xa5);
+		size_t capacity = channels == 1 ? 6 : 8;
+		require(data_loading::decompress_adpcm(input.data(), input.size(), output.data() + 2, capacity, channels) == capacity, "ADPCM stops at the expected mono/stereo output size despite trailing encoded samples");
+		for (size_t index = 2; index < capacity + 2; ++index) require(output[index] == 0, "bounded ADPCM retains the expected PCM samples");
+		require(output[0] == 0xa5 && output[1] == 0xa5 && output[capacity + 2] == 0xa5, "ADPCM cannot overwrite output boundary guards");
+		output.fill(0xa5);
+		require(data_loading::decompress_adpcm(input.data(), input.size(), output.data() + 2, 1, channels) == 0 && output[2] == 0xa5 && output[3] == 0xa5, "ADPCM never writes half a sample into an odd-sized output buffer");
+	}
+	printf("Campaign ADPCM mono/stereo output boundary checks passed.\n");
+}
+
 static void original_campaign_availability_checks(const state& st) {
 	for (int owner = 0; owner != 12; ++owner) {
 		for (const auto& type : st.game->unit_types.vec) if (type.is_broodwar) require(!st.game->unit_type_allowed[owner][type.id], "original campaign excludes every Brood War unit for every player");
@@ -2146,6 +2163,32 @@ static void egression_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void new_dominion_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 3; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+		for (unit_t* unit : ptr(st.player_units[3])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+		a_vector<unit_t*> victims;
+		if (scenario == 1) for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit)) victims.push_back(unit);
+		if (scenario == 2) for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Special_Mature_Chrysalis)) victims.push_back(unit);
+		if (scenario) require(!victims.empty(), "original mission outcome fixture has its authored objective actors");
+		for (unit_t* unit : victims) functions.kill_unit(unit);
+		bool paused = false;
+		for (int tick = 0; tick != 3000 && !st.players[3].victory_state; ++tick) { functions.next_frame(); paused = paused || st.scripted_pause; }
+		if (scenario == 0) require(!st.players[3].victory_state, "idle original New Dominion cannot invent a victory or defeat");
+		if (scenario == 1) require(st.players[3].victory_state >= 3 && paused, "original Terran building elimination reaches New Dominion ending dialogue and victory");
+		if (scenario == 2) require(st.players[3].victory_state == 2 && paused, "original Chrysalis loss reaches New Dominion defeat");
+		printf("The New Dominion original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2164,6 +2207,7 @@ int main(int argc, char** argv) {
 	bool hammer = campaign && argc > 4 && !strcmp(argv[4], "terran10");
 	bool among_ruins = campaign && argc > 4 && !strcmp(argv[4], "zerg01");
 	bool egression = campaign && argc > 4 && !strcmp(argv[4], "zerg02");
+	bool new_dominion = campaign && argc > 4 && !strcmp(argv[4], "zerg03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2180,6 +2224,40 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (new_dominion) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg, "The New Dominion preserves original human Zerg slot three");
+			require(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 4 && st.unit_counts[3][UnitTypes::Zerg_Mutalisk] == 4 && st.unit_counts[3][UnitTypes::Special_Mature_Chrysalis] == 1, "The New Dominion preserves original human starting forces and Chrysalis");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 150 && st.current_gas[3] == 50 && !st.players[3].victory_state, "The New Dominion retains original opening resources and idle state");
+			require(st.campaign_ai[6].town_active && st.campaign_ai_scripts.size() == 1 && !st.campaign_ai[3].town_active, "The New Dominion starts original Zer3 without controlling the human");
+			campaign_audio_bounds_checks();
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 15502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Terran_Wraith)->build_time;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[6].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Zer3 deploys weapon-firing ground and air parties");
+			printf("The New Dominion original Terran ground and air attacks passed.\n");
+			new_dominion_mission_cases(load_data_file, map_file);
+			printf("The New Dominion original initialization and AI startup passed.\n");
+			return 0;
+		}
 		if (egression) {
 			auto& st = player.st();
 			state_functions functions(st);

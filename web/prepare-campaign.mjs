@@ -19,6 +19,7 @@ const missions = {
   terran10: { title: 'The Hammer Falls', order: 10, source: 'terran12', scenarioHash: '2a3efca711b5a75ffd0ea569802fe0bd4dbfcfbfa0b0f308d897c0dca698fd7d', units: 331, triggers: 7, sounds: 14 },
   zerg01: { title: 'Among the Ruins', episode: 2, order: 1, scenarioHash: 'f4794b4f8fc90f6ea9c4a585faa2c0a1de25450311256c7329a288d4dcd826ad', units: 101, triggers: 13, sounds: 15 },
   zerg02: { title: 'Egression', episode: 2, order: 2, scenarioHash: '5819629c7bf99c941ab64225de24e4aa60c5164ad5c00345258aa62fe6a0eadf', units: 146, triggers: 9, sounds: 8 },
+  zerg03: { title: 'The New Dominion', episode: 2, order: 3, scenarioHash: 'a62ddf17410b37aa406aaf6a0024edb1aae9f69521e5abeab7a537baf638f7d7', units: 131, triggers: 6, sounds: 8 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
