@@ -141,7 +141,7 @@ static void write_output(const char* path, const a_vector<uint8_t>& bytes) {
 int main(int argc, char** argv) {
 	if (argc != 4) error("usage: campaign-pack SOURCE MISSION OUTPUT");
 	a_string mission = argv[2];
-	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "terran09" && mission != "terran11" && mission != "terran12" && mission != "zerg01" && mission != "zerg02" && mission != "zerg03" && mission != "zerg04" && mission != "zerg05" && mission != "zerg06" && mission != "zerg07" && mission != "--ai-script") error("unsupported preparation request");
+	if (mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "terran09" && mission != "terran11" && mission != "terran12" && mission != "zerg01" && mission != "zerg02" && mission != "zerg03" && mission != "zerg04" && mission != "zerg05" && mission != "zerg06" && mission != "zerg07" && mission != "zerg08" && mission != "--ai-script") error("unsupported preparation request");
 	a_string mission_root = "campaign\\" + a_string(mission.compare(0, 4, "zerg") == 0 ? "zerg" : "terran") + "\\" + mission + "\\";
 	embedded_mpq_reader source(argv[1]);
 	paged_reader<embedded_mpq_reader> reader(source);

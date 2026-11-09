@@ -230,6 +230,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg07'), false, 'The Culling requires The Dark Templar victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 16).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg07'), true, 'Completing The Dark Templar unlocks The Culling');
+  assert.equal(normal.unlocked('zerg08'), false, 'Eye for an Eye requires The Culling victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 17).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg08'), true, 'Completing The Culling unlocks Eye for an Eye');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -275,7 +278,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -576,6 +579,11 @@ function testCampaign() {
     for (const [type, count] of [['Drone', 4], ['Hydralisk', 8], ['Mutalisk', 4], ['Overlord', 4], ['Hatchery', 0], ['Larva', 0], ['Infested Kerrigan', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
     assert.equal(x.openbw_mission_countdown(), -1, 'The Culling has no invented visible countdown');
     console.log('The Culling original baseless Zerg initialization checks passed.');
+  } else if (missionId === 'zerg08') {
+    assert.equal(mission.episode, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    for (const [type, count] of [['Drone', 2], ['Hydralisk', 6], ['Zergling', 9], ['Ultralisk', 2], ['Overlord', 5], ['Hatchery', 3], ['Nydus Canal', 4], ['Infested Kerrigan', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(x.openbw_mission_countdown(), -1, 'Eye for an Eye has no invented visible countdown');
+    console.log('Eye for an Eye original Zerg bases, canals and force checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -597,7 +605,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'zerg08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 350, 'Original Eye for an Eye trigger grants 350 gas');
   if (missionId === 'zerg07') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200, 'Original Culling trigger grants 200 gas');
     const army = human.filter(unit => ['Hydralisk', 'Mutalisk'].includes(unit[1]));
@@ -652,7 +661,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -951,13 +960,13 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 450, 'Native Drone production pays fifty additional minerals without test funding');
     console.log('The Culling original paid Hatchery construction, native Larva/Drone production and no-invented-dialogue checks passed.');
   }
-  if (['zerg05', 'zerg06'].includes(missionId)) {
+  if (['zerg05', 'zerg06', 'zerg08'].includes(missionId)) {
     const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');
     x.openbw_debug_select(Number(kerrigan[0]), 0); x.openbw_render(0);
     assert.match(read(x.openbw_card()), /\tCloak\t/);
     assert.match(read(x.openbw_card()), /\tConsume\t/);
     if (missionId === 'zerg05') assert.doesNotMatch(read(x.openbw_card()), /Psionic Storm/, 'The original Amerigo mission disables Storm');
-    else assert.match(read(x.openbw_card()), /Psionic Storm/, 'The original Dark Templar mission permits Storm');
+    else assert.match(read(x.openbw_card()), /Psionic Storm/, 'The original mission permits Storm');
     const energy = Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]);
     for (const expected of ['Decloak', 'Cloak']) {
       x.openbw_out_clear(); x.openbw_key(1, 99, 0); x.openbw_key(0, 99, 0); x.openbw_render(0);
@@ -972,7 +981,7 @@ function testCampaign() {
       assert.ok(read(x.openbw_card()).includes(`\t${expected}\t`), `Native Kerrigan state offers ${expected}: ${read(x.openbw_card())}`);
       if (expected === 'Decloak') assert.ok(Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]) <= energy - 24, 'Original hero cloak charges the native twenty-five-energy cost');
     }
-    if (missionId === 'zerg06') {
+    if (['zerg06', 'zerg08'].includes(missionId)) {
       const storm = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t')).find(line => line[1] === 'Psionic Storm');
       assert.ok(storm?.[0], 'Mission-enabled Storm has a usable native command-card hotkey');
       const beforeStorm = Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]);
@@ -989,6 +998,28 @@ function testCampaign() {
       assert.ok(Number(read(x.openbw_card()).match(/Energy (\d+)/)[1]) <= beforeStorm - 70, 'Native Psionic Storm pays its seventy-five-energy cost, allowing normal regeneration');
     }
     console.log(`${mission.title} original Kerrigan paid cloak/decloak and authored Storm availability controls passed.`);
+  }
+  if (missionId === 'zerg08') {
+    const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');
+    const entrance = human.find(unit => unit[1] === 'Nydus Canal' && Number(unit[3]) === 3424 && Number(unit[4]) === 576);
+    const exit = human.find(unit => unit[1] === 'Nydus Canal' && Number(unit[3]) === 3808 && Number(unit[4]) === 3776);
+    assert.ok(kerrigan && entrance && exit, 'The original north/south canal pair and Kerrigan are present');
+    x.openbw_debug_select(Number(kerrigan[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const targetX = Number(entrance[3]) - Number(camera[1]), targetY = Number(entrance[4]) - Number(camera[2]);
+    x.openbw_mouse_button(1, 3, targetX, targetY, 1); x.openbw_mouse_button(0, 3, targetX, targetY, 1); x.openbw_render(0);
+    const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(output.length > 0, 'Normal Nydus right-click uses synchronized unit orders');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+    x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    let arrived = false;
+    for (let tick = 0; tick < 400 && !arrived; tick++) {
+      x.openbw_step();
+      const current = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === kerrigan[0]);
+      arrived = !!current && Math.hypot(Number(current[3]) - Number(exit[3]), Number(current[4]) - Number(exit[4])) < 160;
+    }
+    assert.ok(arrived, 'Native player orders move Kerrigan through the original linked Nydus pair');
+    console.log('Eye for an Eye normal right-click Nydus transport through the source-linked pair passed.');
   }
   if (missionId === 'terran06') {
     const raynor = human.find(unit => unit[1] === 'Jim Raynor'), worker = human.find(unit => unit[1] === 'SCV');

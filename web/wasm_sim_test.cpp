@@ -2499,6 +2499,133 @@ static void culling_mission_cases(data_loading::data_files_loader<>& load_data_f
 	}
 }
 
+static void eye_for_eye_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 11; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[3])) if (!functions.ut_building(unit)) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		unit_t* kerrigan = nullptr;
+		unit_t* hydralisk = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan)) kerrigan = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Hydralisk)) hydralisk = unit;
+		}
+		require(kerrigan && hydralisk && !st.players[3].victory_state, "Eye for an Eye preserves original actors and no opening outcome");
+		auto center = [&](int location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		if (scenario <= 3) {
+			if (scenario == 0) functions.kill_unit(kerrigan);
+			if (scenario == 1) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[3])) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			}
+			if (scenario >= 2) for (int owner : {1, 2}) {
+				if (scenario == 2 && owner == 2) continue;
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			}
+			bool paused = false;
+			for (int tick = 0; tick != (scenario == 2 ? 800 : 1800) && !st.players[3].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+			if (scenario <= 1) require(st.players[3].victory_state == 2, "original Kerrigan loss or whole-human-force loss reaches defeat");
+			if (scenario == 2) require(!st.players[3].victory_state && st.unit_counts[2][UnitTypes::Protoss_Nexus] > 0, "a surviving original Nexus prevents the ending");
+			if (scenario == 3) require(st.players[3].victory_state >= 3 && paused && st.unit_counts[1][UnitTypes::Hero_Dark_Templar] >= 6 && st.building_counts[1] + st.building_counts[2] > 0, "destroying both Nexuses runs the original final Dark Templar creation/dialogue and victory without requiring all other buildings to die");
+		} else if (scenario <= 6) {
+			int route = scenario - 4;
+			st.trigger_switches[10 + route] = true;
+			unit_t* templar = nullptr;
+			for (int tick = 0; tick != 128; ++tick) {
+				step();
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Dark_Templar) && !functions.unit_dying(unit)) templar = unit;
+				if (templar && functions.u_cloaked(templar) && templar->order_type->id == Orders::Move) break;
+			}
+			require(templar && functions.u_cloaked(templar) && templar->order_type->id == Orders::Move, "the source creates the classic cloaked Dark Templar and MvTe assigns native Move");
+			int destination = route == 0 ? 9 : route == 1 ? 7 : 6;
+			require(templar->order_target.pos == center(destination), "move_dt uses the exact original script destination");
+			xy spawn = templar->sprite->position;
+			for (int tick = 0; tick != 32; ++tick) step();
+			require(templar->sprite->position != spawn, "native path movement advances the source escape actor");
+			functions.move_unit(templar, center(destination));
+			functions.set_unit_order(templar, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 800 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2, "each original Dark Templar exit independently reaches source defeat");
+		} else if (scenario == 7) {
+			std::array<unit_t*, 4> canals{};
+			int index = 0;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is_nydus(unit)) canals[index++] = unit;
+			require(index == 4, "original canal transport fixture uses the four source units");
+			for (unit_t* canal : canals) {
+				unit_t* exit = canal->building.nydus.exit;
+				require(exit && exit->building.nydus.exit == canal && functions.unit_can_enter_nydus(hydralisk, canal), "source reciprocal canal accepts an original human Hydralisk");
+				auto approach = functions.find_unit_placement(hydralisk, canal->sprite->position + xy(64, 0), false);
+				require(approach.first, "native placement provides a legal canal approach in the isolated transport fixture");
+				functions.move_unit(hydralisk, approach.second);
+				functions.issue_order(hydralisk, false, functions.get_order_type(Orders::EnterNydusCanal), {canal->sprite->position, canal});
+				bool arrived = false;
+				for (int tick = 0; tick != 400 && !arrived; ++tick) { step(); arrived = functions.xy_length(hydralisk->sprite->position - exit->sprite->position) < 160; }
+				require(arrived && !functions.us_hidden(hydralisk), "native canal transport reaches the original linked exit and returns the actor to visible play");
+			}
+		} else if (scenario == 8) {
+			unit_t* detector = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Overlord) && functions.is_in_bounds(unit->sprite->position, st.locations.at(0).area)) detector = unit;
+			require(detector && st.trigger_switches[0], "original Overlords begin covering the three authored detector regions");
+			xy original = detector->sprite->position;
+			functions.move_unit(detector, original + xy(640, 0));
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(!st.trigger_switches[0] && !st.scripted_pause, "moving an original detector away runs and completes the source reposition reminder");
+			functions.move_unit(detector, original);
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(st.trigger_switches[0] && st.trigger_switches[13] && !st.players[3].victory_state, "restoring all original detector positions runs the source confirmation without inventing victory");
+		} else if (scenario == 9) {
+			unit_t* observer = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Observer)) observer = unit;
+			require(observer && functions.u_cloaked(observer), "the original Observer retains its native permanent cloak");
+			functions.u_set_status_flag(observer, unit_t::status_flag_invincible);
+			xy original = observer->sprite->position;
+			kerrigan->energy = fp8::integer(250);
+			functions.set_secondary_order(kerrigan, functions.get_order_type(Orders::Cloak));
+			functions.move_unit(observer, kerrigan->sprite->position + xy(64, 0));
+			for (int tick = 0; tick != 96; ++tick) step();
+			require(functions.u_cloaked(kerrigan) && functions.unit_can_see_target(observer, kerrigan), "Observer compatibility preserves native detection of a cloaked original Kerrigan");
+			xy before = observer->sprite->position;
+			functions.queue_order_back(observer, functions.get_order_type(Orders::Move), original);
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(observer->sprite->position != before && observer->order_type->id == Orders::Move, "Observer AI idle services existing queued native movement");
+		} else {
+			unit_t* nexus = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus)) nexus = unit;
+			require(nexus, "original Nexus supplies the authored credited-kill dialogue fixture");
+			auto approach = functions.find_unit_placement(kerrigan, nexus->sprite->position + xy(96, 0), false);
+			require(approach.first, "native placement supplies a legal isolated Nexus combat approach");
+			functions.move_unit(kerrigan, approach.second);
+			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) step();
+			functions.set_unit_shield_points(nexus, 0_fp8);
+			functions.set_unit_hp(nexus, 1_fp8);
+			functions.issue_order(kerrigan, false, kerrigan->unit_type->attack_unit, {nexus->sprite->position, nexus});
+			bool paused = false;
+			for (int tick = 0; tick != 2000; ++tick) { step(); paused = paused || st.scripted_pause; }
+			require(st.killed_unit_counts[3][UnitTypes::Protoss_Nexus] >= 1 && paused && !st.scripted_pause && !st.players[3].victory_state, "a credited native Nexus kill runs the original Kerrigan/Zeratul dialogue without prematurely winning");
+		}
+		printf("Eye for an Eye original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2522,6 +2649,7 @@ int main(int argc, char** argv) {
 	bool amerigo = campaign && argc > 4 && !strcmp(argv[4], "zerg05");
 	bool dark_templar = campaign && argc > 4 && !strcmp(argv[4], "zerg06");
 	bool culling = campaign && argc > 4 && !strcmp(argv[4], "zerg07");
+	bool eye_for_eye = campaign && argc > 4 && !strcmp(argv[4], "zerg08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2538,6 +2666,52 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (eye_for_eye) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			int linked_canals = 0;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is_nydus(unit) && unit->building.nydus.exit && unit->building.nydus.exit->building.nydus.exit == unit && unit->building.nydus.exit->owner == unit->owner) ++linked_canals;
+			require(linked_canals == 4, "all four original Nydus Canals retain their two reciprocal source-record links");
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 6 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 9 && st.unit_counts[3][UnitTypes::Zerg_Ultralisk] == 2 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 5 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 3 && st.unit_counts[3][UnitTypes::Zerg_Nydus_Canal] == 4, "Eye for an Eye preserves its original human slot, bases, canals and starting force");
+			for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 1200; ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+				functions.next_frame();
+			}
+			require(st.current_minerals[3] == 350 && st.current_gas[3] == 350 && !st.players[3].victory_state && st.campaign_ai[1].town_active && st.campaign_ai[2].town_active && st.campaign_ai_scripts.size() == 2 && !st.campaign_ai[3].town_active, "Eye for an Eye retains original resources and both Protoss town programs without human AI substitution");
+			while (st.current_frame < 90 * 16 + 128) {
+				for (unit_t* unit : ptr(st.player_units[3])) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+				functions.next_frame();
+			}
+			require(st.unit_counts[1][(UnitTypes)74] > 0, "the original first escape timer creates a classic Dark Templar actor");
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 12502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				a_vector<unit_t*> intercepted;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Dark_Templar) && !functions.unit_dying(unit)) intercepted.push_back(unit);
+				for (unit_t* unit : intercepted) functions.kill_unit(unit);
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[2].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Zer8 ground and Scout parties fire native weapons at authored timing without extra funding");
+			printf("Eye for an Eye original Protoss ground and air attacks passed.\n");
+			eye_for_eye_mission_cases(load_data_file, map_file);
+			printf("Eye for an Eye original initialization and first Dark Templar escape startup passed.\n");
+			return 0;
+		}
 		if (culling) {
 			auto& st = player.st();
 			state_functions functions(st);

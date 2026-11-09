@@ -8336,8 +8336,13 @@ struct state_functions {
 			error("HarassMove");
 			break;
 		case Orders::AIPatrol:
-			if (!unit_is(u, UnitTypes::Zerg_Overlord)) error("unsupported AIPatrol behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
-			order_PickupIdle(u);
+			if (unit_is(u, UnitTypes::Protoss_Observer)) {
+				if (u->order_target.unit) order_Follow(u);
+				else order_Nothing(u);
+			} else {
+				if (!unit_is(u, UnitTypes::Zerg_Overlord)) error("unsupported AIPatrol behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
+				order_PickupIdle(u);
+			}
 			break;
 		case Orders::GuardPost:
 			error("GuardPost");
@@ -19325,6 +19330,13 @@ struct state_functions {
 						set_unit_order(unit, get_order_type(Orders::RescuePassive));
 					}
 				}
+				else if (opcode == 38) {
+					xy destination = (script.area.from + script.area.to) / 2;
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (!unit_is(unit, UnitTypes::Hero_Dark_Templar) || unit_dying(unit) || us_hidden(unit) || !u_completed(unit)) continue;
+						issue_order(unit, false, get_order_type(Orders::Move), {destination, nullptr});
+					}
+				}
 				else if (opcode == 41) {
 					a_vector<std::pair<unit_t*, int>> bunkers;
 					for (unit_t* bunker : ptr(st.player_units[script.owner])) {
@@ -22860,6 +22872,12 @@ struct game_load_functions : state_functions {
 		};
 
 		tag_funcs["UNIT"] = [&](data_reader_le r) {
+			struct nydus_placement_link {
+				int id;
+				int related_id;
+				unit_t* unit;
+			};
+			a_vector<nydus_placement_link> nydus_links;
 			while (r.left()) {
 
 				int id = r.get<uint32_t>();
@@ -22929,6 +22947,7 @@ struct game_load_functions : state_functions {
 				unit_t* u = create_initial_unit(unit_type, {x, y}, owner);
 
 				if (!u) continue;
+				if ((link & 0x400) && unit_is_nydus(u)) nydus_links.push_back({id, related_unit_id, u});
 				if (valid_flags & flags & 4) {
 					if (!ut_flying_building(u)) error("in-transit placement requires a flying building");
 					set_building_airborne(u);
@@ -22956,6 +22975,11 @@ struct game_load_functions : state_functions {
 
 			}
 
+			for (const auto& canal : nydus_links) {
+				auto exit = std::find_if(nydus_links.begin(), nydus_links.end(), [&](const auto& candidate) { return candidate.id == canal.related_id && candidate.related_id == canal.id; });
+				if (exit == nydus_links.end() || exit->unit == canal.unit || exit->unit->owner != canal.unit->owner) continue;
+				canal.unit->building.nydus.exit = exit->unit;
+			}
 			for (unit_t* u : ptr(st.visible_units)) {
 				update_unit_sprite(u);
 			}
