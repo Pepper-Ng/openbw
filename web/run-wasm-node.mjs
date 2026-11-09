@@ -267,10 +267,11 @@ if (process.argv[2] === '--test-campaign-menu') {
 
 const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
+const bunkerCliffTest = process.argv[2] === '--test-bunker-cliff';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
 if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05'].includes(missionId), 'Unsupported test mission');
-const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const out = campaign || protossSelectionTest || bunkerCliffTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
@@ -278,7 +279,7 @@ const files = [
   readFileSync('web/data/STARDAT.MPQ'),
   readFileSync('web/data/BROODAT.MPQ'),
   readFileSync('web/data/patch_rt.mpq'),
-  readFileSync(campaign ? `web/data/campaign/${missionId}.mpq` : 'web/maps/Weave_v1.scx'),
+  readFileSync(bunkerCliffTest ? 'web/data/campaign/terran06.mpq' : campaign ? `web/data/campaign/${missionId}.mpq` : 'web/maps/Weave_v1.scx'),
 ];
 
 const wasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
@@ -332,9 +333,10 @@ const x = recoveryTest ? {
     nativeExports.openbw_apply(owner, length);
   },
 } : nativeExports;
-if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
+if (bunkerCliffTest) x.openbw_debug_bunker_init(640, 360, 1, 0);
+else if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
 else x.openbw_init(1280, 800, protossSelectionTest ? 2 : 1, 0 /*slot*/);
-if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
+if (!campaign && !bunkerCliffTest) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
 
 if (out) {
@@ -353,6 +355,25 @@ if (out) {
   }
   writeFileSync(out, Buffer.concat([header, body]));
   console.log(`wrote ${out} (${w}x${h})`);
+} else if (bunkerCliffTest) {
+  const snapshot = () => readRecoveryString(x.openbw_debug_bunker_state()).trim().split('\t').map(Number);
+  assert.deepEqual(snapshot().slice(0, 3), [0, 350, 350], 'Both original-stat bunkers start full at duel frame zero');
+  for (let tick = 0; tick < 1920 && !snapshot()[16]; tick++) x.openbw_debug_bunker_step();
+  x.openbw_render(0);
+  const result = snapshot();
+  assert.equal(result[16], 1, 'The same native fixture finishes in the graphical runtime');
+  assert.deepEqual(result.slice(1, 8), [150, 0, -1, 258, 4, 0, 1], 'Graphical result matches simulation: high survives, low dies, eight simultaneous first shots');
+  assert.equal(result[17], 3, 'All eight actual first projectiles launch together on frame three');
+  const pixels = new Uint8Array(memory.buffer, x.openbw_framebuffer(), 640 * 360 * 4), colors = new Set();
+  for (let index = 0; index < pixels.length; index += 64) colors.add(`${pixels[index]},${pixels[index + 1]},${pixels[index + 2]}`);
+  assert.ok(colors.size > 20, 'The actual terrain and units render nonblank');
+  console.log(`Graphical bunker cliff fixture matches native simulation: frame=${result[0]}, high=${result[1]}/350, low=${result[2]}, low death=${result[4]}, attack start=${result[7]}, projectile launch=${result[17]}, colors=${colors.size}.`);
+  for (let frame = result[0]; frame < 3000; frame++) x.openbw_debug_bunker_step();
+  const continued = snapshot();
+  assert.equal(continued[0], 3000, 'Native simulation continues past the settled duel and original 1920-frame combat bound');
+  assert.deepEqual(continued.slice(1, 8), result.slice(1, 8), 'The settled seed-one result remains intact during continued native time');
+  assert.equal(continued[17], 3, 'Continued time preserves the measured first-projectile frame');
+  console.log('Bunker fixture continuation passed: frame=3000, high=150/350 HP, low=0.');
 } else if (campaign) {
   testCampaign();
   if (recoveryTest) {

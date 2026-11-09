@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenBW | Cliff Bunker Duel</title>
+<style>
+  :root { color-scheme: dark; --background: #151718; --text: #ebeded; --muted: #a7adae; --line: #414748; --high: #85baff; --low: #ffc073; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--background); color: var(--text); font: 14px "Trebuchet MS", sans-serif; letter-spacing: 0; }
+  main { width: min(1120px, 100%); margin: 0 auto; padding: 18px; }
+  header, #toolbar, #totals { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+  header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 23px; font-weight: 600; }
+  #status { color: var(--muted); }
+  #toolbar { padding: 14px 0; }
+  button { display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid #596163; border-radius: 4px; background: #2b3031; color: var(--text); cursor: pointer; }
+  button:disabled { opacity: .4; cursor: default; }
+  button:hover:not(:disabled) { background: #41494a; }
+  button svg { width: 19px; height: 19px; }
+  input[type="number"] { width: 105px; padding: 8px; border: 1px solid #596163; border-radius: 3px; background: #232728; color: var(--text); font: inherit; }
+  label { display: flex; align-items: center; gap: 7px; }
+  #totals { justify-content: space-between; padding: 4px 0 12px; font-variant-numeric: tabular-nums; }
+  #high { color: var(--high); } #low { color: var(--low); }
+  #scene { display: block; width: 100%; aspect-ratio: 16 / 9; image-rendering: pixelated; background: #0b0d0e; }
+  #history { display: block; width: 100%; height: 132px; margin-top: 12px; }
+  footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding-top: 8px; color: var(--muted); font-size: 12px; }
+  @media (max-width: 500px) { main { padding: 12px; } h1 { font-size: 20px; } #toolbar { gap: 8px; } #totals { gap: 8px; } }
+</style>
+<main>
+  <header><h1>Cliff Bunker Duel</h1><output id="status" aria-live="polite">Loading original assets</output></header>
+  <div id="toolbar">
+    <button id="play" type="button" title="Run duel" aria-label="Run duel" disabled><i data-lucide="play"></i></button>
+    <button id="step" type="button" title="Advance one frame" aria-label="Advance one frame" disabled><i data-lucide="step-forward"></i></button>
+    <button id="reset" type="button" title="Reset duel" aria-label="Reset duel" disabled><i data-lucide="rotate-ccw"></i></button>
+    <button id="capture" type="button" title="Download current scene" aria-label="Download current scene" disabled><i data-lucide="download"></i></button>
+    <label>Seed <input id="seed" type="number" min="1" max="4294967295" step="1" value="1" required></label>
+    <label>Total frames <input id="frames" type="number" min="1" max="100000" step="1" value="1000" required></label>
+    <label><input id="reverse" type="checkbox">Reverse creation order</label>
+  </div>
+  <div id="totals"><output id="high">High ground: 350/350 HP</output><output id="low">Low ground: 350/350 HP</output><output id="clock">Frame 0</output></div>
+  <canvas id="scene" width="640" height="360" aria-label="Original cliff terrain with the high and low bunkers"></canvas>
+  <canvas id="history" width="1084" height="132" aria-label="Recorded bunker hitpoints by simulation frame"></canvas>
+  <footer><span>4 Marines each | 0 upgrades | no repair | shared spotting</span><output id="first-shot">First volley: pending</output></footer>
+</main>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+<script type="module">
+  const element = id => document.getElementById(id);
+  const canvas = element('scene'), context = canvas.getContext('2d');
+  const graph = element('history'), graphContext = graph.getContext('2d');
+  const files = await Promise.all(['data/STARDAT.MPQ', 'data/BROODAT.MPQ', 'data/patch_rt.mpq', 'data/campaign/terran06.mpq'].map(async path => {
+    const response = await fetch(path);
+    if (!response.ok) throw new Error(`Missing local asset: ${path}`);
+    return new Uint8Array(await response.arrayBuffer());
+  })).catch(error => { element('status').textContent = error.message; throw error; });
+  const binary = await WebAssembly.compile(await (await fetch('openbw.wasm', { cache: 'no-store' })).arrayBuffer());
+  let engine, memory, animation, running = false, previousTime = 0, accumulator = 0;
+  let snapshot = [], samples = [];
+  const read = pointer => {
+    const bytes = new Uint8Array(memory.buffer);
+    let end = pointer;
+    while (bytes[end]) end++;
+    return new TextDecoder().decode(bytes.subarray(pointer, end));
+  };
+  const synchronize = () => { snapshot = read(engine.openbw_debug_bunker_state()).trim().split('\t').map(Number); };
+  const atFrameLimit = () => !element('frames').checkValidity() || snapshot[0] >= Number(element('frames').value);
+  const controls = () => {
+    element('play').disabled = atFrameLimit(); element('step').disabled = running || atFrameLimit();
+    element('play').innerHTML = `<i data-lucide="${running ? 'pause' : 'play'}"></i>`;
+    element('play').title = element('play').ariaLabel = running ? 'Pause duel' : 'Run duel';
+    window.lucide?.createIcons();
+  };
+  function draw() {
+    engine.openbw_render(performance.now());
+    const pixels = new Uint8ClampedArray(memory.buffer, engine.openbw_framebuffer(), canvas.width * canvas.height * 4);
+    context.putImageData(new ImageData(pixels.slice(), canvas.width, canvas.height), 0, 0);
+    const camera = read(engine.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    context.font = '12px "Trebuchet MS", sans-serif'; context.textAlign = 'center';
+    for (let side = 0; side < 2; side++) {
+      const horizontal = snapshot[9 + side * 2] - Number(camera[1]), vertical = snapshot[10 + side * 2] - Number(camera[2]) - 50;
+      context.fillStyle = '#141718'; context.fillRect(horizontal - 76, vertical - 15, 152, 21);
+      context.fillStyle = side ? '#ffc073' : '#85baff';
+      context.fillText(`${side ? 'LOW' : 'HIGH'}  ${snapshot[1 + side]}/${snapshot[15]} HP`, horizontal, vertical);
+    }
+    element('high').textContent = `High ground: ${snapshot[1]}/${snapshot[15]} HP | ${snapshot[5]} Marines`;
+    element('low').textContent = `Low ground: ${snapshot[2]}/${snapshot[15]} HP | ${snapshot[6]} Marines`;
+    element('clock').textContent = `Frame ${snapshot[0]} / ${element('frames').value}`;
+    element('first-shot').textContent = snapshot[17] > 0 ? `All 8 first projectiles: frame ${snapshot[17]}` : snapshot[7] > 0 ? `All 8 attack starts: frame ${snapshot[7]}` : 'First volley: pending';
+    element('status').textContent = running ? snapshot[16] ? 'Aftermath' : 'Duel in progress' : snapshot[16] ? snapshot[1] > 0 ? 'High ground survives' : snapshot[2] > 0 ? 'Low ground survives' : 'Both destroyed' : snapshot[0] ? 'Paused' : 'Ready';
+    if (graph.width !== graph.clientWidth) graph.width = graph.clientWidth;
+    graphContext.clearRect(0, 0, graph.width, graph.height);
+    graphContext.font = '12px "Trebuchet MS", sans-serif'; graphContext.fillStyle = '#a7adae';
+    graphContext.fillText('350 HP', 0, 15); graphContext.fillText('0', 0, 113);
+    const horizontalScale = (graph.width - 80) / Math.max(480, snapshot[0]);
+    for (let side = 0; side < 2; side++) {
+      graphContext.beginPath(); graphContext.strokeStyle = side ? '#ffc073' : '#85baff'; graphContext.lineWidth = 2;
+      samples.forEach((sample, index) => {
+        const horizontal = 55 + sample[0] * horizontalScale, vertical = 111 - sample[1 + side] / snapshot[15] * 96;
+        if (index) graphContext.lineTo(horizontal, vertical); else graphContext.moveTo(horizontal, vertical);
+      });
+      graphContext.stroke();
+    }
+    graphContext.fillText(`Frame ${snapshot[0]}`, graph.width - 100, 129);
+  }
+  function advance() {
+    if (atFrameLimit()) return;
+    engine.openbw_debug_bunker_step(); synchronize(); samples.push(snapshot.slice(0, 3));
+    if (atFrameLimit()) { running = false; controls(); }
+  }
+  function frame(time) {
+    if (running) {
+      accumulator += Math.min(200, time - previousTime);
+      while (accumulator >= 42 && running) { advance(); accumulator -= 42; }
+    }
+    previousTime = time; draw(); animation = requestAnimationFrame(frame);
+  }
+  async function reset() {
+    if (!element('seed').reportValidity() || !element('frames').reportValidity()) return;
+    const seed = Number(element('seed').value);
+    running = false; cancelAnimationFrame(animation);
+    for (const id of ['play', 'step', 'reset', 'capture']) element(id).disabled = true;
+    element('status').textContent = 'Preparing duel';
+    const wasi = {};
+    for (const entry of WebAssembly.Module.imports(binary)) if (entry.module === 'wasi_snapshot_preview1') wasi[entry.name] = () => 0;
+    wasi.environ_sizes_get = wasi.args_sizes_get = (count, size) => { const data = new DataView(memory.buffer); data.setUint32(count, 0, true); data.setUint32(size, 0, true); return 0; };
+    wasi.clock_time_get = (clock, precision, pointer) => { new DataView(memory.buffer).setBigUint64(pointer, BigInt(Math.floor(performance.now() * 1000000)), true); return 0; };
+    wasi.fd_write = (descriptor, vectors, count, written) => { const data = new DataView(memory.buffer); let length = 0; for (let index = 0; index < count; index++) length += data.getUint32(vectors + index * 8 + 4, true); data.setUint32(written, length, true); return 0; };
+    wasi.proc_exit = code => { throw new Error(`Native runtime exited: ${code}`); };
+    const instance = await WebAssembly.instantiate(binary, { wasi_snapshot_preview1: wasi, env: {
+      js_file_size: index => files[index].length,
+      js_read_data: (index, destination, offset, length) => new Uint8Array(memory.buffer, destination, length).set(files[index].subarray(offset, offset + length)),
+      js_sound_load: () => -1, js_sound_play() {}, js_sound_is_playing: () => 0, js_sound_stop() {}, js_sound_set_volume() {},
+    } });
+    engine = instance.exports; memory = engine.memory; engine._initialize?.();
+    engine.openbw_debug_bunker_init(canvas.width, canvas.height, seed, element('reverse').checked ? 1 : 0);
+    synchronize(); samples = [snapshot.slice(0, 3)]; accumulator = 0; previousTime = performance.now();
+    for (const id of ['play', 'step', 'reset', 'capture']) element(id).disabled = false;
+    controls(); draw(); animation = requestAnimationFrame(frame);
+  }
+  element('play').onclick = () => { running = !running; previousTime = performance.now(); controls(); };
+  element('step').onclick = () => { advance(); controls(); draw(); };
+  element('frames').oninput = () => {
+    if (element('reset').disabled) return;
+    if (atFrameLimit()) running = false;
+    controls(); draw();
+  };
+  element('reset').onclick = () => reset().catch(error => { element('status').textContent = error.message; });
+  element('capture').onclick = () => { const link = document.createElement('a'); link.download = `bunker-cliff-${snapshot[8]}-frame-${snapshot[0]}.png`; link.href = canvas.toDataURL(); link.click(); };
+  window.bunkerCliffTest = { state: () => snapshot.slice(), step: () => { advance(); draw(); } };
+  await reset();
+</script>
+</html>

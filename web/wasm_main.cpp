@@ -8,6 +8,7 @@
 // web/wasm_backend.cpp, which JS blits to a <canvas>.
 
 #include "sandbox.h"
+#include "bunker_cliff_test.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -71,13 +72,14 @@ namespace {
 using loader_t = data_loading::data_files_loader<data_loading::mpq_file<data_loading::js_file_reader<>>>;
 loader_t* g_loader = nullptr;
 play_ui* g_ui = nullptr;
+bunker_cliff_fixture* g_bunker_fixture = nullptr;
 }
 
 #define OPENBW_EXPORT(name) __attribute__((export_name(#name))) extern "C"
 
 // Build the game with `n` occupied slots. Every peer must pass an identical slot list (and
 // the same map) or their initial states differ and lockstep is broken from frame 0.
-static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n, bool mission = false) {
+static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n, bool mission = false, bool bunker_cliff = false, uint32_t fixture_seed = 1, bool reverse_creation = false) {
 	if (g_ui || my_slot < 0 || my_slot >= 8) error("invalid or already initialized game session");
 	g_loader = new loader_t(data_loading::data_files_directory<loader_t>(""));
 	if (mission) g_loader->mpqs.emplace_front("openbw.mission");
@@ -106,7 +108,14 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 		for (char c : fn) low += (char)std::tolower((unsigned char)c);
 		if (low.find("scenario.chk") != a_string::npos) g_ui->rep_map = out;
 	};
-	if (mission) {
+	if (bunker_cliff) {
+		game_load_functions game_load(g_ui->player.st());
+		game_load.setup_info.victory_condition = 2;
+		game_load.setup_info.create_no_units = true;
+		game_load.load_map(load_map, {}, false);
+		g_bunker_fixture = new bunker_cliff_fixture(g_ui->player.st(), fixture_seed, reverse_creation);
+		g_ui->competitive = false;
+	} else if (mission) {
 		state& st = g_ui->player.st();
 		game_load_functions game_load(st);
 		game_load.load_map(load_map, [&]() {
@@ -142,10 +151,11 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 	g_ui->set_image_data();
 	xy start = g_ui->game_st.start_locations[my_slot];
 	g_ui->screen_pos = start - xy(width / 2, height / 2);
+	if (g_bunker_fixture) g_ui->screen_pos = (g_bunker_fixture->positions[0] + g_bunker_fixture->positions[1]) / 2 - xy(width / 2, height / 2);
 
 	// Seed the replay header from the loaded game. Everything here is fixed at start, so
 	// the recording only has to accumulate actions from now on.
-	if (!mission) {
+	if (!mission && !bunker_cliff) {
 		state& st = g_ui->player.st();
 		replay_saver_state& r = g_ui->rep;
 		r.map_data = g_ui->rep_map.data();
@@ -406,6 +416,16 @@ OPENBW_EXPORT(openbw_set_view_scale) void openbw_set_view_scale(double s) { if (
 
 // Debug JS API for console/automation testing: list units, select by id (see sandbox.h).
 OPENBW_EXPORT(openbw_debug_units) const char* openbw_debug_units() { return g_ui ? g_ui->debug_units() : ""; }
+OPENBW_EXPORT(openbw_debug_bunker_init) void openbw_debug_bunker_init(int width, int height, uint32_t seed, int reverse_creation) {
+	mp_slot slots[]{{1, race_t::terran}, {4, race_t::terran}};
+	init_game(width, height, 1, slots, 2, false, true, seed, reverse_creation != 0);
+}
+OPENBW_EXPORT(openbw_debug_bunker_step) void openbw_debug_bunker_step() { if (g_bunker_fixture) g_bunker_fixture->step(); }
+OPENBW_EXPORT(openbw_debug_bunker_state) const char* openbw_debug_bunker_state() {
+	static a_string result;
+	result = g_bunker_fixture ? g_bunker_fixture->snapshot() : "";
+	return result.c_str();
+}
 OPENBW_EXPORT(openbw_debug_select) void openbw_debug_select(int id, int add) { if (g_ui) g_ui->debug_select(id, add); }
 OPENBW_EXPORT(openbw_debug_set_life) void openbw_debug_set_life(int id, int hp, int shields) { if (g_ui) g_ui->debug_set_life(id, hp, shields); }
 OPENBW_EXPORT(openbw_debug_build_check) int openbw_debug_build_check(int type, int map_x, int map_y) {

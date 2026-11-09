@@ -7,6 +7,7 @@
 
 #include "bwgame.h"
 #include "actions.h"
+#include "bunker_cliff_test.h"
 #include <cstdio>
 #include <cstring>
 
@@ -2338,12 +2339,28 @@ static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_f
 	}
 }
 
+static void bunker_cliff_duel_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int trial = 0; trial != 2; ++trial) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 2;
+		loader.setup_info.create_no_units = true;
+		loader.load_map(map_loader, {}, false);
+		bunker_cliff_fixture fixture(player.st(), 1, trial != 0);
+		while (!fixture.finished) fixture.step();
+		require(fixture.death_frames[0] < 0 && fixture.death_frames[1] > 0, "seed-one cliff duel retains the high bunker in both creation-order controls");
+		printf("Bunker cliff duel: reverse_creation=%d frame/highHP/lowHP/highDeath/lowDeath/highMarines/lowMarines/attackStart/seed/highX/highY/lowX/lowY/highHeight/lowHeight/maxHP/done/projectileLaunch\n%s", trial, fixture.snapshot().c_str());
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
 	int my_player = 0;
 	race_t my_race = race_t::terran;
 	bool combat_ai = argc > 3 && !strcmp(argv[3], "--test-ai-combat");
+	bool bunker_cliff = argc > 3 && !strcmp(argv[3], "--test-bunker-cliff");
 	bool campaign = argc > 3 && (!strcmp(argv[3], "--test-campaign") || combat_ai);
 	bool backwater = campaign && argc > 4 && !strcmp(argv[4], "terran02");
 	bool desperate = campaign && argc > 4 && !strcmp(argv[4], "terran03");
@@ -2361,6 +2378,7 @@ int main(int argc, char** argv) {
 	bool amerigo = campaign && argc > 4 && !strcmp(argv[4], "zerg05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
+	if (bunker_cliff) { bunker_cliff_duel_checks(load_data_file, map_file); return 0; }
 	game_player player(load_data_file);
 
 	data_loading::mpq_file<> map_loader(map_file);
