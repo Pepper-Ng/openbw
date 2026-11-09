@@ -3047,6 +3047,101 @@ static void higher_ground_mission_cases(data_loading::data_files_loader<>& load_
 	}
 }
 
+static void hunt_tassadar_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {1, 2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* tassadar = nullptr;
+		unit_t* raynor = nullptr;
+		unit_t* escort = nullptr;
+		for (unit_t* unit : ptr(st.player_units[2])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Tassadar)) tassadar = unit;
+			if (functions.unit_is(unit, UnitTypes::Hero_Jim_Raynor_Vulture)) raynor = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Dragoon)) escort = unit;
+		require(tassadar && raynor && escort && !st.trigger_switches[0], "original Tassadar and source-created Raynor remain rescuable before the meeting");
+		if (scenario < 3) {
+			if (scenario == 0) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			} else functions.kill_unit(scenario == 1 ? tassadar : raynor);
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original human-force or required-hero loss reaches The Hunt for Tassadar defeat");
+		} else if (scenario == 3) {
+			a_vector<unit_t*> victims;
+			for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(!st.players[7].victory_state && !st.trigger_switches[0] && !st.unit_counts[7][UnitTypes::Hero_Tassadar] && !st.unit_counts[7][UnitTypes::Hero_Jim_Raynor_Vulture], "clearing enemy buildings and ordinary troops at the starting beacon cannot replace the original two-hero objective");
+		} else {
+			unit_id tassadar_id = functions.get_unit_id(tassadar), raynor_id = functions.get_unit_id(raynor);
+			auto approach = functions.find_unit_placement(escort, tassadar->sprite->position + xy(160, 0), false);
+			require(approach.first, "native placement supplies an isolated approach to the original rescue region");
+			functions.move_unit(escort, approach.second);
+			functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {raynor->sprite->position, nullptr});
+			bool meeting_paused = false;
+			for (int tick = 0; tick != 6000 && !(st.trigger_switches[1] && !st.scripted_pause && st.campaign_ai[0].town_active); ++tick) { step(); meeting_paused = meeting_paused || st.scripted_pause; }
+			tassadar = functions.get_unit(tassadar_id);
+			raynor = functions.get_unit(raynor_id);
+			require(tassadar && raynor && tassadar->owner == 7 && raynor->owner == 7 && meeting_paused && !st.scripted_pause && st.trigger_switches[0] && st.trigger_switches[1] && st.campaign_ai[0].town_active && !st.campaign_ai[7].town_active && !st.players[7].victory_state, "native proximity rescues the same heroes and runs the full source meeting before Pro4 activation");
+			require(st.current_minerals[7] == 50 && st.current_gas[7] == 0 && st.unit_counts[0][UnitTypes::Zerg_Overlord] >= 19, "the original meeting grants only fifty minerals and runs the authored Zerg reinforcement actions");
+			functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {xy(736, 496), nullptr});
+			for (int tick = 0; tick != 1000 && !st.unit_counts[7][UnitTypes::Protoss_Nexus]; ++tick) step();
+			require(st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Probe] == 4 && !st.unit_counts[1][UnitTypes::Protoss_Nexus], "ordinary proximity naturally rescues the original base and four Probes without grants");
+			functions.u_set_status_flag(tassadar, unit_t::status_flag_invincible);
+			functions.u_set_status_flag(raynor, unit_t::status_flag_invincible);
+			functions.set_unit_order(tassadar, functions.get_order_type(Orders::HoldPosition));
+			functions.set_unit_order(raynor, functions.get_order_type(Orders::HoldPosition));
+			if (scenario == 4) {
+				bool ground_fire = false, air_fire = false;
+				int combat_budget = 4502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time + st.game->map_width;
+				for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+					step();
+					for (unit_id id : st.campaign_ai[0].attacking) {
+						unit_t* unit = functions.get_unit(id);
+						if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+						if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+				require(ground_fire && air_fire, "original Pro4 ground and Mutalisk parties fire native weapons at authored waits and funding");
+				printf("The Hunt for Tassadar original Pro4 ground and air attacks passed.\n");
+			}
+			unit_t* first = scenario == 4 ? tassadar : raynor;
+			unit_t* second = scenario == 4 ? raynor : tassadar;
+			const auto& beacon = st.locations.at(0).area;
+			xy destination = (beacon.from + beacon.to) / 2;
+			functions.issue_order(first, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			for (int tick = 0; tick != 10000 && !functions.is_in_bounds(first->sprite->position, beacon); ++tick) step();
+			require(functions.is_in_bounds(first->sprite->position, beacon) && !st.players[7].victory_state, "either original hero arriving alone cannot satisfy the source paired Bring conditions");
+			functions.set_unit_order(first, functions.get_order_type(Orders::HoldPosition));
+			functions.issue_order(second, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			bool ending_paused = false;
+			for (int tick = 0; tick != 12000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			require(ending_paused && st.players[7].victory_state >= 3 && st.building_counts[0] > 0, "normal native movement of both original heroes runs the source paused ending and victory with the Zerg base intact");
+		}
+		printf("The Hunt for Tassadar original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3076,6 +3171,7 @@ int main(int argc, char** argv) {
 	bool first_strike = campaign && argc > 4 && !strcmp(argv[4], "protoss01");
 	bool into_flames = campaign && argc > 4 && !strcmp(argv[4], "protoss02");
 	bool higher_ground = campaign && argc > 4 && !strcmp(argv[4], "protoss03");
+	bool hunt_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss04");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3092,6 +3188,18 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (hunt_tassadar) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 4 && st.unit_counts[7][UnitTypes::Protoss_High_Templar] == 1 && !st.unit_counts[7][UnitTypes::Protoss_Nexus] && !st.unit_counts[7][UnitTypes::Protoss_Probe] && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[1][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[2][UnitTypes::Hero_Tassadar] == 1, "The Hunt for Tassadar retains the original army, rescuable base and Tassadar without direct grants");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.unit_counts[2][UnitTypes::Hero_Jim_Raynor_Vulture] == 1 && st.trigger_switches[13] && !st.trigger_switches[0] && !st.trigger_switches[1] && st.campaign_ai_scripts.empty() && !st.campaign_ai[7].town_active && st.current_minerals[7] == 0 && st.current_gas[7] == 0 && !st.countdown_active && !st.players[7].victory_state, "the original trigger creates rescuable Raynor while resources, objectives and enemy AI remain gated on the meeting");
+			hunt_tassadar_mission_cases(load_data_file, map_file);
+			printf("The Hunt for Tassadar original initialization passed.\n");
+			return 0;
+		}
 		if (higher_ground) {
 			auto& st = player.st();
 			state_functions functions(st);
