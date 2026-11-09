@@ -3142,6 +3142,120 @@ static void hunt_tassadar_mission_cases(data_loading::data_files_loader<>& load_
 	}
 }
 
+static void choosing_sides_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* tassadar = nullptr;
+		unit_t* shuttle = nullptr;
+		unit_t* dragoon = nullptr;
+		a_vector<unit_t*> zealots;
+		for (unit_t* unit : ptr(st.player_units[7])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Tassadar)) tassadar = unit;
+			if (functions.unit_is(unit, UnitTypes::Protoss_Shuttle)) shuttle = unit;
+			if (functions.unit_is(unit, UnitTypes::Protoss_Dragoon)) dragoon = unit;
+			if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) zealots.push_back(unit);
+		}
+		require(tassadar && shuttle && dragoon && zealots.size() == 4 && !st.trigger_switches[0], "original Choosing Sides actors and naturally rescued Tassadar begin before the confrontation");
+		if (scenario < 2) {
+			if (scenario == 0) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			} else functions.kill_unit(tassadar);
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original human-force or Tassadar loss reaches Choosing Sides defeat");
+		} else if (scenario < 4) {
+			if (scenario == 2) {
+				a_vector<unit_t*> victims;
+				for (int owner : {3, 4}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.players[7].victory_state, "clearing both Zerg colonies cannot replace the original installation entrance objective");
+			}
+			a_vector<unit_t*> passengers{tassadar, zealots[0], scenario == 2 ? dragoon : zealots[1]};
+			for (unit_t* passenger : passengers) {
+				functions.issue_order(passenger, false, functions.get_order_type(Orders::EnterTransport), {shuttle->sprite->position, shuttle});
+				for (int tick = 0; tick != 1200 && !functions.us_hidden(passenger); ++tick) step();
+				require(functions.us_hidden(passenger), "original Tassadar and escort board the original Shuttle through native loading");
+			}
+			const auto& entrance = st.locations.at(1).area;
+			xy destination = (entrance.from + entrance.to) / 2;
+			bool landing_found = false;
+			for (int map_y = entrance.from.y + 32; map_y < entrance.to.y - 32 && !landing_found; map_y += 16) {
+				for (int map_x = entrance.from.x + 32; map_x < entrance.to.x - 32 && !landing_found; map_x += 16) {
+					xy candidate(map_x, map_y);
+					bool fits = true;
+					for (unit_t* passenger : passengers) for (int offset_y = -16; offset_y <= 16; offset_y += 16) for (int offset_x = -16; offset_x <= 16; offset_x += 16) {
+						if (!functions.unit_type_can_fit_at(passenger->unit_type, candidate + xy(offset_x, offset_y))) fits = false;
+					}
+					if (fits) { destination = candidate; landing_found = true; }
+				}
+			}
+			require(landing_found, "native terrain footprints provide a legal landing point inside the original entrance region");
+			functions.issue_order(shuttle, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			for (int tick = 0; tick != 6000 && !functions.is_in_bounds(shuttle->sprite->position, entrance); ++tick) step();
+			functions.set_unit_order(shuttle, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 96; ++tick) step();
+			require(functions.is_in_bounds(shuttle->sprite->position, entrance) && functions.us_hidden(tassadar) && !st.players[7].victory_state, "native Shuttle flight over the ground-only entrance with loaded heroes and escorts cannot win");
+			functions.issue_order(shuttle, false, functions.get_order_type(Orders::MoveUnload), {destination, nullptr});
+			a_vector<bool> disembarked(passengers.size());
+			for (int tick = 0; tick != 1600 && !st.players[7].victory_state; ++tick) {
+				step();
+				for (size_t index = 0; index != passengers.size(); ++index) {
+					unit_t* passenger = passengers[index];
+					if (functions.us_hidden(passenger)) continue;
+					if (!disembarked[index]) {
+						disembarked[index] = true;
+						functions.issue_order(passenger, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+					}
+					if (functions.is_in_bounds(passenger->sprite->position, entrance)) functions.set_unit_order(passenger, functions.get_order_type(Orders::HoldPosition));
+				}
+			}
+			for (unit_t* passenger : passengers) require(!functions.us_hidden(passenger) && functions.is_in_bounds(passenger->sprite->position, entrance), "native unloading puts the original transported actors on the entrance island");
+			if (scenario == 2) require(!st.players[7].victory_state, "Tassadar with one Zealot and a Dragoon cannot satisfy the source requirement for two Zealots");
+			else require(st.players[7].victory_state >= 3 && st.building_counts[3] + st.building_counts[4] > 0 && functions.u_invincible(tassadar), "native delivery of Tassadar and two Zealots runs the source protection, wait and victory with Zerg bases intact");
+		} else {
+			if (scenario == 4) {
+				unit_t* depot = nullptr;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Supply_Depot)) depot = unit;
+				require(depot, "an original Terran depot supplies the source casualty gate");
+				functions.kill_unit(depot);
+			} else {
+				const auto& airspace = st.locations.at(scenario == 5 ? 3 : 4).area;
+				functions.issue_order(shuttle, false, functions.get_order_type(Orders::Move), {(airspace.from + airspace.to) / 2, nullptr});
+			}
+			bool confrontation_paused = false, original_wraiths = false, original_battlecruiser = false, revealer = false;
+			for (int tick = 0; tick != 6000 && !(st.trigger_switches[4] && !st.scripted_pause); ++tick) {
+				step();
+				confrontation_paused = confrontation_paused || st.scripted_pause;
+				original_wraiths = original_wraiths || st.unit_counts[6][UnitTypes::Terran_Wraith] == 9;
+				original_battlecruiser = original_battlecruiser || st.unit_counts[6][UnitTypes::Terran_Battlecruiser] == 1;
+				revealer = revealer || st.unit_counts[7][UnitTypes::Special_Map_Revealer] > 0;
+			}
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(st.trigger_switches[0] && st.trigger_switches[4] && confrontation_paused && !st.scripted_pause && original_wraiths && original_battlecruiser && revealer && !st.unit_counts[7][UnitTypes::Special_Map_Revealer] && !st.players[7].victory_state, "each original casualty/airspace gate runs Duke's paused dialogue, exact reinforcements, revealer cleanup and native suicide activation without winning");
+		}
+		printf("Choosing Sides original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3172,6 +3286,7 @@ int main(int argc, char** argv) {
 	bool into_flames = campaign && argc > 4 && !strcmp(argv[4], "protoss02");
 	bool higher_ground = campaign && argc > 4 && !strcmp(argv[4], "protoss03");
 	bool hunt_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss04");
+	bool choosing_sides = campaign && argc > 4 && !strcmp(argv[4], "protoss05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3188,6 +3303,47 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (choosing_sides) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 3 && st.unit_counts[7][UnitTypes::Protoss_Shuttle] == 1 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Pylon] == 3 && st.unit_counts[7][UnitTypes::Protoss_Gateway] == 1 && st.unit_counts[7][UnitTypes::Hero_Tassadar] + st.unit_counts[2][UnitTypes::Hero_Tassadar] == 1, "Choosing Sides retains its original base, Shuttle, army and single original Tassadar");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.unit_counts[7][UnitTypes::Hero_Tassadar] == 1 && !st.unit_counts[2][UnitTypes::Hero_Tassadar] && st.current_minerals[7] == 150 && st.current_gas[7] == 0 && !st.countdown_active && !st.trigger_switches[0] && !st.trigger_switches[4] && !st.players[7].victory_state && st.campaign_ai[3].town_active && st.campaign_ai[4].town_active && st.campaign_ai_scripts.size() == 2 && !st.campaign_ai[7].town_active, "Choosing Sides naturally rescues Tassadar and starts both original Zerg towns while Duke's confrontation remains dormant");
+			unit_t* ground_target = nullptr;
+			unit_t* ground_base = nullptr;
+			for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) ground_target = unit;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is_hatchery(unit)) ground_base = unit;
+			require(ground_target && ground_base, "original actors supply an isolated reachable post-landing combat observation");
+			xy approach = ground_base->sprite->position + xy(160, 0);
+			functions.move_unit(ground_target, approach);
+			auto placement = functions.find_unit_placement(ground_target, approach, true);
+			require(placement.first, "native placement supplies a legal original landmass target without inventing a route across water");
+			functions.move_unit(ground_target, placement.second);
+			bool island_air_fire = false, brown_ground_fire = false;
+			int combat_budget = 16002 + 3 * (500 + 180 * 15) + 2 * st.game->map_width + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time;
+			for (int tick = 0; tick != combat_budget && !(island_air_fire && brown_ground_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {3, 4}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 4 && functions.u_flying(unit)) island_air_fire = true;
+					if (owner == 3 && !functions.u_flying(unit)) brown_ground_fire = true;
+				}
+			}
+			require(island_air_fire && brown_ground_fire, "both original Pr5I/Pr5B programs fire native air/ground weapons with authored waits, requests and funding");
+			printf("Choosing Sides original Pr5I air and Pr5B ground attacks passed.\n");
+			choosing_sides_mission_cases(load_data_file, map_file);
+			printf("Choosing Sides original initialization passed.\n");
+			return 0;
+		}
 		if (hunt_tassadar) {
 			auto& st = player.st();
 			state_functions functions(st);
