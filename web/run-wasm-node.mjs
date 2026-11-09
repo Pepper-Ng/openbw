@@ -239,6 +239,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg10'), false, 'Full Circle requires The Invasion of Aiur victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 19).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg10'), true, 'Completing The Invasion of Aiur unlocks Full Circle');
+  assert.equal(normal.unlocked('protoss01'), false, 'First Strike requires the final Zerg victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 20).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('protoss01'), true, 'Completing Full Circle unlocks the Protoss campaign');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -284,7 +287,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -606,6 +609,14 @@ function testCampaign() {
     assert.equal(human.some(unit => unit[1] === 'Khaydarin Crystal'), false, 'The crystal must be created by the original credited Temple-kill trigger');
     assert.equal(x.openbw_mission_countdown(), -1, 'Full Circle has no invented countdown');
     console.log('Full Circle original Zerg base, force and Protoss Temple checks passed.');
+  } else if (missionId === 'protoss01') {
+    assert.equal(mission.episode, 3); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 7);
+    assert.equal(human.length, 8, 'First Strike starts with only its original field army');
+    for (const [type, count] of [['Zealot', 6], ['Dragoon', 2], ['Probe', 0], ['Nexus', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.ok(units.some(unit => unit[1].includes('Fenix') && unit[2] === '2'), 'Original Fenix remains rescuable');
+    assert.ok(units.some(unit => unit[1] === 'Nexus' && unit[2] === '1'), 'Original Antioch remains rescuable');
+    assert.equal(x.openbw_mission_countdown(), -1, 'First Strike has no invented countdown');
+    console.log('First Strike original Protoss army and rescue ownership checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -627,7 +638,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'protoss01') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original First Strike trigger grants 100 gas');
   if (missionId === 'zerg10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Full Circle trigger grants 1000 gas');
   if (missionId === 'zerg09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 750, 'Original Invasion of Aiur trigger grants 750 gas');
   if (missionId === 'zerg08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 350, 'Original Eye for an Eye trigger grants 350 gas');
@@ -685,7 +697,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -983,6 +995,40 @@ function testCampaign() {
     assert.equal(owned().filter(unit => unit[1] === 'Drone').length, 4, 'Native Larva production replaces the consumed Drone');
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 450, 'Native Drone production pays fifty additional minerals without test funding');
     console.log('The Culling original paid Hatchery construction, native Larva/Drone production and no-invented-dialogue checks passed.');
+  }
+  if (missionId === 'protoss01') {
+    const currentUnits = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+    const owned = () => currentUnits().filter(unit => unit[2] === '7');
+    const applyQueued = () => {
+      const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      assert.ok(output.length > 0, 'First Strike uses normal synchronized player commands');
+      new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+      x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    };
+    const fenix = units.find(unit => unit[1].includes('Fenix') && unit[2] === '2');
+    const originalNexus = units.find(unit => unit[1] === 'Nexus' && unit[2] === '1');
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const cameraX = Math.max(0, Number(fenix[3]) - 640), cameraY = Math.max(0, Number(fenix[4]) - 400);
+    x.openbw_pan(cameraX - Number(camera[1]), cameraY - Number(camera[2]));
+    human.forEach((unit, index) => x.openbw_debug_select(Number(unit[0]), index ? 1 : 0)); x.openbw_render(0); x.openbw_out_clear();
+    x.openbw_key(1, 97, 0); x.openbw_key(0, 97, 0); x.openbw_render(0);
+    x.openbw_mouse_button(1, 1, Number(fenix[3]) - cameraX, Number(fenix[4]) - cameraY, 1);
+    x.openbw_mouse_button(0, 1, Number(fenix[3]) - cameraX, Number(fenix[4]) - cameraY, 1); x.openbw_render(0); applyQueued();
+    for (let tick = 0; tick < 4000 && !owned().some(unit => unit[0] === originalNexus[0]); tick++) x.openbw_step();
+    assert.ok(owned().some(unit => unit[0] === originalNexus[0]), `Normal army Attack-move and source Observer rescue the original Antioch Nexus: frame ${x.openbw_frame()}, outcome ${x.openbw_outcome()}, Fenix ${currentUnits().filter(unit => unit[1].includes('Fenix')).map(unit => unit.slice(0, 5).join(':')).join(',')}`);
+    assert.ok(owned().some(unit => unit[0] === fenix[0]), 'The same original Fenix is naturally rescued');
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    consume();
+    assert.ok(events.some(event => event[3] === 7), 'Actual Fenix contact emits the original meeting transmission');
+    assert.equal(owned().filter(unit => unit[1] === 'Probe').length, 0, 'Rescue must not grant an invented worker');
+    x.openbw_debug_select(Number(originalNexus[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    const probeCommand = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(row => row[1] === 'Probe');
+    assert.ok(probeCommand?.[0], 'The rescued original Nexus permits native Probe production');
+    x.openbw_key(1, probeCommand[0].charCodeAt(0), 0); x.openbw_key(0, probeCommand[0].charCodeAt(0), 0); x.openbw_render(0); applyQueued();
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    assert.equal(owned().filter(unit => unit[1] === 'Probe').length, 1, 'Original player resources produce one actual Probe');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 350, 'Native Probe production charges fifty minerals without test funding');
+    console.log('First Strike normal Fenix/Antioch rescue, original meeting dialogue and paid Probe production passed.');
   }
   if (['zerg09', 'zerg10'].includes(missionId)) {
     const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Larva' && unit[2] === '3');

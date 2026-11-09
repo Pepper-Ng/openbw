@@ -2854,6 +2854,64 @@ static void full_circle_mission_cases(data_loading::data_files_loader<>& load_da
 	}
 }
 
+static void first_strike_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {1, 2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		if (scenario == 0) {
+			unit_t* fenix = nullptr;
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Fenix_Zealot)) fenix = unit;
+			require(fenix, "the original rescuable Fenix supplies the survival objective");
+			functions.kill_unit(fenix);
+			for (int tick = 0; tick != 300 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "Fenix loss before rescue runs the original paused defeat sequence");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "loss of the original human army reaches First Strike defeat");
+		} else if (scenario == 2 || scenario == 3) {
+			unit_t* remaining = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.ut_building(unit)) remaining = unit;
+			require(remaining, "original Zerg buildings supply the victory predicate fixture");
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.ut_building(unit) && (scenario == 3 || unit != remaining)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool ending_paused = false;
+			for (int tick = 0; tick != 2000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			if (scenario == 2) require(!st.players[7].victory_state && st.building_counts[0] == 1, "one surviving original Zerg building blocks the source victory");
+			else require(ending_paused && st.players[7].victory_state >= 3 && st.non_building_counts[0] > 0, "all original Zerg buildings gone runs the paused Fenix ending and victory even with mobile enemies remaining");
+		} else {
+			unit_t* dragoon = nullptr;
+			for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Dragoon)) dragoon = unit;
+			require(dragoon, "an original Dragoon supplies normal First Strike rescue movement");
+			functions.issue_order(dragoon, false, functions.get_order_type(Orders::Move), {xy(1271, 1853), nullptr});
+			for (int tick = 0; tick != 4000 && !st.unit_counts[7][UnitTypes::Protoss_Nexus]; ++tick) step();
+			require(st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] == 1 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Gateway] == 1 && !st.unit_counts[1][UnitTypes::Protoss_Nexus] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot], "normal native movement rescues Fenix and the original trigger-created Observer naturally rescues Antioch");
+			for (int tick = 0; tick != 600; ++tick) step();
+			require(!st.unit_counts[7][UnitTypes::Protoss_Observer] && !st.unit_counts[7][UnitTypes::Protoss_Probe] && !st.players[7].victory_state && st.current_minerals[7] == 400 && st.current_gas[7] == 100, "source cleanup removes its temporary Observer while retaining original resources and the no-Probe economy objective");
+		}
+		printf("First Strike original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2880,6 +2938,7 @@ int main(int argc, char** argv) {
 	bool eye_for_eye = campaign && argc > 4 && !strcmp(argv[4], "zerg08");
 	bool invasion_aiur = campaign && argc > 4 && !strcmp(argv[4], "zerg09");
 	bool full_circle = campaign && argc > 4 && !strcmp(argv[4], "zerg10");
+	bool first_strike = campaign && argc > 4 && !strcmp(argv[4], "protoss01");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2896,6 +2955,39 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (first_strike) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 6 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 2 && !st.building_counts[7] && !st.unit_counts[7][UnitTypes::Protoss_Probe] && !st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot], "First Strike preserves the original slot-7 Protoss army without granting Antioch or Fenix");
+			require(st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot] == 1 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1, "original Fenix and Antioch remain separately rescuable");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[7] == 400 && st.current_gas[7] == 100 && !st.players[7].victory_state && !st.countdown_active && st.campaign_ai[0].town_active && st.campaign_ai_scripts.size() == 1 && !st.campaign_ai[7].town_active, "First Strike retains original resources and Pro1 without a human AI substitute");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 15502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time + st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (int owner : {1, 2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[0].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Pro1 ground and Mutalisk parties fire native weapons at authored waits and funding");
+			printf("First Strike original Pro1 ground and air attacks passed.\n");
+			first_strike_mission_cases(load_data_file, map_file);
+			printf("First Strike original initialization passed.\n");
+			return 0;
+		}
 		if (full_circle) {
 			auto& st = player.st();
 			state_functions functions(st);
