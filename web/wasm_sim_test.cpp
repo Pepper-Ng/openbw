@@ -2912,6 +2912,99 @@ static void first_strike_mission_cases(data_loading::data_files_loader<>& load_d
 	}
 }
 
+static void into_flames_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* cerebrate = nullptr;
+		for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate)) cerebrate = unit;
+		require(cerebrate && !st.trigger_switches[4] && !st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot], "Into the Flames begins with its original Cerebrate and no premature Fenix");
+		if (scenario == 0) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "whole-human-force loss reaches the original Into the Flames defeat");
+		} else if (scenario == 1) {
+			functions.kill_unit(cerebrate);
+			bool ending_paused = false;
+			for (int tick = 0; tick != 1500 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			require(ending_paused && st.players[7].victory_state >= 3 && st.building_counts[6] > 0 && !st.trigger_switches[4], "the original Cerebrate predicate permits its paused ending before arrival without requiring every Zerg building to die");
+		} else if (scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && unit != cerebrate) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(!st.players[7].victory_state && st.unit_counts[6][UnitTypes::Special_Cerebrate] == 1 && !st.trigger_switches[4], "a living original Cerebrate blocks victory and absent pre-arrival Fenix does not cause defeat");
+		} else {
+			functions.u_set_status_flag(cerebrate, unit_t::status_flag_invincible);
+			while (st.countdown_timer > 1) step();
+			require(st.current_frame >= 899 * 16 && !st.trigger_switches[4] && !st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot] && !st.unit_counts[7][UnitTypes::Protoss_Reaver] && !st.players[7].victory_state, "the full unshortened fifteen-minute source countdown cannot create Fenix or his strike force early");
+			int initial_dragoons = st.unit_counts[7][UnitTypes::Protoss_Dragoon];
+			int initial_zealots = st.unit_counts[7][UnitTypes::Protoss_Zealot];
+			for (int tick = 0; tick != 1000 && !st.trigger_switches[4]; ++tick) step();
+			require(st.trigger_switches[4] && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == initial_dragoons + 5 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == initial_zealots + 5 && st.unit_counts[7][UnitTypes::Protoss_Reaver] == 3 && st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] + st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot] == 1 && !st.players[7].victory_state, "source expiry creates exactly five Dragoons, five Zealots, three Reavers and one original Fenix before subsequent combat");
+			for (int tick = 0; tick != 256; ++tick) step();
+			unit_t* fenix = nullptr;
+			unit_t* reaver = nullptr;
+			for (unit_t* unit : ptr(st.player_units[7])) {
+				if (functions.unit_is(unit, UnitTypes::Hero_Fenix_Zealot)) fenix = unit;
+				if (functions.unit_is(unit, UnitTypes::Protoss_Reaver)) reaver = unit;
+			}
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Fenix_Zealot)) fenix = unit;
+			require(fenix && reaver, "the original source-created hero and Reaver remain live");
+			if (fenix->owner == 2) {
+				unit_t* escort = nullptr;
+				for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot) && (!escort || functions.xy_length(unit->sprite->position - fenix->sprite->position) < functions.xy_length(escort->sprite->position - fenix->sprite->position))) escort = unit;
+				require(escort, "a source-created Zealot can approach the original rescuable Fenix");
+				functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {fenix->sprite->position, nullptr});
+				for (int tick = 0; tick != 800 && fenix->owner != 7; ++tick) step();
+			}
+			require(fenix->owner == 7 && st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] == 1, "normal strike-force proximity naturally rescues the source-created Fenix");
+			if (scenario == 4) {
+				functions.kill_unit(fenix);
+				for (int tick = 0; tick != 400 && !st.players[7].victory_state; ++tick) step();
+				require(st.players[7].victory_state == 2, "Fenix loss after source arrival enables the original paused defeat");
+			} else {
+				functions.set_unit_order(reaver, functions.get_order_type(Orders::Nothing));
+				require(!functions.unit_scarab_count(reaver), "the source does not invent loaded Scarabs for its Reavers");
+				action_state player_commands;
+				action_functions actions(st, player_commands);
+				require(actions.action_select(7, reaver) && actions.action_train_fighter(7), "the original Reaver accepts normal paid Scarab production");
+				for (int tick = 0; tick != 600 && !functions.unit_scarab_count(reaver); ++tick) step();
+				require(functions.unit_scarab_count(reaver) == 1 && st.current_minerals[7] == 155 && !st.current_gas[7], "native Scarab production charges fifteen original minerals and fills actual ammunition");
+				auto approach = functions.find_unit_placement(reaver, cerebrate->sprite->position + xy(160, 0), false);
+				require(approach.first, "native placement supplies an isolated Reaver combat approach");
+				functions.move_unit(reaver, approach.second);
+				for (int tick = 0; tick != 64; ++tick) step();
+				functions.u_unset_status_flag(cerebrate, unit_t::status_flag_invincible);
+				functions.set_unit_hp(cerebrate, fp8::integer(1));
+				functions.issue_order(reaver, false, reaver->unit_type->attack_unit, {cerebrate->sprite->position, cerebrate});
+				bool scarab_launched = false, ending_paused = false;
+				for (int tick = 0; tick != 2000 && !st.players[7].victory_state; ++tick) { step(); scarab_launched = scarab_launched || reaver->reaver.outside_count > 0; ending_paused = ending_paused || st.scripted_pause; }
+				require(scarab_launched && st.killed_unit_counts[7][UnitTypes::Special_Cerebrate] == 1 && ending_paused && st.players[7].victory_state >= 3, "a paid native Scarab launches, kills the original Cerebrate and reaches the source paused Fenix ending");
+			}
+		}
+		printf("Into the Flames original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2939,6 +3032,7 @@ int main(int argc, char** argv) {
 	bool invasion_aiur = campaign && argc > 4 && !strcmp(argv[4], "zerg09");
 	bool full_circle = campaign && argc > 4 && !strcmp(argv[4], "zerg10");
 	bool first_strike = campaign && argc > 4 && !strcmp(argv[4], "protoss01");
+	bool into_flames = campaign && argc > 4 && !strcmp(argv[4], "protoss02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2955,6 +3049,39 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (into_flames) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 3 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 2 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Pylon] == 2 && !st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Zealot], "Into the Flames preserves the original base and army while Fenix remains absent before arrival");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[7] == 170 && !st.current_gas[7] && st.countdown_active && st.countdown_timer > 890 && st.countdown_timer <= 900 && !st.trigger_switches[4] && !st.players[7].victory_state && st.campaign_ai[6].town_active && st.campaign_ai_scripts.size() == 1 && !st.campaign_ai[7].town_active, "Into the Flames retains its original fifteen-minute timer, resources and Pro2 without an early Fenix defeat");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate)) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 7502 + 3 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time + st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (unit_id id : st.campaign_ai[6].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) {
+						if (functions.u_flying(unit)) air_fire = true;
+						else ground_fire = true;
+					}
+				}
+			}
+			require(ground_fire && air_fire, "original Pro2 ground and Mutalisk parties fire native weapons at authored waits and funding");
+			printf("Into the Flames original Pro2 ground and air attacks passed.\n");
+			into_flames_mission_cases(load_data_file, map_file);
+			printf("Into the Flames original initialization passed.\n");
+			return 0;
+		}
 		if (first_strike) {
 			auto& st = player.st();
 			state_functions functions(st);

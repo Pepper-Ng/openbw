@@ -28,6 +28,7 @@ const missions = {
   zerg09: { title: 'The Invasion of Aiur', episode: 2, order: 9, scenarioHash: 'fd99e4670f57110dd7720777a188d6447c7e23a02334c691f90790c5752f8205', units: 377, triggers: 14, sounds: 8 },
   zerg10: { title: 'Full Circle', episode: 2, order: 10, scenarioHash: '7d9befb178c53014bc7c7efdcb6ed208a0aa7c97b4a37141cbca5345fd6d15fb', units: 447, triggers: 10, sounds: 6 },
   protoss01: { title: 'First Strike', episode: 3, order: 1, scenarioHash: '374a08c6d15bbd32280091e54164047b12c6ffc526d12d0663a0c7df18784188', units: 126, triggers: 13, sounds: 9 },
+  protoss02: { title: 'Into the Flames', episode: 3, order: 2, scenarioHash: 'c2a1faa77faaa8f85d178da8d5502a9235749240244b7403d240bff9b220fe24', units: 144, triggers: 8, sounds: 14 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
