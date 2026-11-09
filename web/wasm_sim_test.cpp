@@ -6,6 +6,7 @@
 // any canvas/JS backend exists.
 
 #include "bwgame.h"
+#include "actions.h"
 #include <cstdio>
 #include <cstring>
 
@@ -21,6 +22,109 @@ static void require(bool result, const char* description) {
 	if (!result) error("campaign check failed: %s", description);
 }
 
+static void original_campaign_availability_checks(const state& st) {
+	for (int owner = 0; owner != 12; ++owner) {
+		for (const auto& type : st.game->unit_types.vec) if (type.is_broodwar) require(!st.game->unit_type_allowed[owner][type.id], "original campaign excludes every Brood War unit for every player");
+		for (const auto& upgrade : st.game->upgrade_types.vec) if (upgrade.is_broodwar) {
+			require(st.game->max_upgrade_levels[owner][upgrade.id] == 0, "original campaign excludes every Brood War upgrade for every player");
+			require(st.upgrade_levels[owner][upgrade.id] == 0, "original campaign cannot start with a Brood War upgrade");
+		}
+		for (int index = int(TechTypes::Restoration); index != int(TechTypes::None); ++index) {
+			TechTypes tech = TechTypes(index);
+			require(!st.game->tech_available[owner][tech] && !st.tech_researched[owner][tech], "original campaign excludes every Brood War technology for every player");
+		}
+	}
+	printf("Original campaign availability excludes Brood War units, upgrades and technologies for all races and players.\n");
+}
+
+static void expansion_availability_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int mode = 0; mode != 2; ++mode) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		a_vector<uint8_t> scenario;
+		map_loader(scenario, "staredit/scenario.chk");
+		require(scenario.size() >= 10 && memcmp(scenario.data(), "VER ", 4) == 0 && data_loading::value_at<uint32_t, true>(scenario.data() + 4) == 2, "availability fixture begins with a normal scenario version section");
+		if (mode == 0) data_loading::set_value_at<true>(scenario.data() + 8, uint16_t(63));
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = mode;
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map_data(scenario.data(), scenario.size());
+		const auto& st = player.st();
+		for (UnitTypes type : {UnitTypes::Terran_Medic, UnitTypes::Terran_Valkyrie, UnitTypes::Protoss_Corsair, UnitTypes::Protoss_Dark_Templar, UnitTypes::Protoss_Dark_Archon, UnitTypes::Zerg_Devourer, UnitTypes::Zerg_Lurker}) require(st.game->unit_type_allowed[1][type], "hybrid and melee modes retain Brood War unit availability");
+		for (const auto& upgrade : st.game->upgrade_types.vec) if (upgrade.is_broodwar) require(st.game->max_upgrade_levels[1][upgrade.id] == upgrade.max_level, "hybrid and melee modes retain expansion upgrade defaults");
+		for (int index = int(TechTypes::Restoration); index != int(TechTypes::None); ++index) require(st.game->tech_available[1][TechTypes(index)], "hybrid and melee modes retain expansion technology defaults");
+	}
+	printf("Hybrid-format maps and melee retain Brood War units, upgrades and technologies.\n");
+}
+
+static void cloaked_targeting_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (UnitTypes type : {UnitTypes::Terran_Wraith, UnitTypes::Terran_Ghost}) for (bool hold : {false, true}) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.victory_condition = 2;
+		loader.setup_info.tournament_mode = 0;
+		loader.setup_info.starting_units = 0;
+		loader.setup_info.resource_type = 0;
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player = {};
+		loader.setup_info.create_no_units = true;
+		loader.load_map(map_loader, {}, false);
+		auto& st = player.st();
+		require(st.game->triggers.empty(), "isolated combat fixture has no campaign or melee outcome triggers");
+		action_state commands;
+		action_functions functions(st, commands);
+		unit_t* attacker = functions.trigger_create_unit(functions.get_unit_type(type), xy(192, 96), 1);
+		unit_t* opponent = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Zerg_Overlord), xy(1536, 1536), 4);
+		require(attacker && opponent, "both fixture players remain active before the cloaking setup");
+		TechTypes tech = type == UnitTypes::Terran_Wraith ? TechTypes::Cloaking_Field : TechTypes::Personnel_Cloaking;
+		st.game->tech_available[1][tech] = true;
+		st.tech_researched[1][tech] = false;
+		st.tech_researching[1][tech] = true;
+		attacker->energy = fp8::integer(200);
+		functions.action_select(1, attacker);
+		functions.action_cloak(1);
+		require(attacker->energy == fp8::integer(200) && attacker->secondary_order_type->id != Orders::Cloak, "player cloak command cannot bypass unfinished research");
+		st.tech_researching[1][tech] = false;
+		st.tech_researched[1][tech] = true;
+		st.game->tech_available[1][tech] = false;
+		functions.action_cloak(1);
+		require(attacker->energy == fp8::integer(200) && attacker->secondary_order_type->id != Orders::Cloak, "player cloak command cannot bypass mission technology restrictions");
+		st.game->tech_available[1][tech] = true;
+		functions.action_cloak(1);
+		require(attacker->secondary_order_type->id == Orders::Cloak && attacker->energy == fp8::integer(200 - functions.get_tech_type(tech)->energy_cost), "completed cloak research enables the normal paid player command");
+		for (int tick = 0; tick != 64 && !functions.u_cloaked(attacker); ++tick) functions.next_frame();
+		require(functions.u_cloaked(attacker), "attacker enters native cloaking before automatic combat");
+		xy position = attacker->sprite->position;
+		unit_t* target = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_SCV), position + xy(96, 0), 4);
+		require(target, "native nearby ground target for isolated cloaked combat");
+		functions.set_unit_order(attacker, functions.get_order_type(hold ? Orders::HoldPosition : attacker->unit_type->return_to_idle->id));
+		functions.set_unit_order(target, functions.get_order_type(Orders::HoldPosition));
+		bool fired = false;
+		bool damaged = false;
+		for (int tick = 0; tick != 192 && !(fired && damaged); ++tick) {
+			target->defensive_matrix_hp = fp8::integer(64000);
+			target->defensive_matrix_timer = 250;
+			functions.next_frame();
+			fired = fired || attacker->ground_weapon_cooldown || attacker->air_weapon_cooldown;
+			damaged = damaged || target->defensive_matrix_hp < fp8::integer(64000);
+		}
+		if (fired != !(type == UnitTypes::Terran_Ghost && hold) || damaged != fired) {
+			printf("Cloaked combat diagnostic: type=%d hold=%d fired=%d damaged=%d frame=%d order=%d target=%d target_hp=%d\n", int(type), hold, fired, damaged, st.current_frame, int(attacker->order_type->id), attacker->order_target.unit == target, target->hp.integer_part());
+			printf("Cloaked acquisition diagnostic: hostile=%d attackable=%d visible=%d range=%d distance=%d source_owner=%d target_owner=%d source_controller=%d target_controller=%d\n", functions.unit_target_is_enemy(attacker, target), functions.unit_can_attack_target(attacker, target), functions.unit_can_see_target(attacker, target), functions.unit_target_acquisition_range(attacker), functions.units_distance(attacker, target), attacker->owner, target->owner, st.players[attacker->owner].controller, st.players[target->owner].controller);
+		}
+		require(fired == !(type == UnitTypes::Terran_Ghost && hold) && damaged == fired, "cloaked Wraith damages enemies in idle and Hold; cloaked Ghost damages enemies idle but preserves stealth on Hold");
+		require(functions.u_cloaked(attacker), "automatic firing does not require decloaking");
+		if (hold) require(attacker->sprite->position == position, "Hold Position never chases the enemy");
+		if (!fired) {
+			functions.issue_order(attacker, false, functions.get_order_type(Orders::AttackUnit), {target->sprite->position, target});
+			for (int tick = 0; tick != 96 && !(fired && damaged); ++tick) { target->defensive_matrix_hp = fp8::integer(64000); target->defensive_matrix_timer = 250; functions.next_frame(); fired = fired || attacker->ground_weapon_cooldown || attacker->air_weapon_cooldown; damaged = damaged || target->defensive_matrix_hp < fp8::integer(64000); }
+			require(fired && damaged && functions.u_cloaked(attacker), "explicit Attack makes a held cloaked Ghost damage the target without decloaking");
+		}
+	}
+	printf("Cloaked Wraith/Ghost idle, Hold, explicit Attack and player cloak research guards passed.\n");
+}
+
 static void shared_combat_ai_checks(state& st) {
 	state_functions functions(st);
 	xy original(192, 96);
@@ -28,7 +132,12 @@ static void shared_combat_ai_checks(state& st) {
 	unit_t* stim_target = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Firebat), original + xy(96, 0), 1);
 	require(ai_marine && stim_target, "shared campaign combat fixture actors");
 	st.game->tech_available[4][TechTypes::Stim_Packs] = true;
+	st.tech_researched[4][TechTypes::Stim_Packs] = false;
+	require(!functions.try_campaign_ai_stim(ai_marine, stim_target) && !ai_marine->stim_timer && ai_marine->hp == fp8::integer(40), "AI Marine cannot Stim before research completes even when the technology is available");
 	st.tech_researched[4][TechTypes::Stim_Packs] = true;
+	st.game->tech_available[4][TechTypes::Stim_Packs] = false;
+	require(!functions.try_campaign_ai_stim(ai_marine, stim_target) && ai_marine->hp == fp8::integer(40), "AI Stim cannot bypass disabled mission technology");
+	st.game->tech_available[4][TechTypes::Stim_Packs] = true;
 	require(functions.try_campaign_ai_stim(ai_marine, stim_target), "computer Marine uses native Stim when engaging at healthy HP");
 	require(ai_marine->hp == fp8::integer(30) && ai_marine->stim_timer == 37, "AI Stim retains the native ten HP cost and duration");
 	require(!functions.try_campaign_ai_stim(ai_marine, stim_target) && ai_marine->hp == fp8::integer(30), "AI does not repeat Stim while active");
@@ -39,9 +148,14 @@ static void shared_combat_ai_checks(state& st) {
 	unit_t* wraith = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Wraith), original, 4);
 	require(threat && wraith, "Wraith engagement fixture actors");
 	st.game->tech_available[4][TechTypes::Cloaking_Field] = true;
-	st.tech_researched[4][TechTypes::Cloaking_Field] = true;
+	st.tech_researched[4][TechTypes::Cloaking_Field] = false;
 	threat->sprite->visibility_flags |= 1 << 4;
 	wraith->energy = fp8::integer(100);
+	require(!functions.try_campaign_ai_wraith_cloak(wraith, threat) && wraith->energy == fp8::integer(100) && wraith->secondary_order_type->id != Orders::Cloak, "AI Wraith cannot cloak before research completes even with enough energy");
+	st.tech_researched[4][TechTypes::Cloaking_Field] = true;
+	st.game->tech_available[4][TechTypes::Cloaking_Field] = false;
+	require(!functions.try_campaign_ai_wraith_cloak(wraith, threat) && wraith->energy == fp8::integer(100), "AI cloak cannot bypass disabled mission technology");
+	st.game->tech_available[4][TechTypes::Cloaking_Field] = true;
 	require(functions.try_campaign_ai_wraith_cloak(wraith, threat), "Wraith cloaks at a nearby anti-air engagement");
 	require(wraith->energy == fp8::integer(75) && wraith->secondary_order_type->id == Orders::Cloak, "AI cloak pays the native energy cost");
 	require(!functions.try_campaign_ai_wraith_cloak(wraith, threat) && wraith->energy == fp8::integer(75), "pending cloak is not charged twice");
@@ -130,6 +244,42 @@ static void shared_combat_ai_checks(state& st) {
 	st.tech_researched[4][TechTypes::Stim_Packs] = true;
 	functions.kill_unit(threat);
 	require(!functions.try_campaign_ai_stim(automatic_marine, threat) && automatic_marine->hp == fp8::integer(40), "AI does not spend health on an already dying target");
+	action_state player_commands;
+	action_functions player_actions(st, player_commands);
+	unit_t* player_marine = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Marine), original, 1);
+	require(player_marine, "native player Marine for Stim command research guards");
+	player_actions.action_select(1, player_marine);
+	st.tech_researched[1][TechTypes::Stim_Packs] = false;
+	st.tech_researching[1][TechTypes::Stim_Packs] = true;
+	player_actions.action_stim_pack(1);
+	require(!player_marine->stim_timer && player_marine->hp == fp8::integer(40), "player Stim command cannot bypass unfinished research");
+	st.tech_researching[1][TechTypes::Stim_Packs] = false;
+	st.tech_researched[1][TechTypes::Stim_Packs] = true;
+	st.game->tech_available[1][TechTypes::Stim_Packs] = false;
+	player_actions.action_stim_pack(1);
+	require(!player_marine->stim_timer && player_marine->hp == fp8::integer(40), "player Stim command cannot bypass disabled mission technology");
+	st.game->tech_available[1][TechTypes::Stim_Packs] = true;
+	player_actions.action_stim_pack(1);
+	require(player_marine->stim_timer == 37 && player_marine->hp == fp8::integer(30), "completed Stim research enables the normal paid player command");
+	for (auto sample : {std::make_pair(UnitTypes::Hero_Jim_Raynor_Marine, TechTypes::Stim_Packs), std::make_pair(UnitTypes::Hero_Tom_Kazansky, TechTypes::Cloaking_Field), std::make_pair(UnitTypes::Hero_Sarah_Kerrigan, TechTypes::Personnel_Cloaking)}) {
+		unit_t* hero = functions.trigger_create_unit(functions.get_unit_type(sample.first), original, 1);
+		require(hero, "native hero for innate ability research exception");
+		st.game->tech_available[1][sample.second] = true;
+		st.tech_researched[1][sample.second] = false;
+		hero->energy = fp8::integer(200);
+		auto hp = hero->hp;
+		player_actions.action_select(1, hero);
+		if (sample.second == TechTypes::Stim_Packs) {
+			player_actions.action_stim_pack(1);
+			require(hero->stim_timer == 37 && hero->hp == hp - fp8::integer(10), "Raynor's innate Stim does not require the player's ordinary Marine research");
+		} else {
+			player_actions.action_cloak(1);
+			require(hero->secondary_order_type->id == Orders::Cloak && hero->energy == fp8::integer(200 - functions.get_tech_type(sample.second)->energy_cost), "hero cloak uses the native paid command without ordinary-unit research");
+		}
+		st.game->tech_available[1][sample.second] = false;
+		require(!functions.unit_can_use_tech(hero, functions.get_tech_type(sample.second)), "hero research exception does not bypass disabled mission technology");
+	}
+	printf("Player Stim research guards and native hero ability exceptions passed.\n");
 	printf("Shared combat frame integration and human-control isolation checks passed.\n");
 }
 
@@ -2028,7 +2178,8 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
-		if (combat_ai) { shared_combat_ai_checks(player.st()); return 0; }
+		original_campaign_availability_checks(player.st());
+		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
 		if (egression) {
 			auto& st = player.st();
 			state_functions functions(st);
@@ -2535,6 +2686,7 @@ int main(int argc, char** argv) {
 			backwater_mission_cases(load_data_file, map_file);
 			return 0;
 		}
+		expansion_availability_checks(load_data_file, map_file);
 		campaign_checks(player.st());
 		campaign_outcomes(load_data_file, map_file);
 		return 0;

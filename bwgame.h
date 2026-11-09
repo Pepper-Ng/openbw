@@ -23157,6 +23157,16 @@ struct game_load_functions : state_functions {
 		} else error("unsupported map version %d", version);
 
 		if (use_map_settings && version == 59) {
+			for (size_t owner = 0; owner != 12; ++owner) {
+				for (const auto& upgrade : game_st.upgrade_types.vec) if (upgrade.is_broodwar) {
+					game_st.max_upgrade_levels[owner][upgrade.id] = 0;
+					st.upgrade_levels[owner][upgrade.id] = 0;
+				}
+				for (int index = int(TechTypes::Restoration); index != int(TechTypes::None); ++index) {
+					game_st.tech_available[owner][TechTypes(index)] = false;
+					st.tech_researched[owner][TechTypes(index)] = false;
+				}
+			}
 			for (const auto& trigger : game_st.triggers) for (const auto& action : trigger.actions) {
 				if (!action.type) break;
 				if (action.flags & 2 || action.type != 38 || action.extra_n != int(UnitTypes::Powerup_Young_Chrysalis) || !action.location || action.location > st.locations.size() || !action.group2_n || action.group2_n > st.locations.size()) continue;
