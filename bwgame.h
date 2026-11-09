@@ -20133,7 +20133,7 @@ struct state_functions {
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 26: case 28: case 30: case 31:
+		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
 		case 32: case 38: case 39: case 42: case 43: case 47:
 			return true;
 		default:
@@ -20381,9 +20381,9 @@ struct state_functions {
 					kill_unit(u);
 
 				};
-				for (unit_t* u : find_units(st.locations.at(a.location - 1).area)) {
-					proc(u);
-				}
+				a_vector<unit_t*> units;
+				for (unit_t* u : find_units(st.locations.at(a.location - 1).area)) units.push_back(u);
+				for (unit_t* u : units) proc(u);
 			}
 			return true;
 		case 26: // set resources

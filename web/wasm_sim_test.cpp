@@ -2189,6 +2189,73 @@ static void new_dominion_mission_cases(data_loading::data_files_loader<>& load_d
 	}
 }
 
+static void agent_swarm_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		bool original_attack_fired = false;
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+			if (scenario == 4) for (unit_id id : st.campaign_ai[1].attacking) {
+				unit_t* unit = functions.get_unit(id);
+				if (unit && !functions.unit_dying(unit) && !functions.us_hidden(unit) && unit->ground_weapon_cooldown) original_attack_fired = true;
+			}
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* chrysalis = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Special_Mature_Chrysalis)) chrysalis = unit;
+		require(chrysalis && st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] == 0, "original Agent of the Swarm begins with the Chrysalis, not a granted Kerrigan");
+		if (scenario == 0) functions.kill_unit(chrysalis);
+		unit_t* kerrigan = nullptr;
+		for (int tick = 0; tick != 12500 && !st.players[3].victory_state && !kerrigan; ++tick) {
+			step();
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan) && !functions.unit_dying(unit)) kerrigan = unit;
+		}
+		if (scenario == 0) {
+			require(st.players[3].victory_state == 2 && !kerrigan, "original pre-hatch Chrysalis loss reaches defeat");
+			printf("Agent of the Swarm original Chrysalis defeat passed.\n");
+			continue;
+		}
+		require(kerrigan && st.current_frame >= 600 * 16 && st.unit_counts[3][UnitTypes::Special_Mature_Chrysalis] == 0, "the original countdown expires naturally before its trigger replaces the Chrysalis with Kerrigan");
+		for (int tick = 0; tick != 1800; ++tick) step();
+		require(!st.scripted_pause && !st.players[3].victory_state, "the original hatch dialogue and scene cleanup complete without an invented outcome");
+		unit_t* command_center = nullptr;
+		for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) command_center = unit;
+		require(command_center, "original Raynor Command Center remains the post-hatch objective");
+		if (scenario == 1) functions.kill_unit(command_center);
+		if (scenario == 2) {
+			unit_t* queen = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Queen)) queen = unit;
+			require(queen, "original Queen is available for the authored infestation victory route");
+			functions.set_unit_hp(command_center, command_center->unit_type->hitpoints / 4);
+			functions.move_unit(queen, command_center->sprite->position + xy(64, 0));
+			functions.set_unit_order(queen, functions.get_order_type(Orders::CastInfestation), command_center);
+		}
+		if (scenario == 3) functions.kill_unit(kerrigan);
+		bool paused = false;
+		for (int tick = 0; tick != 3000 && !st.players[3].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+		if (scenario == 1 || scenario == 2) require(st.players[3].victory_state >= 3 && paused, "destroying or natively infesting Raynor's Command Center reaches the original ending and victory");
+		if (scenario == 2) require(st.unit_counts[3][UnitTypes::Zerg_Infested_Command_Center] == 1, "native Queen infestation transfers the original Command Center to the human Zerg");
+		if (scenario == 3) require(st.players[3].victory_state == 2, "original post-hatch Kerrigan loss reaches defeat");
+		if (scenario == 4) {
+			require(!st.players[3].victory_state, "post-hatch idle state cannot bypass the Raynor objective");
+			require(original_attack_fired, "original Zer4 attack schedule reaches human actors and fires native weapons without extra resources or replacement waves");
+		}
+		printf("Agent of the Swarm original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2208,6 +2275,7 @@ int main(int argc, char** argv) {
 	bool among_ruins = campaign && argc > 4 && !strcmp(argv[4], "zerg01");
 	bool egression = campaign && argc > 4 && !strcmp(argv[4], "zerg02");
 	bool new_dominion = campaign && argc > 4 && !strcmp(argv[4], "zerg03");
+	bool agent_swarm = campaign && argc > 4 && !strcmp(argv[4], "zerg04");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2224,6 +2292,19 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (agent_swarm) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(state_functions::campaign_action_supported(25), "original scene Remove Unit At Location is available to the campaign runtime");
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Drone] == 3 && st.unit_counts[3][UnitTypes::Zerg_Queen] == 2 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 6 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 4, "Agent of the Swarm preserves original Zerg starting forces");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 250 && st.current_gas[3] == 250 && st.countdown_timer > 590 && st.countdown_timer <= 600, "Agent of the Swarm retains original resources and ten-minute hatch countdown");
+			require(st.campaign_ai[1].town_active && st.campaign_ai_scripts.size() == 2 && !st.campaign_ai[3].town_active, "original Zer4 and Ze4S start without human AI substitution");
+			agent_swarm_mission_cases(load_data_file, map_file);
+			printf("Agent of the Swarm original initialization and timed hatch passed.\n");
+			return 0;
+		}
 		if (new_dominion) {
 			auto& st = player.st();
 			state_functions functions(st);
