@@ -2750,6 +2750,110 @@ static void invasion_aiur_mission_cases(data_loading::data_files_loader<>& load_
 	}
 }
 
+static void full_circle_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* temple = nullptr;
+		unit_t* drone = nullptr;
+		unit_t* hydralisk = nullptr;
+		for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Special_Protoss_Temple)) temple = unit;
+		for (unit_t* unit : ptr(st.player_units[3])) {
+			if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) drone = unit;
+			if (functions.unit_is(unit, UnitTypes::Zerg_Hydralisk)) hydralisk = unit;
+		}
+		require(temple && drone && hydralisk && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal], "Full Circle begins with the original Temple and no early portable crystal");
+		if (scenario == 0) {
+			functions.move_unit(drone, xy(1904, 2064));
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(st.unit_counts[0][UnitTypes::Special_Protoss_Temple] == 1 && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal] && !st.players[3].victory_state, "idle play and an empty Drone at the foundation cannot bypass Temple destruction or crystal delivery");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2, "the original whole-human-force loss reaches Full Circle defeat");
+		} else if (scenario == 2 || scenario == 3) {
+			unit_t* victim = temple;
+			if (scenario == 2) {
+				victim = nullptr;
+				for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) victim = unit;
+			}
+			require(victim, "an original Red actor supplies the authored activation fixture");
+			functions.kill_unit(victim);
+			for (int tick = 0; tick != 800; ++tick) step();
+			require(st.trigger_switches[10] && st.campaign_ai[0].town_active && st.campaign_ai_scripts.size() == 5 && !st.campaign_ai[3].town_active, "the original Red casualty or Temple-loss gate starts Z10e without a replacement wave");
+			require(!st.killed_unit_counts[3][UnitTypes::Special_Protoss_Temple] && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal] && !st.players[3].victory_state, "an uncredited loss cannot fabricate the source human Temple-kill condition or final victory");
+			if (scenario == 2) require(st.unit_counts[0][UnitTypes::Special_Protoss_Temple] == 1, "Red activation from an ordinary casualty does not remove the Temple");
+		} else {
+			auto approach = functions.find_unit_placement(hydralisk, temple->sprite->position + xy(160, 0), false);
+			require(approach.first, "native placement supplies a legal isolated Temple combat approach");
+			functions.move_unit(hydralisk, approach.second);
+			functions.set_unit_shield_points(temple, 0_fp8);
+			functions.set_unit_hp(temple, fp8::integer(1));
+			functions.issue_order(hydralisk, false, hydralisk->unit_type->attack_unit, {temple->sprite->position, temple});
+			for (int tick = 0; tick != 1200 && !st.killed_unit_counts[3][UnitTypes::Special_Protoss_Temple]; ++tick) step();
+			require(st.killed_unit_counts[3][UnitTypes::Special_Protoss_Temple] == 1 && !st.players[3].victory_state, "a real native Hydralisk weapon kill supplies source Temple credit without immediately winning");
+			int temple_killed_frame = st.current_frame;
+			unit_t* crystal = nullptr;
+			unit_t* carrier = nullptr;
+			for (int tick = 0; tick != 1600; ++tick) {
+				step();
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					if (functions.unit_is(unit, UnitTypes::Powerup_Khaydarin_Crystal) && !functions.unit_dying(unit)) crystal = unit;
+					if (functions.ut_worker(unit) && unit->worker.powerup) carrier = unit;
+				}
+				if (crystal && !st.scripted_pause) break;
+			}
+			require(st.current_frame > temple_killed_frame && !st.scripted_pause && crystal && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal] == 1 && !st.players[3].victory_state, "the original unpaused Daggoth sequence creates exactly its Drone and crystal without prematurely winning");
+			if (!carrier) {
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && functions.is_in_bounds(unit->sprite->position, st.locations.at(0).area)) carrier = unit;
+				require(carrier, "the source-created Drone remains within the original crystal arrival zone");
+				functions.issue_order(carrier, false, functions.get_order_type(Orders::Move), {crystal->sprite->position, nullptr});
+				for (int tick = 0; tick != 400 && !carrier->worker.powerup; ++tick) step();
+			}
+			require(carrier->worker.powerup == crystal && functions.us_hidden(crystal) && carrier->carrying_flags == 4, "normal native movement picks up the source-created crystal without a direct carry assignment");
+			for (int tick = 0; tick != 96; ++tick) step();
+			require(!st.players[3].victory_state && st.trigger_switches[10] && st.campaign_ai[0].town_active, "Temple destruction activates the original final offensive but does not bypass crystal delivery");
+			if (scenario == 5) {
+				unit_id crystal_id = functions.get_unit_id(crystal);
+				functions.kill_unit(carrier);
+				for (int tick = 0; tick != 64; ++tick) step();
+				crystal = functions.get_unit(crystal_id);
+				require(crystal && !functions.unit_dying(crystal) && !functions.us_hidden(crystal) && !st.players[3].victory_state, "carrier loss drops the same original crystal without inventing defeat or a duplicate");
+				carrier = nullptr;
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && !functions.unit_dying(unit)) carrier = unit;
+				require(carrier, "an original starting Drone remains to recover the dropped crystal");
+				functions.issue_order(carrier, false, functions.get_order_type(Orders::Move), {crystal->sprite->position, nullptr});
+				for (int tick = 0; tick != 4000 && !carrier->worker.powerup; ++tick) step();
+				require(carrier->worker.powerup == crystal && functions.us_hidden(crystal), "an original Drone can recover the same dropped crystal through native pickup");
+			}
+			const auto& foundation = st.locations.at(1).area;
+			functions.issue_order(carrier, false, functions.get_order_type(Orders::Move), {(foundation.from + foundation.to) / 2, nullptr});
+			bool ending_paused = false;
+			for (int tick = 0; tick != 18000 && !st.players[3].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			require(ending_paused && st.players[3].victory_state >= 3 && carrier->worker.powerup == crystal && st.building_counts[0] + st.building_counts[2] + st.building_counts[7] > 0, "native crystal delivery runs the original paused Overmind ending and victory while other Protoss buildings remain");
+		}
+		printf("Full Circle original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -2775,6 +2879,7 @@ int main(int argc, char** argv) {
 	bool culling = campaign && argc > 4 && !strcmp(argv[4], "zerg07");
 	bool eye_for_eye = campaign && argc > 4 && !strcmp(argv[4], "zerg08");
 	bool invasion_aiur = campaign && argc > 4 && !strcmp(argv[4], "zerg09");
+	bool full_circle = campaign && argc > 4 && !strcmp(argv[4], "zerg10");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -2791,6 +2896,43 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (full_circle) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Drone] == 3 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 6 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 3 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 4 && st.unit_counts[3][UnitTypes::Zerg_Ultralisk] == 1 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[3][UnitTypes::Zerg_Creep_Colony] == 2 && !st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan], "Full Circle retains the original human slot, base and starting force without Kerrigan");
+			for (unit_t* unit : ptr(st.player_units[3])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[3] == 1000 && st.current_gas[3] == 1000 && !st.players[3].victory_state && !st.countdown_active && !st.scripted_pause && !st.unit_counts[3][UnitTypes::Powerup_Khaydarin_Crystal], "Full Circle preserves original resources without an early crystal, countdown or outcome");
+			require(st.campaign_ai[2].town_active && st.campaign_ai[7].town_active && st.campaign_ai[2].area_towns.size() == 1 && st.campaign_ai[7].area_towns.size() == 1 && st.campaign_ai_scripts.size() == 4 && !st.campaign_ai[0].town_active && !st.campaign_ai[3].town_active && !st.trigger_switches[10], "Full Circle starts the four original Teal/Yellow town programs while Red awaits its authored activation");
+			unit_t* red_probe = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) red_probe = unit;
+			require(red_probe, "an original Red Probe supplies the final-offensive combat observation gate");
+			functions.kill_unit(red_probe);
+			bool teal_ground_fire = false, yellow_air_fire = false, red_air_fire = false;
+			int combat_budget = 7502 + 3 * (500 + 180 * 15) + 2 * st.game->map_height + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time;
+			for (int tick = 0; tick != combat_budget && !(teal_ground_fire && yellow_air_fire && red_air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[3])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 2, 7}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 2 && !functions.u_flying(unit)) teal_ground_fire = true;
+					if (owner == 7 && functions.u_flying(unit)) yellow_air_fire = true;
+					if (owner == 0 && functions.u_flying(unit)) red_air_fire = true;
+				}
+			}
+			require(teal_ground_fire && yellow_air_fire && red_air_fire && st.trigger_switches[10] && st.campaign_ai_scripts.size() == 5, "all three original main-town programs fire native ground/air weapons using authored waits and funding");
+			printf("Full Circle original Teal ground and Yellow/Red air attacks passed.\n");
+			full_circle_mission_cases(load_data_file, map_file);
+			printf("Full Circle original initialization passed.\n");
+			return 0;
+		}
 		if (invasion_aiur) {
 			auto& st = player.st();
 			state_functions functions(st);

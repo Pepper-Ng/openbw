@@ -236,6 +236,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('zerg09'), false, 'The Invasion of Aiur requires the Eye for an Eye victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 18).map(id => [id, true])) }));
   assert.equal(normal.unlocked('zerg09'), true, 'Completing Eye for an Eye unlocks The Invasion of Aiur');
+  assert.equal(normal.unlocked('zerg10'), false, 'Full Circle requires The Invasion of Aiur victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 19).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('zerg10'), true, 'Completing The Invasion of Aiur unlocks Full Circle');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -281,7 +284,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -595,6 +598,14 @@ function testCampaign() {
     assert.equal(human.some(unit => unit[1] === 'Khaydarin Crystal'), false, 'The portable crystal must be created by the original completed-harvest trigger');
     assert.equal(x.openbw_mission_countdown(), -1, 'The harvest countdown cannot start before Drone contact');
     console.log('The Invasion of Aiur original Zerg base, force and neutral formation checks passed.');
+  } else if (missionId === 'zerg10') {
+    assert.equal(mission.episode, 2); assert.equal(mission.order, 10); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    for (const [type, count] of [['Drone', 3], ['Hydralisk', 3], ['Zergling', 6], ['Ultralisk', 1], ['Overlord', 4], ['Hatchery', 1], ['Creep Colony', 2], ['Infested Kerrigan', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.ok(human.some(unit => unit[1] === 'Larva'), 'Original Hatchery supplies native Larva');
+    assert.ok(units.some(unit => unit[1].includes('Temple') && unit[2] === '0'), 'Original Protoss Temple retains its Red owner');
+    assert.equal(human.some(unit => unit[1] === 'Khaydarin Crystal'), false, 'The crystal must be created by the original credited Temple-kill trigger');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Full Circle has no invented countdown');
+    console.log('Full Circle original Zerg base, force and Protoss Temple checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -616,7 +627,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'zerg10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Full Circle trigger grants 1000 gas');
   if (missionId === 'zerg09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 750, 'Original Invasion of Aiur trigger grants 750 gas');
   if (missionId === 'zerg08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 350, 'Original Eye for an Eye trigger grants 350 gas');
   if (missionId === 'zerg07') {
@@ -673,7 +685,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -972,7 +984,7 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 450, 'Native Drone production pays fifty additional minerals without test funding');
     console.log('The Culling original paid Hatchery construction, native Larva/Drone production and no-invented-dialogue checks passed.');
   }
-  if (missionId === 'zerg09') {
+  if (['zerg09', 'zerg10'].includes(missionId)) {
     const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Larva' && unit[2] === '3');
     assert.ok(larva, 'Original Hatchery has a native Larva for paid player production');
     x.openbw_debug_select(Number(larva[0]), 0); x.openbw_render(0); x.openbw_out_clear();
@@ -983,10 +995,10 @@ function testCampaign() {
     x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     for (let tick = 0; tick < 600; tick++) x.openbw_step();
     const owned = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[2] === '3');
-    assert.equal(owned.filter(unit => unit[1] === 'Drone').length, 5, 'Native player production adds one completed Drone');
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 700, 'Original 750 minerals pay the normal fifty-mineral Drone cost without test funding');
-    assert.equal(x.openbw_mission_countdown(), -1, 'Ordinary production cannot bypass the original crystal-contact objective');
-    console.log('The Invasion of Aiur paid native Drone morph and original harvest-gate isolation passed.');
+    assert.equal(owned.filter(unit => unit[1] === 'Drone').length, missionId === 'zerg09' ? 5 : 4, 'Native player production adds one completed Drone');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), missionId === 'zerg09' ? 700 : 950, 'Original minerals pay the normal fifty-mineral Drone cost without test funding');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Ordinary production cannot invent an objective countdown');
+    console.log(`${mission.title} paid native Drone morph and original objective-gate isolation passed.`);
   }
   if (['zerg05', 'zerg06', 'zerg08'].includes(missionId)) {
     const kerrigan = human.find(unit => unit[1] === 'Infested Kerrigan');
