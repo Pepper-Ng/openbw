@@ -3005,6 +3005,48 @@ static void into_flames_mission_cases(data_loading::data_files_loader<>& load_da
 	}
 }
 
+static void higher_ground_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 4; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[7])) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		if (scenario == 0) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "whole-human-force loss reaches the original Higher Ground defeat");
+		} else {
+			a_vector<unit_t*> victims;
+			for (int owner : {0, 6}) {
+				if ((scenario == 1 && owner != 0) || (scenario == 2 && owner != 6)) continue;
+				for (unit_t* unit : ptr(st.player_units[owner])) if (functions.ut_building(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool ending_paused = false;
+			for (int tick = 0; tick != 2000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			if (scenario != 3) require(!st.players[7].victory_state && st.building_counts[scenario == 1 ? 6 : 0] > 0, "either surviving original Zerg colony blocks Higher Ground victory");
+			else require(ending_paused && !st.scripted_pause && st.players[7].victory_state >= 3 && st.non_building_counts[0] + st.non_building_counts[6] > 0, "both original hostile building forces gone runs the paused Fenix/Aldaris dialogue, unpauses and wins with mobile enemies remaining");
+		}
+		printf("Higher Ground original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3033,6 +3075,7 @@ int main(int argc, char** argv) {
 	bool full_circle = campaign && argc > 4 && !strcmp(argv[4], "zerg10");
 	bool first_strike = campaign && argc > 4 && !strcmp(argv[4], "protoss01");
 	bool into_flames = campaign && argc > 4 && !strcmp(argv[4], "protoss02");
+	bool higher_ground = campaign && argc > 4 && !strcmp(argv[4], "protoss03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3049,6 +3092,37 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (higher_ground) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 3 && st.unit_counts[7][UnitTypes::Protoss_Scout] == 3 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Pylon] == 3 && !st.unit_counts[7][UnitTypes::Hero_Fenix_Zealot], "Higher Ground retains the original Protoss base, ground force and three Scouts without an invented Fenix actor");
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[7] == 300 && st.current_gas[7] == 100 && !st.countdown_active && !st.players[7].victory_state && st.campaign_ai[0].town_active && st.campaign_ai[6].town_active && st.campaign_ai_scripts.size() == 2 && !st.campaign_ai[7].town_active, "Higher Ground retains original resources and both Zerg programs without an invented countdown or human AI");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			bool ground_fire = false, air_fire = false;
+			int combat_budget = 10502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Zerg_Mutalisk)->build_time + st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(ground_fire && air_fire); ++tick) {
+				for (unit_t* unit : ptr(st.player_units[7])) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit) && !functions.unit_dying(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 6}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 0 && !functions.u_flying(unit)) ground_fire = true;
+					if (owner == 6 && functions.u_flying(unit)) air_fire = true;
+				}
+			}
+			require(ground_fire && air_fire, "original Pr3G ground and Pr3R Mutalisk parties fire native weapons at authored waits and funding");
+			printf("Higher Ground original Pr3G ground and Pr3R air attacks passed.\n");
+			higher_ground_mission_cases(load_data_file, map_file);
+			printf("Higher Ground original initialization passed.\n");
+			return 0;
+		}
 		if (into_flames) {
 			auto& st = player.st();
 			state_functions functions(st);
