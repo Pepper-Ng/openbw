@@ -19261,7 +19261,7 @@ struct state_functions {
 			auto& ai = st.campaign_ai.at(script.owner);
 			auto read = [&](size_t width) {
 				if (script.position < 4 || script.position >= table || width > table - script.position) error("campaign AI operand out of bounds");
-				int value = width == 1 ? bytes[script.position] : data_loading::value_at<uint16_t, true>(bytes.data() + script.position);
+				uint32_t value = width == 1 ? bytes[script.position] : width == 4 ? data_loading::value_at<uint32_t, true>(bytes.data() + script.position) : data_loading::value_at<uint16_t, true>(bytes.data() + script.position);
 				script.position += width;
 				return value;
 			};
@@ -19426,6 +19426,14 @@ struct state_functions {
 					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
 				}
 				else if (opcode == 77) ai.target_expansion = true;
+				else if (opcode == 87 || opcode == 88) {
+					int player = read(1);
+					if (player >= 8) error("shared vision AI player out of range");
+					if (opcode == 87) st.shared_vision[player] |= 1 << script.owner;
+					else st.shared_vision[player] &= ~(1 << script.owner);
+				}
+				else if (opcode == 103) disruption_web((script.area.from + script.area.to) / 2, script.owner);
+				else if (opcode == 105) st.lcg_rand_state = read(4);
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
 			}
 		}

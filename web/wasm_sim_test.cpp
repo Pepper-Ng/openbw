@@ -3730,6 +3730,114 @@ static void eye_storm_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 5 && st.unit_counts[1][UnitTypes::Protoss_Dark_Templar] == 2 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[1][UnitTypes::Protoss_Gateway] == 1 && st.unit_counts[1][UnitTypes::Protoss_Templar_Archives] == 1 && st.unit_counts[1][UnitTypes::Protoss_Pylon] == 3, "Legacy retains the original expansion Dark Templars, five Probes and authored base");
+		a_vector<unit_t*> templars;
+		for (unit_t* unit : ptr(st.player_units[1])) {
+			functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			if (functions.unit_is(unit, UnitTypes::Protoss_Dark_Templar)) templars.push_back(unit);
+		}
+		auto step = [&]() {
+			for (int owner : {1, 2, 5, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 400; ++tick) step();
+		require(st.current_minerals[1] == 250 && st.current_gas[1] == 75 && !st.players[1].victory_state && st.campaign_ai[3].town_active && st.campaign_ai[4].town_active, "original 250/75 funding and both expansion Zerg main programs survive the opening transmission");
+		if (scenario == 0) {
+			int peak_corsairs = 0, peak_shuttles = 0, peak_webs = 0;
+			bool webbed = false;
+			for (int tick = 0; tick != 2400; ++tick) {
+				step();
+				peak_corsairs = std::max(peak_corsairs, st.unit_counts[2][UnitTypes::Protoss_Corsair]);
+				peak_shuttles = std::max(peak_shuttles, st.unit_counts[2][UnitTypes::Protoss_Shuttle]);
+				peak_webs = std::max(peak_webs, st.unit_counts[11][UnitTypes::Spell_Disruption_Web]);
+				webbed = webbed || st.disruption_webbed_units > 0;
+			}
+			bool still_inhibited = false;
+			for (unit_t* unit : ptr(st.visible_units)) if (!functions.unit_dying(unit) && functions.u_cannot_attack(unit)) still_inhibited = true;
+			require(st.trigger_switches[7] && peak_corsairs == 4 && peak_shuttles == 2 && peak_webs == 4 && webbed && !st.unit_counts[11][UnitTypes::Spell_Disruption_Web] && !still_inhibited && !st.players[1].victory_state, "the original demonstration creates four Corsairs, two Shuttles and four native Webs that inhibit ground fire and expire normally");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2, "loss of the original human buildings reaches the native Legacy defeat");
+		} else if (scenario <= 4) {
+			unit_t* first = nullptr;
+			unit_t* second = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate)) first = unit;
+			for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate)) second = unit;
+			require(first && second, "both original Cerebrates retain their distinct owners");
+			if (scenario == 2) {
+				functions.kill_unit(first);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(st.unit_counts[3][UnitTypes::Special_Cerebrate] == 1 && !st.trigger_switches[0] && !st.trigger_switches[9] && !st.players[1].victory_state, "destroying a Cerebrate without a nearby expansion Dark Templar lets the original trigger recreate it");
+			} else {
+				for (int index = 0; index != (scenario == 4 ? 2 : 1); ++index) {
+					unit_t* target = index ? second : first;
+					unit_t* templar = templars[index];
+					functions.move_unit(templar, target->sprite->position + xy(64, 0));
+					functions.refresh_unit_position(templar);
+					functions.set_unit_hp(target, fp8::integer(1));
+					target->shield_points = fp8::integer(0);
+					functions.issue_order(templar, false, templar->unit_type->attack_unit, {target->sprite->position, target});
+					for (int tick = 0; tick != 1000 && !st.trigger_switches[index]; ++tick) step();
+					require(st.trigger_switches[index] && !st.unit_counts[index ? 4 : 3][UnitTypes::Special_Cerebrate], "an original expansion Dark Templar uses native weapon damage to satisfy its Cerebrate region gate");
+				}
+				if (scenario == 3) {
+					for (int tick = 0; tick != 600; ++tick) step();
+					require(!st.trigger_switches[1] && !st.trigger_switches[9] && !st.players[1].victory_state, "the second live Cerebrate blocks the ending after the first valid Dark Templar kill");
+				} else {
+					bool kerrigan = false, zeratul = false, aldaris = false, paused = false;
+					for (int tick = 0; tick != 7000 && !st.players[1].victory_state; ++tick) {
+						step();
+						kerrigan = kerrigan || st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] > 0;
+						zeratul = zeratul || st.unit_counts[2][UnitTypes::Hero_Zeratul] > 0;
+						aldaris = aldaris || st.unit_counts[7][UnitTypes::Hero_Tassadar] > 0;
+						paused = paused || st.scripted_pause;
+					}
+					require(st.trigger_switches[9] && st.trigger_switches[50] && kerrigan && zeratul && aldaris && paused && st.players[1].victory_state >= 3, "both original Cerebrate gates run ownership handoff, the Kerrigan arrival, original heroes and the full paused ending to victory");
+				}
+			}
+		} else {
+			bool fired[2] = {};
+			bool reachable_target = false;
+			for (int tick = 0; tick != 18000 && !(fired[0] && fired[1]); ++tick) {
+				step();
+				if (!reachable_target && st.campaign_ai[4].attack_party.size() >= 6) {
+					unit_t* attacker = functions.get_unit(st.campaign_ai[4].attack_party.front());
+					for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) {
+						functions.move_unit(unit, attacker->sprite->position + xy(64, 0));
+						functions.refresh_unit_position(unit);
+						require(functions.is_reachable(attacker, unit), "the isolated eastern attack-party fixture places an original protected Probe on reachable terrain");
+						reachable_target = true;
+						break;
+					}
+				}
+				for (unit_id id : st.campaign_ai[3].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (unit && !functions.unit_dying(unit) && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[0] = true;
+				}
+				if (reachable_target) for (unit_t* unit : ptr(st.player_units[4])) if (!functions.unit_dying(unit) && (functions.unit_is(unit, UnitTypes::Zerg_Zergling) || functions.unit_is(unit, UnitTypes::Zerg_Hydralisk)) && unit->ground_weapon_cooldown) fired[1] = true;
+			}
+			require(reachable_target && fired[0] && fired[1], "PB3A attacks the original base and PB3C assembles its original-timed party and fires native weapons at a reachable protected original Probe");
+		}
+		printf("Legacy of the Xel'Naga original mission case %d passed.\n", scenario);
+	}
+}
+
 static void dunes_shakuras_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 10; ++scenario) {
 		game_player player(load_data_file);
@@ -3894,6 +4002,17 @@ static void expansion_ai_binary_checks(data_loading::data_files_loader<>& load_d
 	require(st.campaign_ai[4].campaign && st.campaign_ai[4].area_towns.size() == 2 && !st.campaign_ai[4].default_build && st.campaign_ai_scripts[0].wait > 0 && st.campaign_ai_scripts[1].wait > 0, "both original expansion programs execute their own town setup and authored waits");
 	functions.start_campaign_ai_script(4, 0x63697553);
 	require(!st.campaign_ai_scripts.back().broodwar, "ordinary AI programs continue using the original binary");
+	st.campaign_ai_scripts.clear();
+	for (auto& ai : st.campaign_ai) ai.town_active = false;
+	functions.start_campaign_ai_script(4, 0x3269562b);
+	functions.progress_campaign_ai_scripts();
+	require(st.shared_vision[2] & (1 << 4), "shared-vision binary opcode grants vision in the same direction as the original trigger helper");
+	functions.start_campaign_ai_script(4, 0x3269562d);
+	functions.progress_campaign_ai_scripts();
+	require(!(st.shared_vision[2] & (1 << 4)), "shared-vision binary opcode removes the matching grant");
+	functions.start_campaign_ai_script(1, 0x42374254);
+	functions.progress_campaign_ai_scripts();
+	require(st.lcg_rand_state == 123456789u, "the original TB7B four-byte operand sets the exact deterministic native seed");
 	printf("Original and expansion AI binary routing passed.\n");
 }
 
@@ -3935,6 +4054,7 @@ int main(int argc, char** argv) {
 	bool eye_storm = campaign && argc > 4 && !strcmp(argv[4], "protoss10");
 	bool escape_aiur = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss01");
 	bool dunes_shakuras = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss02");
+	bool legacy_xelnaga = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3955,6 +4075,10 @@ int main(int argc, char** argv) {
 		}
 		if (dunes_shakuras) {
 			dunes_shakuras_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (legacy_xelnaga) {
+			legacy_xelnaga_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

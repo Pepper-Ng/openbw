@@ -3,12 +3,12 @@
 ## Status And Scope
 
 - Handoff updated: 2026-11-10. Continue from this document and the current Git state, rather than restoring the full implementation conversation.
-- All thirty original numbered StarCraft missions are implemented in the catalogue: ten Terran, ten Zerg and ten Protoss. Brood War implementation is authorized as of 2026-11-10.
+- All thirty original numbered StarCraft missions and the first three Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras and Legacy of the Xel'Naga.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
-- Publication bundle: Shadow Hunters is signed commit `8b494c1954225ace41bf7c44b66ad63ff8538e24`; Eye of the Storm is signed commit `ca62d2954a6c90452d1b484502400b819890bc83`. The user authorized publication of both with this separate handoff commit on 2026-11-10. Confirm the live `campaign` ref matches the local tip; Git publication and website rollout are separate checks.
-- The final recorded gate passed all sixty-six modes: thirty native missions, thirty browser deterministic recoveries, shared AI/combat, menu, commands, Protoss selection, network and lobby. All thirty original pack identities were rechecked unchanged. These are recorded checks, not permission to skip validation after a new engine change.
+- The user authorized the expansion framework and three separate mission milestones, followed by a push to `campaign`, with clear commit messages and no co-author trailers. Confirm the live branch matches the local tip; Git publication and website rollout are separate checks.
+- The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below. Recorded checks are not permission to skip validation after a new engine change.
 - Work stays on `campaign`. Keep `sandbox` experiments separate, preserve uncommitted user changes, and publish source/plan text rather than proprietary assets or generated evidence.
-- The primary follow-up is the explicit validation backlog below, not reimplementation of the thirty missions. Reuse existing extraction, simulation, UI, replay and test paths.
+- The primary follow-up is the explicit validation backlog below and, when authorized, the next chronological expansion mission. Reuse existing extraction, simulation, UI, replay and test paths.
 
 ### Historical Milestone Context
 
@@ -74,6 +74,27 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Native encounter fixtures relocate surviving Zealots, create a completed Nexus/Pylon and use protective matrices. The AI-fire fixture sets the source activation switch explicitly to isolate PB2A from the earlier encounter.
 - Browser verification starts a paid 400-mineral Nexus through normal input, retains all four original Probes and reconstructs its in-progress warp. Original presentation/audio and the per-edition sequential menu checks pass.
 
+### Brood War 3: Legacy of the Xel'Naga
+
+- Catalogue ID `bwprotoss03`, Episode IV mission 3. Original CHK SHA-256 `d4d49e69460b587bc55af2852409366ccff1ed433a101535ac391b288f74bbf8`; 176 UNIT records, 41 triggers and 23 audio files. Pack SHA-256 `8fdb998af0b8c254b89055552156048f4d754ab7aec814113aa664cca82432c1`.
+- Human slot 1 retains five Probes, two expansion Dark Templars, a Nexus, Gateway, Templar Archives, three Pylons and the original 250 minerals/75 gas.
+- Each Cerebrate must be absent while a human Dark Templar is present in its authored attack region. The source checks presence, not the identity of the credited killer. Without that presence the original triggers recreate the Cerebrate; the second live Cerebrate blocks the ending.
+- PB3A and PB3C retain their original production, caps, upgrades and waits. The thirty-second demonstration creates exactly four Corsairs and two Shuttles; PB3F creates four native Disruption Webs. Tests observe actual ground-fire inhibition and its removal after the effects expire.
+- New AI operands support the four-byte TB7B random seed, with an isolated assertion of exactly `123456789`. Binary shared-vision on/off operations match the existing trigger helper's direction.
+- Calling the existing native Disruption Web effect at the authored script-area center is the implementation's interpretation of opcode 103. It does not invent a player command or charge human energy; classic comparison of the demonstration remains open.
+- Both Cerebrate gates run the original neutral ownership handoff, Overlord/Kerrigan arrival, paused conversation and victory. The source represents Aldaris with unit type 79 (the Tassadar hero type) in slot 7; tests preserve that authored actor rather than substituting the Aldaris unit type.
+- Six fresh native cases pass: demonstration/expiry, force-loss defeat, Cerebrate recreation, one-Cerebrate victory rejection, the full two-Cerebrate ending and both enemy programs' native weapon fire.
+- Native fixtures protect actors with matrices. Outcome cases relocate the original Dark Templars and weaken Cerebrates to one hit point. The AI-fire case lets PB3C assemble its timed party, then relocates one protected original Probe onto terrain reachable from that otherwise isolated eastern party. PB3A attacks the original starting base; no attack wait, production result, AI opcode or map route is bypassed.
+- Browser verification uses normal Gateway input to pay 100 minerals for a Zealot. Recovery captures its incomplete native training queue, preserves both original Dark Templars and 75 gas, and reconstructs matching state at 1228 service ticks with one command batch.
+
+### Brood War UI And Release Verification
+
+- The rebuilt native/browser engines passed all 72 final modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
+- Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed. Only the documented existing compiler warnings remain.
+- A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
+- Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.
+- Full normal-control human victories, physical-device acceptance and exact classic AI/difficulty comparison remain open for all three expansion missions. Automated fixtures and GUI smoke checks do not establish those acceptance levels.
+
 The campaign's game logic must remain authoritative. Do not mark the mission playable merely because terrain renders, replace scripted behavior with a melee bot, remove unsupported triggers, or grant Raynor directly to the player to bypass rescue support.
 
 ## Start Here: Agent Handoff
@@ -130,7 +151,7 @@ For Brood War or other new campaigns, first obtain authorization and audit the a
 - Keep targets attackable when measuring enemy fire. Invulnerability can make a correct AI reject the target; a bounded test-only matrix/HP refresh can isolate the attack. Sample turret subunits for tanks/Goliaths and actual launched Scarabs/Interceptors for fighter-based weapons.
 - A failed unprotected automated rush can be a valid combat loss. Check the surviving actors before declaring a rescue or pathing defect. Protoss 4's failed eight-unit rush is not a reproducer for broken rescue.
 - Record exact observed deadlines separately from chosen test headroom. Source waits, native build times and path length justify a bound; a larger arbitrary timeout cannot repair a wrong owner, missing research, disconnected route or dead actor.
-- Recheck original hashes after a shared decoder change and affected earlier missions after a shared engine change. For broad native changes, use `campaignMissions` to run every native mission and every browser recovery, plus the six shared modes. The current total is 66; derive it from the catalogue rather than freezing that count in a new runner.
+- Recheck original hashes after a shared decoder change and affected earlier missions after a shared engine change. For broad native changes, use `campaignMissions` to run every native mission and every browser recovery, plus the six shared modes. The current total is 72; derive it from the catalogue rather than freezing that count in a new runner.
 - Shared gates are `--test-ai-combat` in `run-sim.mjs`, and `--test-campaign-menu`, `--test-commands`, `--test-protoss-selection`, `--test-network` and `--test-lobby` in `run-wasm-node.mjs`. Preparation/downloader safety checks remain in the existing preparation scripts. A documentation-only change does not require rerunning the whole game suite.
 
 ### Known Debugging Shortcuts

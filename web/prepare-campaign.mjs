@@ -39,6 +39,7 @@ const missions = {
   protoss10: { title: 'Eye of the Storm', episode: 3, order: 10, scenarioHash: 'e8bc84347cd8810d423e76c8e739612de777f579dd287eca2ef5bc620ff4ebdd', units: 407, triggers: 8, sounds: 10 },
   bwprotoss01: { title: 'Escape from Aiur', episode: 4, order: 1, scenarioHash: 'ef8153dbfc7d9216207aaac7cda7a2950980cdb35a9c72612a67dc7b76a09e67', units: 293, triggers: 117, sounds: 28 },
   bwprotoss02: { title: 'Dunes of Shakuras', episode: 4, order: 2, scenarioHash: '07725cd6a26052101ecfef735105c204309a40518de1a232736aefb268f01011', units: 168, triggers: 30, sounds: 18 },
+  bwprotoss03: { title: "Legacy of the Xel'Naga", episode: 4, order: 3, scenarioHash: 'd4d49e69460b587bc55af2852409366ccff1ed433a101535ac391b288f74bbf8', units: 176, triggers: 41, sounds: 23 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({
