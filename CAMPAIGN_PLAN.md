@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first six Brood War missions are implemented in the catalogue. Return to Char follows The Battle of Braxis.
+- All thirty original numbered StarCraft missions and the first seven Brood War missions are implemented in the catalogue. Return to Char and The Insurgent follow The Battle of Braxis.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
-- The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below.
+- The previous original-campaign gate passed sixty-six modes. The current eighty-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- Return to Char has passed its focused checks and awaits publication with mission 7. The Insurgent is the next chronological expansion mission.
+- Return to Char (`8f50522`) and The Insurgent have passed the release gate and await publication as separate sentence-only commits. Countdown is the next chronological expansion mission.
 
 ### Historical Milestone Context
 
@@ -114,10 +114,24 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Recorded browser input pays 100 of the original 800 minerals for a Zealot and saves its unfinished Gateway production. Fresh-instance reconstruction passes at 1,228 service ticks with one command batch. The original opening transmission and 800/400 funding pass.
 - A task-owned loopback origin passes six-mission ordering, fresh sequential locks, original briefing/Begin, visible Save Game, return to the Brood War menu, persistent Resume and resumed simulation. Preceding wins were seeded only in that isolated origin. Full human victory and classic comparison remain open.
 
+### Brood War 7: The Insurgent
+
+- Catalogue ID `bwprotoss07`, Episode IV mission 7. Original CHK SHA-256 `44b57433f843a111d02e565fb8976a2396a228bf08ef058c5c0a1a9c6d5ef274`; 354 UNIT records, 29 gameplay triggers, one briefing and 25 audio dependencies. The 26-file pack is 11,186,174 bytes, decodes to 11,184,702 bytes and has SHA-256 `67960c79a387ab2b48bc1881b41c1f3d5f0dc8cc8dd16eb14d8492a9dabb5cdb`.
+- Human slot 1 retains seven Probes, eight Dark Templars, two Dark Archons, four Dragoons and its original base. The source grants 200 minerals and 150 gas. Three owner-7 Tassadar-type actors represent Aldaris and his two regional decoys.
+- Western and eastern decoy destruction runs the original hallucination reveal and dialogue without victory. A northern Aldaris kill starts the ending independently of those decoys. Before that ending, loss of all force-one buildings causes defeat.
+- The complete source ending transfers both armies away from the human, brings Artanis and Zeratul, then lands three Lurkers and Kerrigan from two Overlords. Original alliance/score actions allow the Zerg to kill the final Aldaris. Pickup orders, removal actions and the final wait lead to victory.
+- Six strict native cases pass: paid enemy production/combat, building-loss defeat, each independent decoy, northern-first victory and victory after both decoys. Ending fixtures protect human actors, relocate one original Dark Templar, and weaken northern Aldaris for a real player weapon kill. The ending then runs unchanged to an actual Zerg weapon kill and extraction. No switches, ending actors or movement gates are supplied by the fixture.
+- Original `PB7A`/`PB7B`/`PB7C` and shared-vision programs reuse existing shared behavior. The AI fixture removes the original enemy Zealots to require replacements, then observes completed native production and weapon fire at a protected original Probe relocated onto reachable terrain within 18,000 ticks. No engine behavior or scenario bytes changed.
+- Recorded browser input queues a Dark Templar in the original Gateway, paying 125 minerals and 100 gas. Recovery captures its unfinished production with 75/50 remaining and reconstructs the session at 1,228 service ticks with one command batch. Both original opening transmissions pass.
+- A fresh task-owned loopback origin passes seven-mission ordering, sequential locks, briefing/Begin and nonblank gameplay. Normal keyboard input buys a Dragoon for 125 minerals and 50 gas; visible Save Game, menu return and Resume preserve the in-flight production and 75/100 remaining.
+- GUI-only forced outcomes verify defeat without a victory flag, fresh Retry, victory persistence and return to the Brood War menu. The menu fits 390 x 640 and 844 x 390 viewports. Task-owned browser storage and servers were cleaned up. Full human victory and classic comparison remain open.
+
 ### Brood War UI And Release Verification
 
 - At the three-expansion-mission milestone, the rebuilt native/browser engines passed 72 modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
 - After missions 4 and 5, all 76 release modes passed: 35 native mission suites, 35 recorded-input recoveries and six shared AI/combat, menu, commands, Protoss-selection, network and lobby suites. The source/AI reader tests, source-download/cache/checksum/stall tests, signalling-server suite, JavaScript syntax checks and `git diff --check` also passed.
+- After missions 6 and 7, all 80 release modes passed: 37 native mission suites, 37 recorded-input recoveries and the six shared suites. All 37 pack identities and every manifest file hash matched; both new packaged scenarios matched their initially extracted source bytes exactly.
+- The affected packer and native-test binaries were rebuilt. Scenario/AI reader tests, source-download/cache/checksum/stall tests, signalling-server tests, JavaScript syntax checks and `git diff --check` passed. Browser-engine source was unchanged.
 - Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed at the three-mission milestone. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.

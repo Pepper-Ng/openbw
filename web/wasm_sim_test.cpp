@@ -3926,6 +3926,109 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void insurgent_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 7 && st.unit_counts[1][UnitTypes::Protoss_Dark_Templar] == 8 && st.unit_counts[1][UnitTypes::Protoss_Dark_Archon] == 2 && st.unit_counts[1][UnitTypes::Protoss_Dragoon] == 4 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[1][UnitTypes::Protoss_Pylon] == 7, "The Insurgent retains the original slot-1 base, seven Probes, eight Dark Templars, two Dark Archons and four Dragoons");
+		require(st.unit_counts[7][UnitTypes::Hero_Tassadar] == 3 && !st.current_minerals[1] && !st.current_gas[1] && !st.countdown_active, "three original Tassadar-type Aldaris actors retain their authored owner without setup funding or a countdown");
+		for (unit_t* unit : ptr(st.player_units[1])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 1200; ++tick) step();
+		require(st.current_minerals[1] == 200 && st.current_gas[1] == 150 && st.trigger_switches[0] && st.campaign_ai[5].town_active && st.campaign_ai[5].area_towns.size() == 2 && !st.campaign_ai[1].town_active && !st.players[1].victory_state, "the original opening grants 200/150, completes its dialogue and starts PB7A/PB7B/PB7C without taking over the human force");
+		auto aldaris_at = [&](size_t location) {
+			for (unit_t* unit : functions.find_units(st.locations.at(location - 1).area)) if (unit->owner == 7 && functions.unit_is(unit, UnitTypes::Hero_Tassadar) && !functions.unit_dying(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		if (scenario == 0) {
+			a_vector<unit_id> original;
+			a_vector<unit_t*> zealots;
+			for (unit_t* unit : ptr(st.player_units[5])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) zealots.push_back(unit);
+			}
+			for (unit_t* unit : zealots) functions.kill_unit(unit);
+			bool positioned = false, produced = false, fired = false;
+			for (int tick = 0; tick != 18000 && !(produced && fired); ++tick) {
+				step();
+				if (!positioned && !st.campaign_ai[5].attack_party.empty()) {
+					unit_t* attacker = functions.get_unit(st.campaign_ai[5].attack_party.front());
+					unit_t* target = nullptr;
+					for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) { target = unit; break; }
+					if (attacker && target) {
+						functions.move_unit(target, attacker->sprite->position + xy(64, 0));
+						functions.refresh_unit_position(target);
+						require(functions.is_reachable(attacker, target), "the PB7A fixture places an original protected Probe on reachable terrain");
+						positioned = true;
+					}
+				}
+				for (unit_t* unit : ptr(st.player_units[5])) if (!functions.unit_dying(unit)) {
+					if (functions.unit_is(unit, UnitTypes::Protoss_Zealot) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced = true;
+					if (positioned && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired = true;
+				}
+			}
+			require(produced && fired && !st.trigger_switches[9] && !st.players[1].victory_state, "PB7A produces completed replacement Zealots and fires native weapons under the original timing without an early ending");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> buildings;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) buildings.push_back(unit);
+			for (unit_t* unit : buildings) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2 && !st.trigger_switches[9], "losing all original force-one buildings before the ending causes defeat");
+		} else {
+			if (scenario <= 3 || scenario == 5) {
+				for (size_t location : {size_t(4), size_t(8)}) {
+					if (scenario == 2 && location != 4) continue;
+					if (scenario == 3 && location != 8) continue;
+					unit_t* decoy = aldaris_at(location);
+					require(decoy, "the original regional Aldaris decoy remains present");
+					functions.kill_unit(decoy);
+					for (int tick = 0; tick != 1200; ++tick) step();
+					require(!aldaris_at(location) && aldaris_at(9) && !st.trigger_switches[9] && !st.trigger_switches[10] && !st.players[1].victory_state, "an original western or eastern decoy runs its reveal and dialogue but cannot satisfy the northern ending");
+				}
+			}
+			if (scenario >= 4) {
+				unit_t* aldaris = aldaris_at(9);
+				unit_t* templar = nullptr;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Dark_Templar)) { templar = unit; break; }
+				require(aldaris && templar, "the original northern Aldaris and a human Dark Templar remain available");
+				functions.move_unit(templar, aldaris->sprite->position + xy(0, 64));
+				functions.refresh_unit_position(templar);
+				functions.set_unit_hp(aldaris, fp8::integer(1));
+				functions.set_unit_shield_points(aldaris, 0_fp8);
+				functions.issue_order(templar, false, templar->unit_type->attack_unit, {aldaris->sprite->position, aldaris});
+				for (int tick = 0; tick != 1600 && !st.trigger_switches[10]; ++tick) step();
+				require(st.trigger_switches[9] && st.trigger_switches[10] && st.killed_unit_counts[1][UnitTypes::Hero_Tassadar] >= 1, "an original Dark Templar weapon kill of northern Aldaris starts the authored ending");
+				int peak_lurkers = 0, peak_overlords = 0;
+				bool artanis = false, zeratul = false, kerrigan = false, hostile = false;
+				for (int tick = 0; tick != 12000 && !st.players[1].victory_state; ++tick) {
+					step();
+					peak_lurkers = std::max(peak_lurkers, st.unit_counts[3][UnitTypes::Zerg_Lurker]);
+					peak_overlords = std::max(peak_overlords, st.unit_counts[3][UnitTypes::Zerg_Overlord]);
+					artanis = artanis || st.unit_counts[2][UnitTypes::Hero_Artanis] > 0;
+					zeratul = zeratul || st.unit_counts[2][UnitTypes::Hero_Zeratul] > 0;
+					kerrigan = kerrigan || st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] > 0;
+					hostile = hostile || st.trigger_switches[14] && !st.alliances[3][7];
+				}
+				printf("PB7 ending: outcome=%d lurkers=%d overlords=%d heroes=%d/%d/%d hostile=%d switches=%d/%d/%d/%d score=%d\n", st.players[1].victory_state, peak_lurkers, peak_overlords, artanis, zeratul, kerrigan, hostile, st.trigger_switches[11], st.trigger_switches[15], st.trigger_switches[19], st.trigger_switches[20], st.custom_score[3]);
+				require(artanis && zeratul && kerrigan && peak_lurkers == 3 && peak_overlords == 2 && hostile && st.killed_unit_counts[3][UnitTypes::Hero_Tassadar] == 1 && st.trigger_switches[19] && st.trigger_switches[20] && st.players[1].victory_state >= 3, "the original ending transfers both armies, brings Artanis and Zeratul, lands three Lurkers and Kerrigan, kills final Aldaris and extracts through the source victory");
+			}
+		}
+		printf("The Insurgent original mission case %d passed.\n", scenario);
+	}
+}
+
 static void return_to_char_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -4424,6 +4527,7 @@ int main(int argc, char** argv) {
 	bool quest_for_uraj = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss04");
 	bool battle_of_braxis = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss05");
 	bool return_to_char = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss06");
+	bool insurgent = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4460,6 +4564,10 @@ int main(int argc, char** argv) {
 		}
 		if (return_to_char) {
 			return_to_char_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (insurgent) {
+			insurgent_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

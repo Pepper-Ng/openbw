@@ -2342,7 +2342,7 @@ const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
 const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06', 'bwprotoss07'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignEditionIds(edition = $('campaign-edition').value) {
