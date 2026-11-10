@@ -3926,6 +3926,115 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void assault_korhal_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].controller == player_t::controller_occupied && st.players[6].race == race_t::terran && st.unit_counts[6][UnitTypes::Terran_SCV] == 4 && st.unit_counts[6][UnitTypes::Terran_Marine] == 4 && st.unit_counts[6][UnitTypes::Terran_Siege_Tank_Tank_Mode] == 1 && st.unit_counts[6][UnitTypes::Terran_Wraith] == 2 && st.unit_counts[6][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[0][UnitTypes::Terran_Physics_Lab] == 4 && st.unit_counts[1][UnitTypes::Terran_Nuclear_Silo] == 6, "Korhal retains its original slot-6 base, two Wraiths, four enemy Physics Labs and six enemy Nuclear Silos");
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[6])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		auto next_scenario = [&]() -> const a_string& { require(st.next_scenario[6] > 0, "the original next-scenario action supplies a valid string"); return st.game->map_strings.at(st.next_scenario[6] - 1); };
+		for (int tick = 0; tick != 256; ++tick) step();
+		require(st.current_minerals[6] == 200 && st.current_gas[6] == 150 && st.trigger_switches[1] && !st.players[6].victory_state && next_scenario() == "Terran05a.scx" && st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 1 && st.campaign_ai[1].town_active && st.campaign_ai[1].area_towns.size() == 1, "the authored silo relocation latches all six original sites, grants 200/150 and starts both main/area programs with the default next scenario");
+		for (size_t location = 32; location != 38; ++location) {
+			const auto& area = st.locations.at(location - 1).area;
+			xy expected = (area.from + area.to) / 2;
+			int matches = 0;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Nuclear_Silo) && unit->sprite->position == expected) ++matches;
+			require(matches == 1, "every original silo reaches its exact authored destination despite overlapping collision-box margins");
+		}
+		if (!scenario) {
+			a_vector<unit_t*> workers;
+			a_vector<unit_id> original;
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) workers.push_back(unit);
+			auto unchanged = functions.find_unit_placement(workers.front(), workers.front()->sprite->position, false);
+			require(unchanged.first && unchanged.second == workers.front()->sprite->position, "an indexed movable actor does not collide with itself during placement");
+			for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool positioned[2] = {}, produced[2] = {}, fired[2] = {};
+			for (int tick = 0; tick != 18000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+				step();
+				for (int owner : {0, 1}) {
+					if (!positioned[owner] && !st.campaign_ai[owner].attack_party.empty()) {
+						unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+						if (attacker) {
+							functions.unit_finder_remove(workers[owner]);
+							functions.move_unit(workers[owner], attacker->sprite->position + xy(64, 0));
+							auto placement = functions.find_unit_placement(workers[owner], workers[owner]->sprite->position, true);
+							require(placement.first, "each original Korhal attack party has a legal protected original SCV target");
+							functions.move_unit(workers[owner], placement.second);
+							functions.refresh_unit_position(workers[owner]);
+							positioned[owner] = true;
+						}
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[owner] = true;
+						if (positioned[owner] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[owner] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && fired[0] && fired[1] && !st.players[6].victory_state, "both original Korhal main programs replace visible infantry and fire native weapons while the original bunker garrisons remain loaded");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> buildings;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) buildings.push_back(unit);
+			for (unit_t* unit : buildings) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[6].victory_state; ++tick) step();
+			require(st.players[6].victory_state == 2 && next_scenario() == "Terran04.scx", "base loss selects the authored retry scenario and causes defeat");
+		} else if (scenario == 6) {
+			a_vector<unit_t*> targets;
+			for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Terran_Physics_Lab) || functions.unit_is(unit, UnitTypes::Terran_Nuclear_Silo)) targets.push_back(unit);
+			for (unit_t* unit : targets) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1600 && !st.players[6].victory_state; ++tick) step();
+			require(st.players[6].victory_state >= 3 && next_scenario() == "Terran05b.scx", "simultaneous completion preserves the original silo-latch and victory-trigger ordering");
+		} else {
+			bool labs = scenario == 2 || scenario == 4;
+			bool capture = scenario >= 4;
+			UnitTypes type = labs ? UnitTypes::Terran_Physics_Lab : UnitTypes::Terran_Nuclear_Silo;
+			a_vector<unit_t*> targets;
+			for (unit_t* unit : ptr(st.player_units[labs ? 0 : 1])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit)) targets.push_back(unit);
+			require(targets.size() == (labs ? 4 : 6), "each objective uses all of its original distinct targets");
+			for (size_t index = 0; index + 1 != targets.size(); ++index) {
+				if (capture) functions.give_unit_to(targets[index], 6);
+				else functions.kill_unit(targets[index]);
+			}
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.trigger_switches[0] && !st.players[6].victory_state, "one surviving enemy site prevents either original objective from completing");
+			unit_t* last = targets.back();
+			if (capture) functions.give_unit_to(last, 6);
+			else {
+				unit_t* wraith = nullptr;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Wraith)) { wraith = unit; break; }
+				require(wraith, "an original Wraith supplies the final objective weapon kill");
+				functions.unit_finder_remove(wraith);
+				functions.move_unit(wraith, last->sprite->position + xy(96, 0));
+				functions.refresh_unit_position(wraith);
+				functions.set_unit_hp(last, fp8::integer(1));
+				functions.issue_order(wraith, false, wraith->unit_type->attack_unit, {last->sprite->position, last});
+			}
+			for (int tick = 0; tick != 1600 && !st.players[6].victory_state; ++tick) step();
+			require(st.trigger_switches[0] && st.players[6].victory_state >= 3 && next_scenario() == (labs ? "Terran05a.scx" : "Terran05b.scx") && st.unit_counts[labs ? 1 : 0][labs ? UnitTypes::Terran_Nuclear_Silo : UnitTypes::Terran_Physics_Lab] == (labs ? 6 : 4), "destroying or capturing the last required site completes its own original branch with the other objective intact");
+			if (!capture) require(st.killed_unit_counts[6][type] >= 1, "an original Wraith weapon supplies the final objective kill credit");
+		}
+		printf("Assault on Korhal original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void ruins_tarsonis_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 4; ++scenario) {
 		game_player player(load_data_file);
@@ -5026,6 +5135,7 @@ int main(int argc, char** argv) {
 	bool ued_first_strike = campaign && argc > 4 && !strcmp(argv[4], "bwterran01");
 	bool dylarian = campaign && argc > 4 && !strcmp(argv[4], "bwterran02");
 	bool ruins_tarsonis = campaign && argc > 4 && !strcmp(argv[4], "bwterran03");
+	bool assault_korhal = campaign && argc > 4 && !strcmp(argv[4], "bwterran04");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5082,6 +5192,10 @@ int main(int argc, char** argv) {
 		}
 		if (ruins_tarsonis) {
 			ruins_tarsonis_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (assault_korhal) {
+			assault_korhal_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

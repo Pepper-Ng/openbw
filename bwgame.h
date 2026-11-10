@@ -233,6 +233,7 @@ struct state_base_copyable {
 	std::array<int, 12> unit_score;
 	std::array<int, 12> building_score;
 	std::array<int, 12> custom_score{};
+	std::array<int, 12> next_scenario{};
 
 	std::array<std::array<fp1, 3>, 12> supply_used;
 	std::array<std::array<fp1, 3>, 12> supply_available;
@@ -16797,7 +16798,7 @@ struct state_functions {
 		if (bounds.to.x >= (int)game_st.map_width) bounds.to.x = (int)game_st.map_width - 1;
 		if (bounds.to.y >= (int)game_st.map_height - 32) bounds.to.y = (int)game_st.map_height - 32 - 1;
 		auto blocking_unit_pred = [&](const unit_t* target) {
-			if (unit_dead(target)) return false;
+			if (target == u || unit_dead(target)) return false;
 			if (u_no_collide(u) || u_no_collide(target)) return false;
 			if (ut_powerup(u)) {
 				return u_grounded_building(target) || ut_powerup(target);
@@ -20336,7 +20337,7 @@ struct state_functions {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
 		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 21: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 27: case 32: case 36: case 38: case 39: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 57:
+		case 27: case 32: case 36: case 38: case 39: case 41: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20409,6 +20410,10 @@ struct state_functions {
 		case 36: // leaderboard goal kills
 			if (a.extra_n >= 228 || a.group2_n < 0) error("unsupported leaderboard kill goal");
 			on_trigger_action(owner, a);
+			return true;
+		case 41: // set next scenario
+			if (a.string_index < 0 || size_t(a.string_index) > game_st.map_strings.size()) error("invalid next scenario string %d", a.string_index);
+			st.next_scenario.at(owner) = a.string_index;
 			return true;
 		case 47:
 			return true;
@@ -20698,7 +20703,9 @@ struct state_functions {
 				for (unit_t* unit : units) {
 					xy previous_position = unit->sprite->position;
 					move_unit(unit, position);
-					auto placement = find_unit_placement(unit, position, false);
+					auto placement = u_grounded_building(unit) && unit_type_can_fit_at(unit->unit_type, unit->sprite->position)
+						? std::pair<bool, xy>{true, unit->sprite->position}
+						: find_unit_placement(unit, position, false);
 					move_unit(unit, previous_position);
 					if (!placement.first) continue;
 					for (unit_t* other : ptr(st.visible_units)) remove_target_references(other, unit);
@@ -21424,6 +21431,7 @@ struct game_load_functions : state_functions {
 		st.unit_score = {};
 		st.building_score = {};
 		st.custom_score = {};
+		st.next_scenario = {};
 
 		st.supply_used = {};
 		st.supply_available = {};

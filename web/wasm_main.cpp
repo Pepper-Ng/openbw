@@ -264,6 +264,9 @@ OPENBW_EXPORT(openbw_mission_countdown) int openbw_mission_countdown() {
 OPENBW_EXPORT(openbw_mission_objectives) const char* openbw_mission_objectives() {
 	return g_ui && g_ui->mission_objective_string ? g_ui->mission_string(g_ui->mission_objective_string).c_str() : "";
 }
+OPENBW_EXPORT(openbw_mission_next_scenario) int openbw_mission_next_scenario() {
+	return g_ui && g_ui->mission_mode ? g_ui->st.next_scenario[g_ui->my_player] : 0;
+}
 OPENBW_EXPORT(openbw_mission_sound_duration) int openbw_mission_sound_duration(int index) {
 	return g_ui ? g_ui->trigger_sound_duration(index) : 0;
 }

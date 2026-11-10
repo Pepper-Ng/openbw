@@ -345,6 +345,8 @@ For fixture relocation, call `unit_finder_remove` before `move_unit` followed by
 
 Scripted placement and ordinary worker construction have different constraints. Reuse the appropriate helper for each. For teleporting between disconnected regions, search legal placement from the destination region and reset movement state; retain failed actors at their source.
 
+Scripted grounded-building moves retain destination centers on legal terrain, including packed layouts with overlapping collision-box margins. Ordinary construction keeps its existing placement checks.
+
 ### Trigger Semantics And Clocks
 
 - Stop condition/action lists at the first type-zero record and honor disabled flags.
@@ -357,6 +359,7 @@ Scripted placement and ordinary worker construction have different constraints. 
 - Scripted Pause Game freezes world movement/combat while trigger waits continue. Action 30 mutes unit speech; action 5 pauses gameplay.
 - Transmission `time` is the stored base; `group2` supplies Set/Add/Subtract adjustment. Briefing and gameplay share the native formula.
 - Browser audio completion and render frequency must not control authoritative trigger progression.
+- Preserve Set Next Scenario as per-player state. Record its filename on victory; defeats and debug-mode wins must not write new branches.
 
 Verify ambiguous fields against an original record as well as a synthetic fixture. Move Location searches `location` and moves `group2_n`; reversing both implementation and synthetic test can hide a defect.
 
@@ -419,6 +422,8 @@ The offline profile already exists from stage 4. Finish the runtime/test wiring,
 Preserve the current edition decision: independent StarCraft/Brood War entry, sequential victories within each edition. Return and Next must preserve the correct edition.
 
 Keep portable progress-code meanings and canonical ordering stable. Expansion-only victories do not fabricate original victories. Extend catalogue order; do not reorder published entries.
+
+Local victory progress can include an authored bare filename at `nextScenarios[missionId]`. Preserve it through progress-code merges. Portable codes encode ordered clears, not story branches; validate and wire variant routing before exposing a following forked mission.
 
 Verify the stage-4 manifest's schema/content version, source hash, pack URL/size/hash, human slot/race, capabilities and per-file metadata. Reprepare after an extractor/profile change. Do not edit generated manifests to disguise a profile mismatch.
 
