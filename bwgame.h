@@ -3286,7 +3286,7 @@ struct state_functions {
 		return true;
 	}
 
-	bool trigger_give_unit_to(unit_t* u, int new_owner, bool preserve_color = false) {
+	bool trigger_give_unit_to(unit_t* u, int new_owner, bool preserve_color = false, bool rescue = false) {
 		if (u_hallucination(u)) return false;
 		if (unit_is_mineral_field(u)) return false;
 		if (unit_is(u, UnitTypes::Resource_Vespene_Geyser)) return false;
@@ -3299,45 +3299,46 @@ struct state_functions {
 				if (!us_hidden(n)) continue;
 				if (n->order_type->id != Orders::HarvestGas) continue;
 				if (n->order_target.unit != u) continue;
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 				break;
 			}
 		}
-		give_unit_to(u, new_owner, preserve_color);
+		give_unit_to(u, new_owner, preserve_color, rescue);
 		if (unit_provides_space(u)) {
 			for (unit_t* n : loaded_units(u)) {
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 			}
 		}
 		if (unit_is_carrier(u)) {
 			for (unit_t* n : ptr(u->carrier.inside_units)) {
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 			}
 			for (unit_t* n : ptr(u->carrier.outside_units)) {
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 			}
 		} else if (unit_is_reaver(u)) {
 			for (unit_t* n : ptr(u->reaver.inside_units)) {
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 			}
 			for (unit_t* n : ptr(u->reaver.outside_units)) {
-				give_unit_to(n, new_owner, preserve_color);
+				give_unit_to(n, new_owner, preserve_color, rescue);
 			}
 		}
 		if (u_grounded_building(u)) {
-			if (u->building.addon) give_unit_to(u->building.addon, new_owner, preserve_color);
-			if (unit_is_building_addon(u)) give_unit_to(u->current_build_unit, new_owner, preserve_color);
-			if (unit_is_nydus(u) && u->building.nydus.exit) give_unit_to(u->building.nydus.exit, new_owner, preserve_color);
+			if (u->building.addon) give_unit_to(u->building.addon, new_owner, preserve_color, rescue);
+			if (unit_is_building_addon(u)) give_unit_to(u->current_build_unit, new_owner, preserve_color, rescue);
+			if (unit_is_nydus(u) && u->building.nydus.exit) give_unit_to(u->building.nydus.exit, new_owner, preserve_color, rescue);
 		}
 		return true;
 	}
 
-	void give_unit_to(unit_t* u, int new_owner, bool preserve_color = false) {
+	void give_unit_to(unit_t* u, int new_owner, bool preserve_color = false, bool rescue = false) {
 		bool any_upgrades_granted = false;
 		auto grant_tech = [&](TechTypes id) {
-			if (!player_has_researched(new_owner, id)) st.tech_researched[new_owner][id] = true;
+			if (!rescue && player_has_researched(u->owner, id) && !player_has_researched(new_owner, id)) st.tech_researched[new_owner][id] = true;
 		};
 		auto grant_upgrade = [&](UpgradeTypes id) {
+			if (rescue) return;
 			int level = player_upgrade_level(u->owner, id);
 			if (player_upgrade_level(new_owner, id) < level) {
 				any_upgrades_granted = true;
@@ -3503,14 +3504,16 @@ struct state_functions {
 		if (new_owner < 8 && !preserve_color) set_sprite_owner(u, new_owner);
 		if (any_upgrades_granted) apply_upgrades_to_player_units(new_owner);
 		bool idle = u_completed(u);
-		if (u_loaded(u)) idle = false;
+		if (u_loaded(u)) idle = rescue;
 		else if (u_grounded_building(u) && u->secondary_order_type->id == Orders::BuildAddon && u->current_build_unit && !u_completed(u->current_build_unit)) idle = false;
 		else if (ut_powerup(u)) idle = false;
 		else if (unit_is(u, UnitTypes::Protoss_Interceptor)) idle = false;
 		else if (unit_is(u, UnitTypes::Protoss_Scarab)) idle = false;
 		else if (unit_is(u, UnitTypes::Terran_Nuclear_Missile)) idle = false;
 		if (idle) {
-			if (st.players[new_owner].controller == player_t::controller_rescue_passive) {
+			if (rescue && u_in_bunker(u)) {
+				set_unit_order(u, get_order_type(Orders::BunkerGuard));
+			} else if (st.players[new_owner].controller == player_t::controller_rescue_passive) {
 				set_unit_order(u, get_order_type(Orders::RescuePassive));
 			} else if (st.players[new_owner].controller == player_t::controller_neutral) {
 				set_unit_order(u, get_order_type(Orders::Neutral));
@@ -7854,8 +7857,8 @@ struct state_functions {
 			for (unit_t* candidate : ptr(st.player_units[u->owner])) {
 				if (candidate->sprite && candidate->order_type->id != Orders::Die) rescued.push_back(candidate);
 			}
-			for (unit_t* candidate : rescued) trigger_give_unit_to(candidate, recipient, true);
-		} else trigger_give_unit_to(u, recipient, true);
+			for (unit_t* candidate : rescued) trigger_give_unit_to(candidate, recipient, true, true);
+		} else trigger_give_unit_to(u, recipient, true, true);
 	}
 
 	void order_Neutral(unit_t* u) {

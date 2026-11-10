@@ -149,6 +149,52 @@ static void cloaked_targeting_checks(data_loading::data_files_loader<>& load_dat
 	printf("Cloaked Wraith/Ghost idle, Hold, explicit Attack and player cloak research guards passed.\n");
 }
 
+static void ownership_transfer_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	game_player player(load_data_file);
+	data_loading::mpq_file<> map_loader(map_file);
+	game_load_functions loader(player.st());
+	loader.setup_info.starting_minerals = 0;
+	loader.load_map(map_loader);
+	auto& st = player.st();
+	state_functions functions(st);
+	st.game->tech_available[1][TechTypes::Stim_Packs] = true;
+	unit_t* marine = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Marine), xy(192, 96), 4);
+	require(marine != nullptr, "ownership-transfer fixture creates a source Marine");
+	st.tech_researched[1][TechTypes::Stim_Packs] = false;
+	st.tech_researched[4][TechTypes::Stim_Packs] = false;
+	require(functions.trigger_give_unit_to(marine, 1) && !functions.player_has_researched(1, TechTypes::Stim_Packs), "scripted transfer does not invent technology absent from the source owner");
+	functions.trigger_give_unit_to(marine, 4);
+	st.tech_researched[4][TechTypes::Stim_Packs] = true;
+	st.upgrade_levels[4][UpgradeTypes::U_238_Shells] = 1;
+	require(functions.trigger_give_unit_to(marine, 1) && functions.player_has_researched(1, TechTypes::Stim_Packs) && functions.player_upgrade_level(1, UpgradeTypes::U_238_Shells) == 1, "scripted transfer retains researched source technology and range upgrades");
+
+	unit_t* bunker = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Bunker), xy(384, 160), 2);
+	unit_t* passenger = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Marine), xy(384, 224), 2);
+	require(bunker && passenger, "single-bunker rescue fixture creates original-owner cargo");
+	functions.unit_load_target(bunker, passenger);
+	functions.set_unit_order(passenger, functions.get_order_type(Orders::RescuePassive));
+	unit_id passenger_id = functions.get_unit_id(passenger);
+	int bunker_color = bunker->sprite->owner, passenger_color = passenger->sprite->owner;
+	st.tech_researched[2][TechTypes::Stim_Packs] = true;
+	st.upgrade_levels[2][UpgradeTypes::U_238_Shells] = 1;
+	st.tech_researched[1][TechTypes::Stim_Packs] = false;
+	st.upgrade_levels[1][UpgradeTypes::U_238_Shells] = 0;
+	functions.move_unit(marine, bunker->sprite->position + xy(48, 0));
+	bunker->main_order_timer = 0;
+	functions.order_RescuePassive(bunker);
+	require(bunker->owner == 1 && passenger->owner == 1 && functions.get_unit(passenger_id) == passenger && passenger->connected_unit == bunker && functions.u_loaded(passenger) && functions.u_in_bunker(passenger) && functions.us_hidden(passenger), "single-bunker proximity rescue preserves hidden loaded cargo identity and containment");
+	require(passenger->order_type->id == Orders::BunkerGuard && bunker->sprite->owner == bunker_color && passenger->sprite->owner == passenger_color, "single-bunker rescue restores native garrison guard and original display colors");
+	require(!functions.player_has_researched(1, TechTypes::Stim_Packs) && functions.player_upgrade_level(1, UpgradeTypes::U_238_Shells) == 0, "rescue does not inherit even researched source technology or upgrades");
+	st.tech_researched[1][TechTypes::Stim_Packs] = true;
+	st.upgrade_levels[1][UpgradeTypes::U_238_Shells] = 1;
+	functions.trigger_give_unit_to(passenger, 2, true, true);
+	st.tech_researched[2][TechTypes::Stim_Packs] = false;
+	st.upgrade_levels[2][UpgradeTypes::U_238_Shells] = 0;
+	functions.trigger_give_unit_to(passenger, 1, true, true);
+	require(functions.player_has_researched(1, TechTypes::Stim_Packs) && functions.player_upgrade_level(1, UpgradeTypes::U_238_Shells) == 1, "rescue preserves the recipient's existing research and upgrades");
+	printf("Scripted technology transfer and ownership-only bunker rescue checks passed.\n");
+}
+
 static void shared_combat_ai_checks(state& st) {
 	state_functions functions(st);
 	xy original(192, 96);
@@ -1357,7 +1403,7 @@ static void activate_revolution_towns(state& st, state_functions& functions) {
 }
 
 static void revolution_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
-	for (int scenario = 0; scenario != 7; ++scenario) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
 		game_player player(load_data_file);
 		data_loading::mpq_file<> map_loader(map_file);
 		game_load_functions loader(player.st());
@@ -1373,6 +1419,7 @@ static void revolution_mission_cases(data_loading::data_files_loader<>& load_dat
 		state_functions functions(st);
 		for (int tick = 0; tick != 32; ++tick) functions.next_frame();
 		require(st.current_minerals[0] == 300 && st.current_gas[0] == 300, "original Revolution trigger grants 300 minerals and gas");
+		require(!functions.player_has_researched(0, TechTypes::Stim_Packs) && !functions.player_has_researched(3, TechTypes::Stim_Packs) && functions.player_has_researched(6, TechTypes::Stim_Packs), "original Revolution starts human and Antigan Stim unresearched, with Confederate Stim researched");
 		unit_t* kerrigan = nullptr;
 		unit_t* raynor = nullptr;
 		for (int owner : {0, 2}) for (unit_t* unit : ptr(st.player_units[owner])) {
@@ -1380,7 +1427,7 @@ static void revolution_mission_cases(data_loading::data_files_loader<>& load_dat
 			if (unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture) raynor = unit;
 		}
 		require(kerrigan && raynor, "original Revolution hero actors");
-		if (scenario == 6) {
+		if (scenario >= 6) {
 			unit_t* marine = nullptr;
 			for (unit_t* unit : ptr(st.player_units[0])) {
 				functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
@@ -1393,8 +1440,49 @@ static void revolution_mission_cases(data_loading::data_files_loader<>& load_dat
 			const auto& beacon = st.locations.at(0).area;
 			functions.move_unit(kerrigan, (beacon.from + beacon.to) / 2);
 			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
-			for (int tick = 0; tick != 4000; ++tick) functions.next_frame();
+			auto protected_step = [&]() {
+				if (scenario == 7) for (int owner : {0, 3, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					if (functions.ut_building(unit)) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				if (scenario == 6) for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+			};
+			for (int tick = 0; tick != 4000; ++tick) protected_step();
 			require(st.unit_counts[0][UnitTypes::Terran_Command_Center] == 1, "original base rescue supplies the Wraith for satellite activation");
+			if (scenario == 7) {
+				unit_t* bunkers[2] = {};
+				for (int owner : {0, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Terran_Bunker) && unit->sprite->position == (owner ? xy(2544, 768) : xy(2608, 608))) bunkers[owner ? 1 : 0] = unit;
+				require(bunkers[0] && bunkers[1], "the original opposing Revolution cliff bunkers survive native base rescue");
+				require(functions.get_ground_height_at(bunkers[0]->sprite->position) > functions.get_ground_height_at(bunkers[1]->sprite->position), "the original rescued bunker stands above its opposing Confederate bunker");
+				bool fired[2] = {};
+				bool damaged[2] = {};
+				bool ready = true;
+				for (int index = 0; index != 2; ++index) {
+					int loaded = 0;
+					for (unit_t* unit : functions.loaded_units(bunkers[index])) {
+						++loaded;
+						ready = ready && unit->order_type->id == Orders::BunkerGuard && unit->owner == (index ? 6 : 0);
+					}
+					require(loaded > 0, "both original cliff bunkers retain their script-loaded original garrisons");
+				}
+				for (int tick = 0; tick != 1024 && !(fired[0] && fired[1] && damaged[0] && damaged[1]); ++tick) {
+					protected_step();
+					for (int index = 0; index != 2; ++index) {
+						if (bunkers[index]->hp < bunkers[index]->unit_type->hitpoints) damaged[index] = true;
+						for (unit_t* unit : functions.loaded_units(bunkers[index])) if (unit->ground_weapon_cooldown && unit->order_target.unit == bunkers[1 - index]) fired[index] = true;
+					}
+				}
+				require(ready && fired[0] && fired[1] && damaged[0] && damaged[1], "rescued original bunker garrisons fire at and damage opposing bunkers across the cliff without unloading or reloading");
+				require(!functions.player_has_researched(0, TechTypes::Stim_Packs), "base rescue does not invent Stim research for the original human Marines");
+				printf("Revolution original cliff garrisons and Stim research passed.\n");
+				continue;
+			}
 			activate_revolution_towns(st, functions);
 			unit_t* command_center = nullptr;
 			for (unit_t* unit : ptr(st.player_units[6])) if (unit->unit_type->id == UnitTypes::Terran_Command_Center && functions.campaign_ai_unit_town(6, unit) == 1) command_center = unit;
@@ -4082,7 +4170,7 @@ int main(int argc, char** argv) {
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
-		if (combat_ai) { expansion_ai_binary_checks(load_data_file, map_file); cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (combat_ai) { ownership_transfer_checks(load_data_file, map_file); expansion_ai_binary_checks(load_data_file, map_file); cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
 		if (eye_storm) {
 			auto& st = player.st();
 			state_functions functions(st);
@@ -4927,7 +5015,14 @@ int main(int argc, char** argv) {
 			const auto& beacon = player.st().locations.at(0).area;
 			functions.move_unit(kerrigan, (beacon.from + beacon.to) / 2);
 			functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
-			for (int tick = 0; tick != 4000 && !player.st().players[0].victory_state; ++tick) player.next_frame();
+			for (int tick = 0; tick != 4000 && !player.st().players[0].victory_state; ++tick) {
+				for (unit_t* unit : ptr(player.st().player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				player.next_frame();
+			}
 			require(player.st().unit_counts[0][UnitTypes::Terran_Command_Center] == 1, "original Kerrigan beacon sequence rescues the neutral base through native rescue");
 			printf("Revolution original base rescue passed.\n");
 			activate_revolution_towns(player.st(), functions);

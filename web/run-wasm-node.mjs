@@ -510,6 +510,9 @@ function testCampaign() {
     assert.equal(human.length, 9, 'Original eight Marines and naturally rescued Raynor');
     assert.equal(human.filter(unit => unit[1] === 'Marine').length, 8);
     assert.ok(human.some(unit => unit[1] === 'Jim Raynor'));
+    x.openbw_debug_select(Number(human.find(unit => unit[1] === 'Marine')[0]), 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tStim Pack\t0\t/, 'Original Revolution Marines cannot use Stim before research');
+    x.openbw_debug_select(0, 0); x.openbw_out_clear();
     assert.ok(units.some(unit => unit[1] === 'Sarah Kerrigan' && Number(unit[2]) === 2), 'Kerrigan awaits separate proximity rescue');
     assert.ok(units.some(unit => unit[1] === 'Command Center' && Number(unit[2]) === 3), 'Antigan base retains its original neutral owner');
     assert.equal(x.openbw_mission_countdown(), -1, 'Revolution has no survival countdown');

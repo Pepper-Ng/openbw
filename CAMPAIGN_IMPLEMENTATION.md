@@ -333,6 +333,7 @@ If execution traps, inspect the first required unsupported operation. Fix that o
 - Keep original computer-to-computer alliances, rescue neutrality and later explicit alliance actions distinct.
 - Run eligible neutral/rescue-owner triggers without including those owners indiscriminately in victory/combat groups.
 - Use `trigger_give_unit_to` and native ownership helpers. Rescue remains proximity-based, including whole-player transfer through an active grounded depot.
+- Keep rescue distinct from scripted Give Unit. Propagate its ownership-only mode to cargo/add-ons; retain recipient research and restore loaded infantry to BunkerGuard. Scripted transfers inherit only researched donor technologies and applicable donor upgrades.
 - Honor explicit creation/score owner indices even for unused slots. Do not activate their controller or town AI as a side effect.
 - Preserve format-59 expansion-production restrictions. Expansion availability must follow the actual format and source settings.
 - Read availability and research separately. Hero command cards use native family/ability eligibility, not copied ordinary-caster IDs.
@@ -430,6 +431,8 @@ Cover:
 4. The complete original victory chain, including waits, ownership changes, movement, dialogue and final outcome.
 5. Original-timed AI production and actual weapon fire from every relevant enemy program.
 6. Required unit/technology behavior, special effects and expiry, not merely actor creation or queued orders.
+
+For rescued bunkers, inspect hidden passenger orders and observe actual targeting, weapon fire and damage before any unload/reload. Verify player and enemy research separately before and after ownership changes. Protect the original building-clear gates when isolating a different activation route.
 
 Outcome fixtures may relocate original actors, weaken a boss or protect targets to isolate a trigger. Keep these changes test-only and list them in mission evidence. Do not call them normal-control victories.
 
