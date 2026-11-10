@@ -3730,6 +3730,89 @@ static void eye_storm_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void dunes_shakuras_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 10; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[5].race == race_t::protoss && st.unit_counts[5][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[5][UnitTypes::Protoss_Zealot] == 4 && !st.building_counts[5] && st.unit_counts[1][UnitTypes::Protoss_Dark_Templar] == 4, "Dunes of Shakuras retains its original baseless four-Probe/four-Zealot start and four allied expansion Dark Templars");
+		for (unit_t* unit : ptr(st.player_units[5])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {1, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		require(st.current_minerals[5] == 600 && st.current_gas[5] == 0 && !st.players[5].victory_state && !st.campaign_ai[4].town_active && st.alliances[5][1] == 1, "source funding, initial alliance and inactive main Zerg AI remain authored");
+		if (scenario <= 2) {
+			if (scenario) {
+				require(functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Protoss_Pylon), xy(1856, 800), 5), "isolated defeat fixture creates one native Pylon");
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(st.trigger_switches[0], "the source remembers the first human building");
+			}
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[5])) if ((scenario == 2 ? functions.ut_building(unit) : !functions.ut_building(unit)) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 300 && !st.players[5].victory_state; ++tick) step();
+			if (scenario == 1) require(!st.players[5].victory_state && st.building_counts[5] == 1, "after establishing a building, army loss alone does not satisfy the source defeat predicate");
+			else require(st.players[5].victory_state == 2, "the original pre-base army-loss or post-base building-loss predicate causes defeat");
+		} else if (scenario <= 4) {
+			unit_t* remaining = nullptr;
+			for (unit_t* unit : ptr(st.player_units[4])) if (functions.ut_building(unit)) remaining = unit;
+			require(remaining, "the original Zerg town supplies enemy buildings");
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[4])) if (functions.ut_building(unit) && (scenario == 4 || unit != remaining)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool paused = false;
+			for (int tick = 0; tick != 4000 && !st.players[5].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+			if (scenario == 3) require(!st.players[5].victory_state && st.building_counts[4] == 1, "one surviving original Zerg building blocks the Dunes victory");
+			else require(paused && st.trigger_switches[9] && st.players[5].victory_state >= 3, "destroying all original main-town buildings runs the original paused ending and victory");
+		} else {
+			const int zealots = 9 - scenario;
+			int retained = 0;
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[5])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) {
+				if (retained < zealots) {
+					functions.move_unit(unit, xy(400 + retained * 48, 480));
+					functions.refresh_unit_position(unit);
+					++retained;
+				} else victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			require(functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Protoss_Nexus), xy(608, 400), 5) && functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Protoss_Pylon), xy(608, 560), 5), "isolated encounter fixtures establish the original Nexus/Pylon activation predicate");
+			for (int tick = 0; tick != 128 && !st.unit_counts[3][UnitTypes::Zerg_Hydralisk]; ++tick) step();
+			const int expected[] = {6, 7, 9, 10, 12};
+			require(st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == expected[zealots], "the original encounter selects the exact six-site Hydralisk count for zero through four surviving Zealots");
+			if (scenario == 5) {
+				st.trigger_switches[1] = true;
+				bool fired = false;
+				for (int tick = 0; tick != 12000 && !fired; ++tick) {
+					step();
+					for (unit_id id : st.campaign_ai[4].attacking) {
+						unit_t* unit = functions.get_unit(id);
+						if (unit && !functions.unit_dying(unit) && unit->ground_weapon_cooldown) fired = true;
+					}
+				}
+				require(st.campaign_ai[4].town_active && st.campaign_ai[4].unit_limits[UnitTypes::Zerg_Zergling] == std::make_pair(true, 16) && st.campaign_ai[4].target_expansion && fired, "the original PB2A program honors unit limits and fires native weapons after its authored build and attack waits");
+				require(st.custom_score[7] >= 4 && st.trigger_switches[7] && st.trigger_switches[8], "original preserved custom-score actions activate both staged encounter switches");
+				auto original_limit = st.campaign_ai[4].unit_limits[UnitTypes::Zerg_Zergling];
+				st.campaign_ai[4].unit_limits[UnitTypes::Zerg_Zergling] = {true, 0};
+				int minerals = st.current_minerals[4], gas = st.current_gas[4];
+				require(!functions.campaign_ai_produce(4, functions.get_unit_type(UnitTypes::Zerg_Zergling)) && st.current_minerals[4] == minerals && st.current_gas[4] == gas, "a defined zero unit limit blocks actual production without spending resources");
+				st.campaign_ai[4].unit_limits[UnitTypes::Zerg_Zergling] = original_limit;
+			}
+		}
+		printf("Dunes of Shakuras original mission case %d passed.\n", scenario);
+	}
+}
+
 static void escape_aiur_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -3851,6 +3934,7 @@ int main(int argc, char** argv) {
 	bool shadow_hunters = campaign && argc > 4 && !strcmp(argv[4], "protoss09");
 	bool eye_storm = campaign && argc > 4 && !strcmp(argv[4], "protoss10");
 	bool escape_aiur = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss01");
+	bool dunes_shakuras = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3867,6 +3951,10 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		if (escape_aiur) {
 			escape_aiur_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (dunes_shakuras) {
+			dunes_shakuras_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

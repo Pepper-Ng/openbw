@@ -62,6 +62,18 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Outcome fixtures protect actors with a test-only matrix. They relocate Zeratul to isolate the ending/rescue gates and create one ordinary Zealot for the wrong-actor case.
 - Browser verification passed original briefing/audio/objectives, framed normal Zeratul movement and deterministic recovery at 1228 service ticks with one command batch. Full normal-control human victory and classic difficulty comparison remain open.
 
+### Brood War 2: Dunes of Shakuras
+
+- Catalogue ID `bwprotoss02`, Episode IV mission 2. Original CHK SHA-256 `07725cd6a26052101ecfef735105c204309a40518de1a232736aefb268f01011`; 168 UNIT records, 30 triggers and 18 audio files. Pack SHA-256 `355cebec8a764e5b5de1f0ced9a2d1dca3c7a502f5a1e77a2b669c02c2577d2a`.
+- Original human slot 5 starts with four Probes, four Zealots, 600 minerals and no gas/base. The four allied slot-1 Dark Templars use the expansion unit type.
+- The source distinguishes army loss before establishing a building from building loss afterward. The original slot-4 Zerg buildings govern victory and its paused conversation.
+- Ten fresh native cases exercise both defeat phases, surviving-building victory rejection, the full original ending and all five Hydralisk branches. Zero through four Zealots in HappyRange produce exactly 6, 7, 9, 10 and 12 Hydralisks.
+- Custom-score conditions/actions address explicit unused slots. The source stores its encounter counter in unused slot 7 and uses thresholds 3 and 4 for presentation/shared vision.
+- PB2A executes original waits, build requests, research, unit caps and actual native weapon fire. A defined zero cap rejects production without charging resources.
+- Expansion targeting prefers a reachable enemy resource depot outside that enemy's starting region, with the existing ordinary target fallback. This region-based interpretation is an inference pending classic comparison.
+- Native encounter fixtures relocate surviving Zealots, create a completed Nexus/Pylon and use protective matrices. The AI-fire fixture sets the source activation switch explicitly to isolate PB2A from the earlier encounter.
+- Browser verification starts a paid 400-mineral Nexus through normal input, retains all four original Probes and reconstructs its in-progress warp. Original presentation/audio and the per-edition sequential menu checks pass.
+
 The campaign's game logic must remain authoritative. Do not mark the mission playable merely because terrain renders, replace scripted behavior with a melee bot, remove unsupported triggers, or grant Raynor directly to the player to bypass rescue support.
 
 ## Start Here: Agent Handoff

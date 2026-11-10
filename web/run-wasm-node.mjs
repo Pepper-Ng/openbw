@@ -727,6 +727,11 @@ function testCampaign() {
     for (const [type, count] of [['Zeratul', 1], ['Zealot', 6], ['Dragoon', 3], ['Nexus', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count, 'Preserve the original Zeratul and native opening rescues without a melee base');
     assert.ok(units.some(unit => unit[1] === 'Dragoon' && unit[2] === '7'), 'Keep the original rescuable Protoss force');
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwprotoss02') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 2); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 5);
+    for (const [type, count] of [['Probe', 4], ['Zealot', 4], ['Nexus', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(units.filter(unit => unit[1] === 'Dark Templar' && unit[2] === '1').length, 4, 'Retain the four original allied expansion Dark Templars');
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -748,7 +753,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600}[missionId], 'Preserve original mission minerals');
   if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
   if (missionId === 'protoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Trial of Tassadar starts without gas');
@@ -819,7 +824,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01', 'bwprotoss02'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -839,6 +844,36 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId === 'bwprotoss02') {
+    const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
+    const worker = owned().find(unit => unit[1] === 'Probe');
+    assert.ok(worker);
+    const current = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const cameraX = Math.max(0, Math.min(Number(worker[3]) - 640, x.openbw_map_w() * 32 - 1280)), cameraY = Math.max(0, Math.min(Number(worker[4]) - 400, x.openbw_map_h() * 32 - 800));
+    x.openbw_pan(cameraX - Number(current[1]), cameraY - Number(current[2]));
+    x.openbw_debug_select(Number(worker[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    let site = null;
+    for (let offsetY = -192; offsetY <= 192 && !site; offsetY += 32) for (let offsetX = -320; offsetX <= 320 && !site; offsetX += 32) {
+      const mapX = Math.floor(Number(worker[3]) / 32) * 32 + offsetX, mapY = Math.floor(Number(worker[4]) / 32) * 32 + offsetY;
+      if (mapX < cameraX + 160 || mapX > cameraX + 1120 || mapY < cameraY + 64 || mapY > cameraY + 640) continue;
+      if ((x.openbw_debug_build_check(154, mapX, mapY) & 3) === 3) site = [mapX - cameraX, mapY - cameraY];
+    }
+    assert.ok(site, 'Native placement supplies a legal Nexus site near the original starting force');
+    for (const key of ['b', 'n']) { x.openbw_key(1, key.charCodeAt(0), 0); x.openbw_key(0, key.charCodeAt(0), 0); x.openbw_render(0); }
+    x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1); x.openbw_render(0);
+    const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(output.length > 0, 'Nexus construction uses normal synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+    x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 600 && !owned().some(unit => unit[1] === 'Nexus'); tick++) x.openbw_step();
+    const nexus = owned().find(unit => unit[1] === 'Nexus');
+    assert.ok(nexus, 'An original Probe starts the native Nexus warp');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 200, 'The Nexus pays four hundred of the original six hundred minerals');
+    assert.equal(owned().filter(unit => unit[1] === 'Probe').length, 4);
+    x.openbw_debug_select(Number(nexus[0]), 0); x.openbw_render(0);
+    assert.match(read(x.openbw_card()), /\tCancel\t/, 'Recovery is captured during actual paid Nexus construction');
+    assert.equal(x.openbw_outcome(), 0);
+  }
   if (missionId === 'bwprotoss01') {
     const hero = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Zeratul' && Number(unit[2]) === mission.humanSlot);
     assert.ok(hero);

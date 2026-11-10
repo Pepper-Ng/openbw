@@ -266,6 +266,7 @@ struct state_base_copyable {
 		bool attack_ready = false;
 		bool attack_launched = false;
 		bool suicide = false;
+		bool target_expansion = false;
 		int minimum_force = 0;
 		int maximum_force = 0;
 		int attack_deadline = 0;
@@ -278,6 +279,7 @@ struct state_base_copyable {
 		type_indexed_array<int, TechTypes> tech_requests{};
 		type_indexed_array<std::pair<int, int>, UpgradeTypes> upgrade_requests{};
 		type_indexed_array<int, UnitTypes> attack_requests{};
+		type_indexed_array<std::pair<bool, int>, UnitTypes> unit_limits{};
 		struct area_town {
 			rect area;
 			xy home;
@@ -19419,6 +19421,11 @@ struct state_functions {
 					}
 				}
 				else if (opcode == 56) ai.campaign = true;
+				else if (opcode == 75) {
+					int amount = read(1);
+					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
+				}
+				else if (opcode == 77) ai.target_expansion = true;
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
 			}
 		}
@@ -19435,7 +19442,7 @@ struct state_functions {
 	}
 
 	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0, bool allow_transport = false) {
-		return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), [&](const unit_t* enemy) {
+		auto eligible = [&](const unit_t* enemy) {
 			if (enemy->owner >= 8 || enemy->owner == owner || st.alliances[owner][enemy->owner] || unit_dying(enemy) || ut_turret(enemy)) return false;
 			if (region != ~(size_t)0 && get_region_at(enemy->sprite->position)->index != region) return false;
 			for (unit_id id : party) {
@@ -19443,7 +19450,14 @@ struct state_functions {
 				if (unit && !unit_dying(unit) && unit->owner == owner && unit_target_weapon(unit, enemy) && (u_flying(unit) || is_reachable(unit, enemy) || allow_transport)) return true;
 			}
 			return false;
-		});
+		};
+		if (st.campaign_ai[owner].target_expansion) {
+			unit_t* expansion = find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), [&](const unit_t* enemy) {
+				return unit_is_active_resource_depot(enemy) && eligible(enemy) && get_region_at(enemy->sprite->position) != get_region_at(game_st.start_locations[enemy->owner]);
+			});
+			if (expansion) return expansion;
+		}
+		return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), eligible);
 	}
 
 	void launch_campaign_ai_attack(int owner) {
@@ -19958,6 +19972,16 @@ struct state_functions {
 	}
 
 	bool campaign_ai_produce(int owner, const unit_type_t* type, size_t town = 0) {
+		const auto& limit = st.campaign_ai[owner].unit_limits[campaign_ai_type(type->id)];
+		if (limit.first) {
+			int count = 0;
+			for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (unit_dying(unit) || ut_turret(unit)) continue;
+				if (campaign_ai_type(unit->unit_type->id) == campaign_ai_type(type->id)) ++count;
+				for (const auto* queued : unit->build_queue) if (campaign_ai_type(queued->id) == campaign_ai_type(type->id)) count += ut_two_units_in_one_egg(queued) ? 2 : 1;
+			}
+			if (count + (ut_two_units_in_one_egg(type) ? 2 : 1) > limit.second) return false;
+		}
 		if (!has_available_resources_for(owner, type, false)) return false;
 		for (unit_t* producer : ptr(st.player_units[owner])) {
 			if (unit_dying(producer) || !u_completed(producer) || !producer->build_queue.empty() || campaign_ai_unit_town(owner, producer) != town) continue;
@@ -20057,7 +20081,9 @@ struct state_functions {
 			{
 				if (c.extra_n != 7) error("unsupported campaign score type %d", c.extra_n);
 				int score = 0;
-				for (int player : trigger_players(owner, c.group)) score += st.custom_score[player];
+				for (int player : all_player_slots) {
+					if (c.group < 12 ? player == c.group : trigger_players_pred(owner, c.group, player)) score += st.custom_score[player];
+				}
 				return trigger_count_comparison(c, score);
 			}
 		case 22: // always
@@ -20226,7 +20252,7 @@ struct state_functions {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
 		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 32: case 38: case 39: case 42: case 43: case 44: case 46: case 47: case 48: case 49: case 51: case 57:
+		case 27: case 32: case 38: case 39: case 42: case 43: case 44: case 46: case 47: case 48: case 49: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20304,6 +20330,19 @@ struct state_functions {
 				else error("unsupported switch modifier %d", a.num_n);
 				return true;
 			}
+		case 27:
+			if (a.extra_n != 7) error("unsupported campaign score type %d", a.extra_n);
+			for (int player : all_player_slots) {
+				if (a.group_n < 12 ? player != a.group_n : !trigger_players_pred(owner, a.group_n, player)) continue;
+				int64_t value = st.custom_score[player];
+				if (a.num_n == 7) value = a.group2_n;
+				else if (a.num_n == 8) value += a.group2_n;
+				else if (a.num_n == 9) value -= a.group2_n;
+				else error("unsupported score modifier %d", a.num_n);
+				if (value > std::numeric_limits<int>::max()) error("custom score out of range");
+				st.custom_score[player] = int(std::max<int64_t>(0, value));
+			}
+			return true;
 		case 14:
 			{
 				int64_t value = st.countdown_timer;
