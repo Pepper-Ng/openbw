@@ -327,7 +327,8 @@ const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
 if (campaign) assert.ok(campaignMissions.includes(missionId), 'Unsupported test mission');
-const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const groupMinesTest = process.argv[2] === '--test-group-mines';
+const out = campaign || protossSelectionTest || groupMinesTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
@@ -450,7 +451,7 @@ if (out) {
 } else if (protossSelectionTest) {
   testProtossSelection();
 } else {
-  testCommands();
+  testCommands(groupMinesTest);
 }
 
 function readRecoveryString(pointer) {
@@ -481,6 +482,16 @@ function testCampaign() {
     assert.equal(human.length, 34, 'Preserve the original human base and army');
     assert.equal(human.filter(unit => unit[1] === 'Marine').length, 16);
     assert.equal(human.filter(unit => unit[1] === 'SCV').length, 3);
+    const vultures = human.filter(unit => unit[1] === 'Vulture');
+    assert.equal(vultures.length, 3);
+    for (const touch of [0, 1]) {
+      x.openbw_set_touch_controls(touch);
+      for (const vulture of vultures) {
+        x.openbw_debug_select(Number(vulture[0]), 0); x.openbw_render(0);
+        assert.doesNotMatch(read(x.openbw_card()), /Mines \d+|\tSpider Mines\t/, 'Original Terran 3 Vultures hide mine ammunition and the ability before research');
+      }
+    }
+    x.openbw_set_touch_controls(0); x.openbw_debug_select(0, 0); x.openbw_out_clear();
     const enemy = units.filter(unit => Number(unit[2]) === 4);
     assert.ok(enemy.length >= 135 && enemy.length <= 138, 'Original enemy force plus native Hatchery larva');
     assert.equal(enemy.filter(unit => unit[1] === 'Drone').length, 6);
@@ -1522,6 +1533,7 @@ function testCampaign() {
     assert.ok(raynor && worker);
     x.openbw_debug_select(Number(worker[0]), 0); x.openbw_debug_select(Number(raynor[0]), 1); x.openbw_render(0);
     assert.match(read(x.openbw_card()), /^Jim Raynor\t/, 'Hero Raynor has stable precedence over a first-selected SCV');
+    assert.match(read(x.openbw_card()), /Mines 3/, 'Hero Raynor retains his innate mine-ammunition readout');
     assert.match(read(x.openbw_card()), /\tSpider Mines\t/);
     assert.equal(read(x.openbw_wires()).trim().split('\n').length, 2);
     const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
@@ -1531,8 +1543,9 @@ function testCampaign() {
     const targetX = Number(raynor[3]) + 64 - left, targetY = Number(raynor[4]) + 32 - top;
     x.openbw_mouse_button(1, 1, targetX, targetY, 1); x.openbw_mouse_button(0, 1, targetX, targetY, 1); x.openbw_render(0);
     const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
-    assert.equal(output[2], 9); assert.equal(output[3], 1, 'A targeted ability selects only its active caster');
-    assert.equal(output[4] | output[5] << 8, Number(raynor[0]));
+    assert.equal(output[2], 9); assert.equal(output[3], 2, 'Mine placement retains the visual group and lets native eligibility skip the SCV');
+    const mineSelection = [output[4] | output[5] << 8, output[6] | output[7] << 8].sort((a, b) => a - b);
+    assert.deepEqual(mineSelection, [Number(worker[0]), Number(raynor[0])].sort((a, b) => a - b));
     new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
     x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     for (let tick = 0; tick < 240; tick++) x.openbw_step();
@@ -1680,7 +1693,7 @@ function testProtossSelection() {
   console.log('Protoss three-type precedence, forward/reverse Tab, Probe commands and whole-group movement passed.');
 }
 
-function testCommands() {
+function testCommands(groupMines = false) {
   const read = (pointer) => {
     const bytes = new Uint8Array(memory.buffer);
     let end = pointer;
@@ -1941,18 +1954,29 @@ function testCommands() {
   apply();
   assert.match(read(x.openbw_debug_dump()), /order=98 /, 'Unmodified O must still interrupt Move');
 
-  send(factory, [31, 2, 0]);
-  advance(1200);
-  const vulture = units().find(unit => unit[1] === 'Vulture');
-  assert.ok(vulture, 'Factory must train a Vulture');
+  if (groupMines) {
+    x.openbw_debug_resources(1000, 1000);
+    buildNearBase(109, 'Supply Depot');
+  }
+  for (let count = 0; count < (groupMines ? 3 : 1); count++) send(factory, [31, 2, 0]);
+  advance(groupMines ? 2400 : 1200);
+  const groupedVultures = units().filter(unit => unit[1] === 'Vulture').sort((left, right) => Number(left[0]) - Number(right[0]));
+  assert.equal(groupedVultures.length, groupMines ? 3 : 1, 'Factory completes paid Vulture production with sufficient native supply');
+  let vulture = groupedVultures[0];
   x.openbw_set_touch_controls(1);
   x.openbw_debug_select(Number(vulture[0]), 0);
   assert.equal(read(x.openbw_card()).includes('Spider Mines'), false, 'Mines require research');
   assert.match(read(x.openbw_card()), /Patrol/);
-  assert.match(read(x.openbw_card()), /Mines 3/);
+  assert.doesNotMatch(read(x.openbw_card()), /Mines \d+/, 'Unresearched mines do not appear in the selected Vulture status');
   send(shop, [48, 3]);
   advance(2400);
   x.openbw_render(0);
+  assert.match(read(x.openbw_card()), /Mines 3/, 'Paid Spider Mines research reveals the existing ammunition');
+  if (groupMines) {
+    send(vulture, [21, ...word(Number(vulture[3]) + 160), ...word(Number(vulture[4]) + 160), 0, 0, 228, 0, 6, 0]);
+    advance(320);
+    vulture = units().find(unit => unit[0] === vulture[0]);
+  }
   x.openbw_key(1, 0, 224);
   press(56, 37);
   x.openbw_key(0, 0, 224);
@@ -1995,6 +2019,68 @@ function testCommands() {
   x.openbw_render(0);
   assert.equal(records().find(record => record[0] === 21).at(-1), 1, 'Mobile combat Patrol must support queuing');
   x.openbw_out_clear();
+  if (groupMines) {
+    const armed = groupedVultures.filter(unit => unit[0] !== vulture[0]);
+    const selectMines = selection => {
+      selection.forEach((unit, index) => x.openbw_debug_select(Number(unit[0]), index ? 1 : 0));
+      x.openbw_render(0);
+    };
+    const mineAmmo = unit => {
+      selectMines([unit]);
+      return Number(read(x.openbw_card()).match(/\bMines (\d+)/)?.[1]);
+    };
+    const mineCount = () => units().filter(unit => unit[1] === 'Vulture Spider Mine').length;
+    const clickMine = (pos, queued) => {
+      const command = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(row => row[1] === 'Spider Mines');
+      assert.ok(command, 'A selected armed Vulture keeps the group mine command available');
+      const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+      const screenX = pos[0] - Number(camera[1]), screenY = pos[1] - Number(camera[2]);
+      x.openbw_out_clear();
+      if (queued) x.openbw_key(1, 0, 225);
+      press(command[0].charCodeAt(0));
+      x.openbw_mouse_button(1, 1, screenX, screenY, 1); x.openbw_mouse_button(0, 1, screenX, screenY, 1);
+      if (queued) x.openbw_key(0, 0, 225);
+      x.openbw_render(0);
+      const order = records().find(record => record[0] === 21);
+      assert.ok(order); assert.equal(order[9], 132); assert.equal(order[10], queued ? 1 : 0);
+      return records().find(record => record[0] === 9);
+    };
+    const mineSite = [Number(armed[0][3]), Number(armed[0][4])];
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    x.openbw_pan(Math.max(0, mineSite[0] - 640) - Number(camera[1]), Math.max(0, mineSite[1] - 400) - Number(camera[2]));
+    selectMines([armed[0]]); clickMine(mineSite, false); apply(); advance(160);
+    assert.deepEqual(groupedVultures.map(mineAmmo), [0, 2, 3], 'The group has an empty primary and unequal remaining ammunition');
+    const group = [vulture, ...armed];
+    for (const [index, touch, increment] of [[0, 0, 2], [1, 1, 2], [2, 0, 1]]) {
+      x.openbw_set_touch_controls(touch);
+      if (index === 1) {
+        const move = [21, ...word(mineSite[0] + 96), ...word(mineSite[1] + 160), 0, 0, 228, 0, 6, 0];
+        for (const unit of groupedVultures) send(unit, move);
+      }
+      selectMines(group);
+      assert.match(read(x.openbw_card()), /^Vulture\t[^\n]*Mines 0/, 'The exhausted primary stays selected while armed group members can lay mines');
+      const before = mineCount();
+      const selection = clickMine(mineSite, index === 1);
+      assert.equal(selection[1], group.length);
+      const selectedIds = Array.from({ length: selection[1] }, (_, i) => selection[2 + i * 2] | selection[3 + i * 2] << 8);
+      assert.deepEqual(selectedIds.sort((a, b) => a - b), group.map(unit => Number(unit[0])).sort((a, b) => a - b));
+      apply();
+      if (index === 1) for (const unit of armed) {
+        selectMines([unit]); assert.match(read(x.openbw_debug_dump()), /order=132 /, 'Classic PlaceMine is non-queueable and interrupts Move even when Shift is forwarded');
+      }
+      advance(320);
+      assert.equal(mineCount(), before + increment, 'Each mine command creates one native mine per eligible selected Vulture, not one per group');
+      assert.deepEqual(groupedVultures.map(mineAmmo), index === 0 ? [0, 1, 2] : index === 1 ? [0, 0, 1] : [0, 0, 0]);
+      selectMines(group);
+      assert.equal(read(x.openbw_wires()).trim().split('\n').length, group.length, 'Mine orders preserve the entire visual selection');
+    }
+    assert.equal(read(x.openbw_card()).includes('Spider Mines'), false, 'The group command disappears only when all selected Vultures are exhausted');
+    assert.equal(mineCount(), 9, 'All three Vultures can use all nine original mines');
+    console.log('Classic group mine placement, empty-primary fallback, unequal ammunition and native non-queueable Shift behavior passed.');
+    return;
+  }
+  x.openbw_out_clear();
+  x.openbw_set_touch_controls(1);
   x.openbw_debug_select(Number(worker[0]), 0);
   assert.equal(read(x.openbw_card()).includes('Patrol'), false);
   x.openbw_set_touch_controls(0);

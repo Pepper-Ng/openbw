@@ -1323,7 +1323,14 @@ struct play_ui : ui_functions {
 				have_energy = true;
 			} else {
 				const tech_type_t* te = get_tech_type(sp[i].tech);
-				if (!unit_can_use_tech(u, te, my_player)) continue;
+				bool can_use = unit_can_use_tech(u, te, my_player);
+				if (!can_use && sp[i].tech == TechTypes::Spider_Mines && unit_is_vulture(u)) {
+					can_use = std::any_of(current_selection.begin(), current_selection.end(), [&](unit_id selected_id) {
+						unit_t* selected = get_unit(selected_id);
+						return selected && !unit_dying(selected) && unit_can_use_tech(selected, te, my_player);
+					});
+				}
+				if (!can_use) continue;
 				have_energy = u->energy.integer_part() >= te->energy_cost;
 			}
 			char k = sp[i].key;
@@ -1474,7 +1481,9 @@ struct play_ui : ui_functions {
 		bool placing = touch_controls && pending_build;
 		int hp = sel->hp.ceil().integer_part(), maxhp = sel->unit_type->hitpoints.ceil().integer_part();
 		a_string stat2;
-		if (unit_is_vulture(sel)) stat2 = format("Mines %u", (unsigned)unit_spider_mine_count(sel));
+		if (unit_is_vulture(sel) && player_tech_available(sel->owner, TechTypes::Spider_Mines) &&
+		    (ut_hero(sel) || player_has_researched(sel->owner, TechTypes::Spider_Mines)))
+			stat2 = format("Mines %u", (unsigned)unit_spider_mine_count(sel));
 		if (sel->unit_type->has_shield)
 			stat2 = format("Shields %d/%d", sel->shield_points.integer_part(), sel->unit_type->shield_points);
 		else if (ut_resource(sel))
@@ -2100,7 +2109,8 @@ struct play_ui : ui_functions {
 		// (matches the right-click path — both at once looked wrong on attack clicks).
 		if (target && pending_targ != T_PATROL) flash_target(target);
 		else show_marker(pos);
-		if (pending_targ == T_SPELL) sync_primary();
+		bool group_mines = pending_targ == T_SPELL && pending_spell_order == Orders::PlaceMine;
+		if (pending_targ == T_SPELL && !group_mines) sync_primary();
 		else sync_selection();
 		bool q = key_shift();
 		switch (pending_targ) {
@@ -2120,7 +2130,7 @@ struct play_ui : ui_functions {
 		case T_GATHER: cmd_default_order(pos, target, q); break;
 		case T_REPAIR: cmd_order(Orders::Repair, pos, target, q); break;
 		case T_RALLY:  cmd_order(target ? Orders::RallyPointUnit : Orders::RallyPointTile, pos, target, false); break;
-		case T_SPELL:  cmd_order(pending_spell_order, pos, pending_spell_unit ? target : nullptr, false); break;
+		case T_SPELL:  cmd_order(pending_spell_order, pos, pending_spell_unit ? target : nullptr, group_mines && q); break;
 		}
 		if (unit_t* u = acknowledgement_unit())
 			play_unit_ack(u, u->unit_type->first_yes_sound, u->unit_type->last_yes_sound);
