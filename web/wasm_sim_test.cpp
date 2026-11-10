@@ -3558,6 +3558,103 @@ static void trial_tassadar_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void shadow_hunters_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* zeratul = nullptr;
+		unit_t* fenix = nullptr;
+		unit_t* escort = nullptr;
+		for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Zeratul)) zeratul = unit;
+			if (functions.unit_is(unit, UnitTypes::Hero_Fenix_Dragoon)) fenix = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) escort = unit;
+		require(zeratul && fenix && escort && !st.trigger_switches[0] && !st.trigger_switches[1], "original Shadow Hunters heroes and both Cerebrate completion gates remain intact");
+		if (scenario < 3) {
+			if (scenario == 0) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			} else functions.kill_unit(scenario == 1 ? fenix : zeratul);
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original human-force, Fenix or Zeratul loss reaches Shadow Hunters defeat");
+		} else {
+			for (unit_t* hero : {zeratul, fenix}) {
+				unit_id original_id = functions.get_unit_id(hero);
+				if (hero->owner != 7) {
+					functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {hero->sprite->position, nullptr});
+					for (int tick = 0; tick != 1200 && hero->owner != 7; ++tick) step();
+				}
+				require(functions.get_unit(original_id) == hero && hero->owner == 7, "native proximity rescues the same original Shadow Hunters heroes without ownership grants");
+				functions.set_unit_order(hero, functions.get_order_type(Orders::HoldPosition));
+			}
+			if (scenario == 3) {
+				for (int owner : {6, 5}) for (int attempt = 0; attempt != 2; ++attempt) {
+					unit_t* cerebrate = nullptr;
+					for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate) && !functions.unit_dying(unit)) cerebrate = unit;
+					require(cerebrate, "the original or source-restored Cerebrate supplies the repeatable wrong-kill fixture");
+					unit_id previous_id = functions.get_unit_id(cerebrate);
+					functions.kill_unit(cerebrate);
+					for (int tick = 0; tick != 160; ++tick) step();
+					unit_t* restored = nullptr;
+					for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate) && !functions.unit_dying(unit)) restored = unit;
+					require(restored && functions.get_unit_id(restored).raw_value != previous_id.raw_value && st.unit_counts[owner][UnitTypes::Special_Cerebrate] == 1 && !st.trigger_switches[owner == 6 ? 0 : 1] && !st.players[7].victory_state, "a Cerebrate destroyed without Zeratul is recreated by its original preserved trigger without completion or victory");
+				}
+			} else {
+				for (int stage = 0; stage != 2; ++stage) {
+					int owner = (scenario == 4 ? stage == 0 : stage != 0) ? 6 : 5;
+					int location = owner == 6 ? 1 : 2;
+					unit_t* cerebrate = nullptr;
+					for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Special_Cerebrate) && !functions.unit_dying(unit)) cerebrate = unit;
+					require(cerebrate, "each original Cerebrate remains for its independent Zeratul completion gate");
+					const auto& region = st.locations.at(location - 1).area;
+					bool approach_found = false;
+					for (int map_y = region.from.y + 8; map_y < region.to.y && !approach_found; map_y += 8) for (int map_x = region.from.x + 8; map_x < region.to.x && !approach_found; map_x += 8) {
+						xy candidate(map_x, map_y);
+						if (!functions.unit_type_can_fit_at(zeratul->unit_type, candidate) || !functions.is_reachable(cerebrate, candidate)) continue;
+						functions.move_unit(zeratul, candidate);
+						auto placement = functions.find_unit_placement(zeratul, candidate, false);
+						if (!placement.first || !functions.is_in_bounds(placement.second, region)) continue;
+						functions.move_unit(zeratul, placement.second);
+						approach_found = true;
+					}
+					require(approach_found, "native terrain supplies a legal isolated Zeratul combat approach in the original Cerebrate region");
+					functions.set_unit_hp(cerebrate, fp8::integer(1));
+					functions.issue_order(zeratul, false, zeratul->unit_type->attack_unit, {cerebrate->sprite->position, cerebrate});
+					int previous_kills = st.killed_unit_counts[7][UnitTypes::Special_Cerebrate];
+					for (int tick = 0; tick != 1600 && !st.trigger_switches[owner == 6 ? 0 : 1]; ++tick) step();
+					require(st.killed_unit_counts[7][UnitTypes::Special_Cerebrate] == previous_kills + 1 && st.trigger_switches[owner == 6 ? 0 : 1] && !st.unit_counts[owner][UnitTypes::Special_Cerebrate] && functions.u_cloaked(zeratul), "the same original cloaked Zeratul kills the Cerebrate with a native weapon inside its authored ground region");
+					functions.set_unit_order(zeratul, functions.get_order_type(Orders::HoldPosition));
+					if (stage == 0) {
+						for (int tick = 0; tick != 96; ++tick) step();
+						require(!st.players[7].victory_state && st.unit_counts[owner == 6 ? 5 : 6][UnitTypes::Special_Cerebrate] == 1, "one completed original Cerebrate gate cannot bypass the other");
+					}
+				}
+				for (int tick = 0; tick != 160 && !st.players[7].victory_state; ++tick) step();
+				require(st.players[7].victory_state >= 3 && st.trigger_switches[0] && st.trigger_switches[1] && st.building_counts[0] + st.building_counts[5] + st.building_counts[6] > 0, "either original Zeratul kill order completes both source switches and victory with other Zerg buildings remaining");
+			}
+		}
+		printf("Shadow Hunters original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3592,6 +3689,7 @@ int main(int argc, char** argv) {
 	bool into_darkness = campaign && argc > 4 && !strcmp(argv[4], "protoss06");
 	bool homeland = campaign && argc > 4 && !strcmp(argv[4], "protoss07");
 	bool trial_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss08");
+	bool shadow_hunters = campaign && argc > 4 && !strcmp(argv[4], "protoss09");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3608,6 +3706,39 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (shadow_hunters) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 6 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 2 && st.unit_counts[7][UnitTypes::Protoss_Arbiter] == 1 && !st.building_counts[7] && st.unit_counts[7][UnitTypes::Hero_Fenix_Dragoon] + st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon] == 1 && st.unit_counts[7][UnitTypes::Hero_Zeratul] + st.unit_counts[2][UnitTypes::Hero_Zeratul] == 1, "Shadow Hunters retains its original mobile force, Arbiter, two original heroes and baseless start");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.current_minerals[7] == 1000 && st.current_gas[7] == 1000 && !st.countdown_active && !st.trigger_switches[0] && !st.trigger_switches[1] && !st.players[7].victory_state && st.unit_counts[5][UnitTypes::Special_Cerebrate] == 1 && st.unit_counts[6][UnitTypes::Special_Cerebrate] == 1, "Shadow Hunters preserves original funding, both Cerebrates and separate completion switches without an invented countdown or outcome");
+			require(st.campaign_ai[0].town_active && st.campaign_ai[5].town_active && st.campaign_ai[6].town_active && st.campaign_ai_scripts.size() == 3 && !st.campaign_ai[7].town_active, "the original Pro9/Pr9W/Pr9Y programs start for all three Zerg owners without human AI substitution");
+			bool red_ground_fire = false, brown_ground_fire = false, white_air_fire = false;
+			int combat_budget = 15502 + 7500 + 9000 + 3 * (500 + 180 * 15) + 2 * st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(red_ground_fire && brown_ground_fire && white_air_fire); ++tick) {
+				for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 5, 6}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 0 && !functions.u_flying(unit)) red_ground_fire = true;
+					if (owner == 5 && !functions.u_flying(unit)) brown_ground_fire = true;
+					if (owner == 6 && functions.u_flying(unit)) white_air_fire = true;
+				}
+			}
+			require(red_ground_fire && brown_ground_fire && white_air_fire, "all three original Shadow Hunters programs fire native ground/air weapons with authored waits, requests and funding");
+			printf("Shadow Hunters original Red/Brown ground and White air attacks passed.\n");
+			shadow_hunters_mission_cases(load_data_file, map_file);
+			printf("Shadow Hunters original initialization passed.\n");
+			return 0;
+		}
 		if (trial_tassadar) {
 			auto& st = player.st();
 			state_functions functions(st);
