@@ -3655,6 +3655,81 @@ static void shadow_hunters_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void eye_storm_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[1])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {1, 2}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 1200; ++tick) step();
+		unit_t* heroes[3]{};
+		UnitTypes hero_types[] = {UnitTypes::Hero_Zeratul, UnitTypes::Hero_Gantrithor, UnitTypes::Hero_Hyperion};
+		for (int owner : {1, 2}) for (unit_t* unit : ptr(st.player_units[owner])) for (int index = 0; index != 3; ++index) if (functions.unit_is(unit, hero_types[index])) heroes[index] = unit;
+		unit_t* overmind = nullptr;
+		for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Special_Overmind_With_Shell)) overmind = unit;
+		require(heroes[0] && heroes[1] && heroes[2] && overmind && !st.players[1].victory_state, "Eye of the Storm retains its original three heroes and living Overmind after source setup");
+		if (scenario < 3) {
+			functions.kill_unit(heroes[scenario]);
+			for (int tick = 0; tick != 1000 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2, "each original Zeratul, Tassadar/Gantrithor or Raynor loss reaches the authored final-mission defeat");
+		} else {
+			for (unit_t* hero : heroes) {
+				unit_id original_id = functions.get_unit_id(hero);
+				if (hero->owner != 1) {
+					unit_t* escort = functions.find_nearest_unit(hero->sprite->position, functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 1 && !functions.unit_dying(unit) && !functions.ut_building(unit) && !functions.us_hidden(unit) && functions.u_can_move(unit); });
+					require(escort, "an original local human actor can approach the source hero");
+					functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {hero->sprite->position, nullptr});
+					for (int tick = 0; tick != 1600 && hero->owner != 1; ++tick) step();
+				}
+				require(functions.get_unit(original_id) == hero && hero->owner == 1, "normal local proximity rescues the same original hero without grants or race conversion");
+				functions.set_unit_order(hero, functions.get_order_type(Orders::HoldPosition));
+			}
+			if (scenario == 3) {
+				a_vector<unit_t*> victims;
+				for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (unit != overmind && functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 800; ++tick) step();
+				require(st.unit_counts[3][UnitTypes::Special_Overmind_With_Shell] == 1 && !st.players[1].victory_state && !st.scripted_pause, "clearing other original Zerg structures cannot bypass the living Overmind objective");
+			} else {
+				unit_t* gantrithor = heroes[1];
+				require(!functions.unit_interceptor_count(gantrithor), "the original Gantrithor does not receive test ammunition grants");
+				action_state player_commands;
+				action_functions actions(st, player_commands);
+				require(actions.action_select(1, gantrithor) && actions.action_train_fighter(1), "original Gantrithor accepts normal paid native Interceptor production under the slot-1 human owner");
+				for (int tick = 0; tick != 600 && !functions.unit_interceptor_count(gantrithor); ++tick) step();
+				require(functions.unit_interceptor_count(gantrithor) == 1 && st.current_minerals[1] == 75 && st.current_gas[1] == 100, "Gantrithor's native Interceptor costs twenty-five of the original hundred minerals");
+				functions.move_unit(gantrithor, overmind->sprite->position + xy(192, -160));
+				for (int tick = 0; tick != 64; ++tick) step();
+				functions.set_unit_shield_points(overmind, 0_fp8);
+				functions.set_unit_hp(overmind, fp8::integer(1));
+				functions.issue_order(gantrithor, false, gantrithor->unit_type->attack_unit, {overmind->sprite->position, overmind});
+				bool launched = false;
+				for (int tick = 0; tick != 2400 && !st.killed_unit_counts[1][UnitTypes::Special_Overmind_With_Shell]; ++tick) { step(); launched = launched || gantrithor->carrier.outside_count > 0; }
+				require(launched && st.killed_unit_counts[1][UnitTypes::Special_Overmind_With_Shell] == 1, "a paid native Gantrithor Interceptor launches and supplies a real player weapon kill of the original Overmind");
+				bool ending_paused = false;
+				for (int tick = 0; tick != 2400 && !st.players[1].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+				require(ending_paused && st.players[1].victory_state >= 3 && st.building_counts[0] + st.building_counts[3] > 0, "Overmind destruction runs the original paused Tassadar ending and victory with other enemy buildings remaining");
+				const auto& camera = st.locations.at(1).area;
+				require((camera.from + camera.to) / 2 == gantrithor->sprite->position, "the original ending moves its location onto the same rescued Gantrithor");
+			}
+		}
+		printf("Eye of the Storm original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3690,6 +3765,7 @@ int main(int argc, char** argv) {
 	bool homeland = campaign && argc > 4 && !strcmp(argv[4], "protoss07");
 	bool trial_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss08");
 	bool shadow_hunters = campaign && argc > 4 && !strcmp(argv[4], "protoss09");
+	bool eye_storm = campaign && argc > 4 && !strcmp(argv[4], "protoss10");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3706,6 +3782,39 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (eye_storm) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[1][UnitTypes::Hero_Dark_Templar] == 4 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[1][UnitTypes::Protoss_Pylon] == 2 && st.unit_counts[1][UnitTypes::Hero_Gantrithor] + st.unit_counts[2][UnitTypes::Hero_Gantrithor] == 1 && st.unit_counts[1][UnitTypes::Hero_Zeratul] + st.unit_counts[2][UnitTypes::Hero_Zeratul] == 1, "Eye of the Storm retains its original slot-1 Protoss base, classic Dark Templars, Gantrithor and Zeratul");
+			for (unit_t* unit : ptr(st.player_units[1])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 1200; ++tick) functions.next_frame();
+			require(st.trigger_switches[0] && st.current_minerals[1] == 100 && st.current_gas[1] == 100 && st.unit_counts[1][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[1][UnitTypes::Terran_Supply_Depot] == 3 && st.unit_counts[1][UnitTypes::Terran_SCV] == 4 && st.unit_counts[1][UnitTypes::Terran_Marine] == 12 && st.unit_counts[1][UnitTypes::Terran_Firebat] == 2 && st.unit_counts[1][UnitTypes::Terran_Barracks] == 1 && st.unit_counts[1][UnitTypes::Terran_Bunker] == 2 && st.unit_counts[1][UnitTypes::Terran_Engineering_Bay] == 1 && st.unit_counts[1][UnitTypes::Terran_Missile_Turret] == 1, "the original setup grants only 100 minerals/gas and creates the exact Terran base and army under the same human owner");
+			require(st.unit_counts[1][UnitTypes::Hero_Hyperion] + st.unit_counts[2][UnitTypes::Hero_Hyperion] == 1 && st.unit_counts[3][UnitTypes::Special_Overmind_With_Shell] == 1 && !st.countdown_active && !st.scripted_pause && !st.players[1].victory_state, "the source creates the single original Raynor and retains the live Overmind without a countdown or early outcome");
+			require(st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 3 && st.campaign_ai[3].town_active && st.campaign_ai_scripts.size() == 5 && !st.campaign_ai[1].town_active, "the original P10C/three Pr10 area programs and P10o start without taking over the human dual-race force");
+			bool main_ground_fire = false, overmind_air_fire = false;
+			int combat_budget = 22502 + 7500 + 4 * (500 + 180 * 15) + 2 * st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(main_ground_fire && overmind_air_fire); ++tick) {
+				for (int owner : {1, 2}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 3}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 0 && !functions.u_flying(unit)) main_ground_fire = true;
+					if (owner == 3 && functions.u_flying(unit)) overmind_air_fire = true;
+				}
+			}
+			require(main_ground_fire && overmind_air_fire, "both original Eye of the Storm main programs fire native ground/air weapons using authored waits, requests and funding");
+			printf("Eye of the Storm original P10C ground and P10o air attacks passed.\n");
+			eye_storm_mission_cases(load_data_file, map_file);
+			printf("Eye of the Storm original dual-race initialization passed.\n");
+			return 0;
+		}
 		if (shadow_hunters) {
 			auto& st = player.st();
 			state_functions functions(st);

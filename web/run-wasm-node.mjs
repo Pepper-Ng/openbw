@@ -266,6 +266,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('protoss09'), false, 'Shadow Hunters requires The Trial of Tassadar victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 28).map(id => [id, true])) }));
   assert.equal(normal.unlocked('protoss09'), true, 'Completing The Trial of Tassadar unlocks Shadow Hunters');
+  assert.equal(normal.unlocked('protoss10'), false, 'Eye of the Storm requires Shadow Hunters victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 29).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('protoss10'), true, 'Completing Shadow Hunters unlocks Eye of the Storm');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -311,7 +314,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -699,6 +702,14 @@ function testCampaign() {
     for (const owner of ['5', '6']) assert.equal(units.filter(unit => unit[1] === 'Cerebrate' && unit[2] === owner).length, 1, 'Keep each original Cerebrate with its authored owner');
     assert.equal(x.openbw_mission_countdown(), -1, 'Shadow Hunters has no invented countdown');
     console.log('Shadow Hunters original mobile force, heroes and both Cerebrate checks passed.');
+  } else if (missionId === 'protoss10') {
+    assert.equal(mission.episode, 3); assert.equal(mission.order, 10); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 1, 'The final mission uses original human slot one, not the earlier Protoss slot seven');
+    for (const [type, count] of [['Probe', 4], ['Nexus', 1], ['Pylon', 2], ['Photon Cannon', 2], ['SCV', 0], ['Command Center', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.ok(units.some(unit => unit[1].includes('Gantrithor')) && units.some(unit => unit[1] === 'Zeratul'), 'Keep the original Gantrithor and Zeratul without substitutes');
+    assert.ok(units.some(unit => unit[1].includes('Overmind') && unit[2] === '3'), 'Keep the original Overmind with its authored owner');
+    assert.equal(units.some(unit => unit[1].includes('Hyperion')), false, 'Raynor and the Terran force must come from the original setup trigger');
+    assert.equal(x.openbw_mission_countdown(), -1, 'Eye of the Storm has no invented countdown');
+    console.log('Eye of the Storm original slot-1 Protoss start and deferred Terran setup checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -720,7 +731,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
   if (missionId === 'protoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Trial of Tassadar starts without gas');
   if (missionId === 'protoss07') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 2500, 'Original Homeland grants 2500 gas');
@@ -1166,6 +1178,46 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 100, 'Transport commands do not invent resources after the paid Probe');
     assert.equal(x.openbw_outcome(), 0, 'Local boarding and unloading cannot satisfy the distant original entrance objective');
     console.log('Choosing Sides normal Shuttle boarding/unloading and native actor identity passed.');
+  }
+  if (missionId === 'protoss10') {
+    const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
+    for (const [type, count] of [['SCV', 4], ['Marine', 12], ['Firebat', 2], ['Command Center', 1], ['Supply Depot', 3], ['Barracks', 1], ['Bunker', 2], ['Engineering Bay', 1], ['Missile Turret', 1]]) assert.equal(owned().filter(unit => unit[1] === type).length, count, `Original source creates ${type} under the same human owner`);
+    const barracks = owned().find(unit => unit[1] === 'Barracks'), gantrithor = owned().find(unit => unit[1].includes('Gantrithor'));
+    assert.ok(barracks && gantrithor && owned().some(unit => unit[1].includes('Hyperion')) && owned().some(unit => unit[1] === 'Zeratul'), 'Original setup and native rescue retain all three heroes and both bases');
+    const produce = (unit, label) => {
+      x.openbw_debug_select(Number(unit[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+      const command = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t')).find(row => row[1] === label);
+      assert.ok(command?.[0], `Original producer exposes ${label}`);
+      x.openbw_key(1, command[0].charCodeAt(0), 0); x.openbw_key(0, command[0].charCodeAt(0), 0); x.openbw_render(0);
+      const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+      assert.ok(output.length > 0, 'Dual-race production uses normal synchronized input');
+      new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
+      x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
+    };
+    produce(barracks, 'Marine');
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    assert.equal(owned().filter(unit => unit[1] === 'Marine').length, 13, 'A source-created Terran Barracks completes one native Marine for the Protoss human');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 50, 'Normal Marine production pays fifty original minerals');
+    produce(gantrithor, 'Build Interceptor');
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    assert.equal(owned().filter(unit => unit[1].includes('Interceptor')).length, 1, 'Original Gantrithor completes one actual paid native Interceptor');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 25, 'Both races share the original hundred minerals and pay normal production costs');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Normal Marine and Interceptor production does not invent gas spending or funding');
+    const current = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/), cameraX = Math.max(0, Math.min(Number(gantrithor[3]) - 640, x.openbw_map_w() * 32 - 1280)), cameraY = Math.max(0, Math.min(Number(gantrithor[4]) - 400, x.openbw_map_h() * 32 - 800));
+    x.openbw_pan(cameraX - Number(current[1]), cameraY - Number(current[2]));
+    x.openbw_debug_select(Number(gantrithor[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    x.openbw_key(1, 109, 0); x.openbw_key(0, 109, 0);
+    const targetX = Number(gantrithor[3]) + 160 - cameraX, targetY = Number(gantrithor[4]) - 96 - cameraY;
+    x.openbw_mouse_button(1, 1, targetX, targetY, 1); x.openbw_mouse_button(0, 1, targetX, targetY, 1); x.openbw_render(0);
+    const movement = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(movement.length > 0, 'Original Gantrithor flight uses normal synchronized human input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(movement.length), movement.length).set(movement);
+    x.openbw_apply(mission.humanSlot, movement.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 96; tick++) x.openbw_step();
+    const moved = owned().find(unit => unit[0] === gantrithor[0]);
+    assert.ok(moved && Math.hypot(Number(moved[3]) - Number(gantrithor[3]), Number(moved[4]) - Number(gantrithor[4])) > 48, 'The same original Gantrithor moves through native flight without teleportation');
+    assert.equal(x.openbw_outcome(), 0, 'Paid dual-race production and local hero flight cannot bypass the original Overmind objective');
+    console.log('Eye of the Storm normal paid Terran/Protoss production and original Gantrithor flight passed.');
   }
   if (missionId === 'protoss09') {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);

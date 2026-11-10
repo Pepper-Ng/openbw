@@ -20063,10 +20063,6 @@ struct state_functions {
 		if (ut_building(unit_type)) {
 			xy top_left = restrict_pos_to_map_bounds(pos - unit_type->placement_size / 2);
 			pos = top_left / 32 * 32 + unit_type->placement_size / 2;
-			if (!can_place_building(nullptr, owner, unit_type, pos, true, false)) {
-				// todo: show error?
-				return nullptr;
-			}
 		}
 		unit_t* u = create_unit(unit_type, pos, owner);
 		if (!u) {
