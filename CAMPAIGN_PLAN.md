@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first five Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras, Legacy of the Xel'Naga, Quest for Uraj and The Battle of Braxis.
+- All thirty original numbered StarCraft missions and the first six Brood War missions are implemented in the catalogue. Return to Char follows The Battle of Braxis.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- The primary follow-up is the explicit validation backlog below; Return to Char is the next chronological expansion mission.
+- Return to Char has passed its focused checks and awaits publication with mission 7. The Insurgent is the next chronological expansion mission.
 
 ### Historical Milestone Context
 
@@ -104,6 +104,16 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - The original AI audit routes `+Vi3` and `EnBk`; there is no invented economic program. Strict native checks pass for the original baseless force, initial Artanis rescue, the all-five-generator victory and Artanis-loss defeat.
 - Browser verification passes the original briefing, the zero-resource/untimed opening, normal framed Zealot movement and fresh-instance recovery at 1228 service ticks with one command batch. The isolated menu displays five ordered Brood War missions with The Battle of Braxis locked behind the preceding four. Full normal-control victory and classic comparison remain open.
 
+### Brood War 6: Return to Char
+
+- Catalogue ID `bwprotoss06`, Episode IV mission 6. Original CHK SHA-256 `4eb75410295fe4ac68a4c45e0179a91afb72d0078bf98a808461a7c54a62f611`; 607 UNIT records, 24 gameplay triggers, one briefing and 12 audio dependencies. The 13-file pack is 6,486,924 bytes, decodes to 6,486,172 bytes and has SHA-256 `66caa5f1e3fac1ffa8cef77cecbfc7a130d7b45cd35926100c0ff4049f96b80b`.
+- Human slot 1 retains its Protoss base, four Probes, two Dark Templars, three Zealots, three Dragoons and three Observers. Source triggers grant 800 minerals and 400 gas, then transfer the original Hatchery, three Drones, six Zerglings and two Overlords to that same human owner.
+- The source allows either a Probe or a Drone at the Khalis crystal, or destruction of the owner-4 Overmind. A Zealot at the crystal satisfies neither worker gate. The Overmind route creates its cocoon, one extraction Shuttle and two Scouts; the defeated Zerg owner's remaining units become neutral. Losing all human buildings before an objective completes causes defeat.
+- Strict native cases pass for both worker routes, the wrong-actor boundary, building-loss defeat and the alternate Overmind ending. Fixtures protect human actors with refreshed matrices, relocate the original workers and Zealot, and directly kill the Overmind or buildings. These are source-trigger checks, not normal-control victories.
+- Original `PB6A`/`PB6D` main programs and `PB6B`/`PB6C`/`PB6E` area programs reuse existing shared behavior. The AI fixture removes the original enemy Zerglings to require replacement, relocates two protected original Probes onto reachable terrain, then observes completed native Zergling production and weapon fire from both owners within 18,000 ticks. No engine behavior or scenario bytes changed.
+- Recorded browser input pays 100 of the original 800 minerals for a Zealot and saves its unfinished Gateway production. Fresh-instance reconstruction passes at 1,228 service ticks with one command batch. The original opening transmission and 800/400 funding pass.
+- A task-owned loopback origin passes six-mission ordering, fresh sequential locks, original briefing/Begin, visible Save Game, return to the Brood War menu, persistent Resume and resumed simulation. Preceding wins were seeded only in that isolated origin. Full human victory and classic comparison remain open.
+
 ### Brood War UI And Release Verification
 
 - At the three-expansion-mission milestone, the rebuilt native/browser engines passed 72 modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
@@ -111,7 +121,7 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed at the three-mission milestone. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.
-- Full normal-control human victories, physical-device acceptance and exact classic AI/difficulty comparison remain open for the five implemented expansion missions. Automated fixtures and GUI smoke checks do not establish those acceptance levels.
+- Full normal-control human victories, physical-device acceptance and exact classic AI/difficulty comparison remain open for the implemented expansion missions. Automated fixtures and GUI smoke checks do not establish those acceptance levels.
 
 ## Validation Backlog
 

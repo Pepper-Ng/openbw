@@ -278,11 +278,15 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwprotoss02'), false, 'Brood War remains sequential internally');
   assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later expansion mission stays locked');
   assert.equal(expansion.unlocked('bwprotoss05'), false, 'The fifth expansion mission stays locked');
+  assert.equal(expansion.unlocked('bwprotoss06'), false, 'Return to Char requires all five preceding victories');
   stored.set('v2', JSON.stringify({ version: 2, victories: { bwprotoss01: true, bwprotoss03: true } }));
   assert.equal(expansion.unlocked('bwprotoss02'), true);
   assert.equal(expansion.unlocked('bwprotoss03'), false, 'A later victory cannot bypass an expansion prerequisite');
   assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later victory cannot bypass preceding expansion missions');
   assert.equal(expansion.unlocked('bwprotoss05'), false, 'A later victory cannot bypass preceding expansion missions');
+  assert.equal(expansion.unlocked('bwprotoss06'), false, 'A later victory cannot bypass preceding expansion missions');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 5).map(id => [id, true])) }));
+  assert.equal(expansion.unlocked('bwprotoss06'), true, 'Completing The Battle of Braxis unlocks Return to Char');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -769,6 +773,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Artanis' && unit[2] === '1').length, 1, 'Keep the original naturally rescued Artanis');
     assert.equal(units.filter(unit => unit[1].includes('Power Generator') && unit[2] === '7').length, 5, 'Keep all five powered generators');
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwprotoss06') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 6); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 1);
+    for (const [type, count] of [['Probe', 4], ['Dark Templar', 2], ['Zealot', 3], ['Dragoon', 3], ['Observer', 3], ['Nexus', 1], ['Pylon', 4], ['Gateway', 1], ['Drone', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(units.filter(unit => unit[1] === 'Overmind' && unit[2] === '4').length, 1);
+    assert.equal(units.filter(unit => unit[1].includes('Khalis') && unit[2] === '0').length, 1);
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -790,7 +800,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'bwprotoss06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 400, 'Return to Char grants the original four hundred gas');
   if (missionId === 'bwprotoss03') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 75, 'The original expansion base grants exactly seventy-five gas');
   if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
@@ -882,7 +893,7 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
-  if (missionId === 'bwprotoss03') {
+  if (missionId === 'bwprotoss03' || missionId === 'bwprotoss06') {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
     const gateway = owned().find(unit => unit[1] === 'Gateway');
     assert.ok(gateway);
@@ -897,12 +908,13 @@ function testCampaign() {
     new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
     x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     for (let tick = 0; tick < 24; tick++) x.openbw_step();
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 150, 'Queued native Zealot pays one hundred of the original minerals');
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 75);
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), missionId === 'bwprotoss06' ? 700 : 150, 'Queued native Zealot pays one hundred of the original minerals');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), missionId === 'bwprotoss06' ? 400 : 75);
     const [progress, queued] = read(x.openbw_status()).split('\t');
     assert.equal(queued, 'Zealot', 'The saved production order remains in the original Gateway queue');
     assert.ok(Number(progress) > 0 && Number(progress) < 100, 'Recovery captures paid production still in flight');
     assert.equal(owned().filter(unit => unit[1] === 'Dark Templar').length, 2);
+    if (missionId === 'bwprotoss06') for (const [type, count] of [['Hatchery', 1], ['Drone', 3], ['Zergling', 6], ['Overlord', 2]]) assert.equal(owned().filter(unit => unit[1] === type).length, count, 'The original opening transfers the Zerg base to the Protoss human owner');
     assert.equal(x.openbw_outcome(), 0);
   }
   if (missionId === 'bwprotoss02') {

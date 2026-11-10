@@ -3926,6 +3926,103 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void return_to_char_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[1][UnitTypes::Protoss_Dark_Templar] == 2 && st.unit_counts[1][UnitTypes::Protoss_Zealot] == 3 && st.unit_counts[1][UnitTypes::Protoss_Dragoon] == 3 && st.unit_counts[1][UnitTypes::Protoss_Observer] == 3 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1, "Return to Char retains the original slot-1 Protoss base and force");
+		require(st.unit_counts[0][UnitTypes::Powerup_Khalis_Crystal] == 1 && st.unit_counts[4][UnitTypes::Special_Overmind] == 1 && !st.current_minerals[1] && !st.current_gas[1] && !st.countdown_active, "the original Khalis, Overmind and unfunded untimed setup remain intact");
+		for (unit_t* unit : ptr(st.player_units[1])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 400; ++tick) step();
+		require(st.current_minerals[1] == 800 && st.current_gas[1] == 400 && st.unit_counts[1][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[1][UnitTypes::Zerg_Drone] == 3 && st.unit_counts[1][UnitTypes::Zerg_Zergling] == 6 && st.unit_counts[1][UnitTypes::Zerg_Overlord] == 2, "the original startup grants 800/400 and transfers the authored Zerg base to the same human owner");
+		require(st.campaign_ai[4].town_active && st.campaign_ai[4].area_towns.size() == 2 && st.campaign_ai[5].town_active && st.campaign_ai[5].area_towns.size() == 1 && !st.campaign_ai[1].town_active && !st.players[1].victory_state, "PB6A through PB6E activate their original towns without controlling the human dual-race force");
+		if (scenario == 0) {
+			bool positioned[2] = {}, fired[2] = {}, produced[2] = {};
+			a_vector<unit_id> original;
+			a_vector<unit_t*> probes;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) probes.push_back(unit);
+			for (int owner : {4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) original.push_back(functions.get_unit_id(unit));
+			a_vector<unit_t*> zerglings;
+			for (int owner : {4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Zerg_Zergling)) zerglings.push_back(unit);
+			for (unit_t* unit : zerglings) functions.kill_unit(unit);
+			for (int tick = 0; tick != 18000 && !(fired[0] && fired[1] && produced[0] && produced[1]); ++tick) {
+				step();
+				for (int index = 0; index != 2; ++index) {
+					int owner = index + 4;
+					if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+						unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+						unit_t* target = probes.at(index);
+						if (attacker && target) {
+							functions.move_unit(target, attacker->sprite->position + xy(64, 0));
+							functions.refresh_unit_position(target);
+							require(functions.is_reachable(attacker, target), "the isolated PB6 combat target is on reachable native terrain");
+							positioned[index] = true;
+						}
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) {
+						if (functions.unit_dying(unit)) continue;
+						unit_id id = functions.get_unit_id(unit);
+						if (functions.unit_is(unit, UnitTypes::Zerg_Zergling) && functions.u_completed(unit) && std::find(original.begin(), original.end(), id) == original.end()) produced[index] = true;
+						if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+					}
+				}
+			}
+			printf("PB6 observations: positioned=%d/%d produced=%d/%d fired=%d/%d minerals=%d/%d parties=%zu/%zu attacking=%zu/%zu\n", positioned[0], positioned[1], produced[0], produced[1], fired[0], fired[1], st.current_minerals[4], st.current_minerals[5], st.campaign_ai[4].attack_party.size(), st.campaign_ai[5].attack_party.size(), st.campaign_ai[4].attacking.size(), st.campaign_ai[5].attacking.size());
+			require(produced[0] && produced[1] && fired[0] && fired[1], "both original-timed PB6 main programs produce native Zerglings and fire native weapons at protected reachable targets");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2 && !st.trigger_switches[2], "losing all human buildings before either objective causes the original defeat");
+		} else if (scenario <= 3) {
+			const auto& crystal_location = st.locations.at(7).area;
+			xy destination = (crystal_location.from + crystal_location.to) / 2;
+			unit_t* zealot = nullptr;
+			unit_t* worker = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) {
+				if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) zealot = unit;
+				if (functions.unit_is(unit, scenario == 2 ? UnitTypes::Protoss_Probe : UnitTypes::Zerg_Drone)) worker = unit;
+			}
+			require(zealot && worker, "original Protoss and transferred Zerg actors remain available for the Khalis routes");
+			functions.move_unit(zealot, destination);
+			functions.refresh_unit_position(zealot);
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(!st.trigger_switches[1] && !st.players[1].victory_state, "an original Zealot at Khalis does not satisfy either worker arrival predicate");
+			functions.move_unit(worker, destination);
+			functions.refresh_unit_position(worker);
+			for (int tick = 0; tick != 1600 && !st.players[1].victory_state; ++tick) step();
+			require(st.trigger_switches[1] && st.trigger_switches[2] && !st.trigger_switches[4] && st.unit_counts[4][UnitTypes::Special_Overmind] == 1 && st.players[1].victory_state >= 3, "either original worker reaches Khalis and completes the source crystal ending while the Overmind survives");
+		} else {
+			unit_t* overmind = nullptr;
+			for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is(unit, UnitTypes::Special_Overmind)) overmind = unit;
+			require(overmind, "the original owner-4 Overmind remains available for the alternate ending");
+			functions.kill_unit(overmind);
+			int peak_shuttles = 0, peak_scouts = 0;
+			for (int tick = 0; tick != 1600 && !st.players[1].victory_state; ++tick) {
+				step();
+				peak_shuttles = std::max(peak_shuttles, st.unit_counts[2][UnitTypes::Protoss_Shuttle]);
+				peak_scouts = std::max(peak_scouts, st.unit_counts[2][UnitTypes::Protoss_Scout]);
+			}
+			require(st.trigger_switches[2] && st.trigger_switches[4] && !st.trigger_switches[1] && st.unit_counts[4][UnitTypes::Special_Overmind_Cocoon] + st.unit_counts[11][UnitTypes::Special_Overmind_Cocoon] == 1 && peak_shuttles == 1 && peak_scouts == 2 && st.players[1].victory_state >= 3, "destroying the original Overmind creates its cocoon and extraction flight and completes the alternate source victory without a worker arrival");
+		}
+		printf("Return to Char original mission case %d passed.\n", scenario);
+	}
+}
+
 static void battle_of_braxis_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 2; ++scenario) {
 		game_player player(load_data_file);
@@ -4326,6 +4423,7 @@ int main(int argc, char** argv) {
 	bool legacy_xelnaga = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss03");
 	bool quest_for_uraj = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss04");
 	bool battle_of_braxis = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss05");
+	bool return_to_char = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4358,6 +4456,10 @@ int main(int argc, char** argv) {
 		}
 		if (battle_of_braxis) {
 			battle_of_braxis_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (return_to_char) {
+			return_to_char_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
