@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first seven Brood War missions are implemented in the catalogue. Return to Char and The Insurgent follow The Battle of Braxis.
+- All thirty original numbered StarCraft missions and the first eight Brood War missions are implemented in the catalogue. Countdown completes the expansion Protoss episode.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current eighty-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`; the remote tip was verified against local HEAD. Countdown is the next chronological expansion mission.
+- Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`; the remote tip was verified against local HEAD. Countdown has passed focused checks and awaits publication with the next two chronological UED missions.
 
 ### Historical Milestone Context
 
@@ -125,6 +125,18 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Recorded browser input queues a Dark Templar in the original Gateway, paying 125 minerals and 100 gas. Recovery captures its unfinished production with 75/50 remaining and reconstructs the session at 1,228 service ticks with one command batch. Both original opening transmissions pass.
 - A fresh task-owned loopback origin passes seven-mission ordering, sequential locks, briefing/Begin and nonblank gameplay. Normal keyboard input buys a Dragoon for 125 minerals and 50 gas; visible Save Game, menu return and Resume preserve the in-flight production and 75/100 remaining.
 - GUI-only forced outcomes verify defeat without a victory flag, fresh Retry, victory persistence and return to the Brood War menu. The menu fits 390 x 640 and 844 x 390 viewports. Task-owned browser storage and servers were cleaned up. Full human victory and classic comparison remain open.
+
+### Brood War 8: Countdown
+
+- Catalogue ID `bwprotoss08`, Episode IV mission 8. Original CHK SHA-256 `600dbf632ff6a1b2987e482912312f29189cde3a3c3a599b13c2c6d4b56e5acb`; 746 UNIT records, 20 gameplay triggers, one briefing and 15 audio dependencies. The 16-file pack is 8,220,381 bytes, decodes to 8,219,581 bytes and has SHA-256 `13b5e1056645980ac0d7f7a5ea8baac1e367046f90b301f1abc78502ccec2849`.
+- Human slot 1 retains two Protoss bases, eight Probes, four Zealots, six Dragoons and the original naturally rescued Zeratul and Artanis. Source triggers grant 1,000 minerals and 1,000 gas. The neutral Xel'Naga Temple remains with owner 6 until both heroes enter it.
+- Each hero's entrance removes that actor. One arrival cannot start the timer; either arrival order completes both switches. The original sequence transfers the temple to the human and starts 900 seconds. The complete, unshortened countdown and final ending reach victory. Base loss, either hero's death and temple destruction have separate source defeats, including temple destruction during the countdown.
+- The shared Remove Unit and Remove Unit At Location actions now omit Deaths-counter increments while retaining native cleanup. The Kill Unit path still records deaths. A synthetic three-actor check and the original temple-entry predicates distinguish those operations.
+- The original `HaHe` script reaches opcode 90. [PyAI's command reference](https://github.com/poiuyqwert/PyMS/blob/6e325d2e9474716fa2be3aca6479ff7d29dbaab5/Help/Programs/PyAI/Command_Reference.md#harass_location) identifies that opcode as unused. The shared interpreter accepts it without operands or gameplay effects; a strict original-script check verifies unchanged alliances and inactive town/military state.
+- Eight strict native cases pass, including the complete clock, both hero arrival orders, one-hero and one-second negative boundaries, all independent loss predicates and late Zerg activation. Original `PB8A` through `PB8F`, `PB5C`, later `PB5A`/`PB5B` and enemy-alliance scripts remain intact.
+- AI fixtures protect original human/neutral actors, remove original enemy Zerglings to require replacement, and relocate three original Probes onto reachable terrain. All three original main programs produce completed replacement fighters and fire native weapons within their source waits and a 36,000-tick observation bound. Outcome fixtures relocate heroes or directly kill the relevant original actors; they do not supply outcome switches or shorten the clock.
+- Fixture relocation preserves exactly two spatial-index endpoints per actor. Profiling identified an initial test-only duplicate insertion during a gas-exit search; removing the old index entries before relocation resolved it without changing native placement behavior.
+- Recorded browser input pays 100 minerals for an unfinished Zealot in an original Gateway. Fresh reconstruction passes at 1,228 service ticks with one command batch and 900/1,000 remaining. An isolated loopback origin passes eight-mission ordering, sequential locks, briefing/Begin, visible Save Game, menu return and resumed simulation with the clock still inactive. Full human victory and classic comparison remain open.
 
 ### Brood War UI And Release Verification
 

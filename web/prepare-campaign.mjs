@@ -44,6 +44,7 @@ const missions = {
   bwprotoss05: { title: 'The Battle of Braxis', episode: 4, order: 5, scenarioHash: 'b32673a2c6b5aa4479202df8ddc408c2cca29cca094b77e357fb1f930103b963', units: 405, triggers: 102, sounds: 11 },
   bwprotoss06: { title: 'Return to Char', episode: 4, order: 6, scenarioHash: '4eb75410295fe4ac68a4c45e0179a91afb72d0078bf98a808461a7c54a62f611', units: 607, triggers: 24, sounds: 12 },
   bwprotoss07: { title: 'The Insurgent', episode: 4, order: 7, scenarioHash: '44b57433f843a111d02e565fb8976a2396a228bf08ef058c5c0a1a9c6d5ef274', units: 354, triggers: 29, sounds: 25 },
+  bwprotoss08: { title: 'Countdown', episode: 4, order: 8, scenarioHash: '600dbf632ff6a1b2987e482912312f29189cde3a3c3a599b13c2c6d4b56e5acb', units: 746, triggers: 20, sounds: 15 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({

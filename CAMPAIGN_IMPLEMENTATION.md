@@ -340,6 +340,8 @@ If execution traps, inspect the first required unsupported operation. Fix that o
 
 Collect actors before kill, hide, remove or teleport operations that mutate spatial indexes. Use generation-safe unit IDs for retained references. Death is staged; counters can change after the Die order.
 
+For fixture relocation, call `unit_finder_remove` before `move_unit` followed by `refresh_unit_position`. The refresh inserts spatial-index endpoints; calling it on an indexed actor creates duplicates.
+
 Scripted placement and ordinary worker construction have different constraints. Reuse the appropriate helper for each. For teleporting between disconnected regions, search legal placement from the destination region and reset movement state; retain failed actors at their source.
 
 ### Trigger Semantics And Clocks

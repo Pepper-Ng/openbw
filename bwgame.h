@@ -2728,8 +2728,8 @@ struct state_functions {
 		return true;
 	}
 
-	void kill_unit(unit_t* u) {
-		if (u->order_type->id != Orders::Die && !ut_turret(u) && !u_hallucination(u)) ++st.dead_unit_counts[u->owner][u->unit_type->id];
+	void kill_unit(unit_t* u, bool record_death = true) {
+		if (record_death && u->order_type->id != Orders::Die && !ut_turret(u) && !u_hallucination(u)) ++st.dead_unit_counts[u->owner][u->unit_type->id];
 		drop_carried_items(u);
 		while (!u->order_queue.empty()) {
 			remove_queued_order(u, &u->order_queue.front());
@@ -19438,6 +19438,7 @@ struct state_functions {
 					if (opcode == 87) st.shared_vision[player] |= 1 << script.owner;
 					else st.shared_vision[player] &= ~(1 << script.owner);
 				}
+				else if (opcode == 90) continue; // Original Harass Here is unused.
 				else if (opcode == 103) disruption_web((script.area.from + script.area.to) / 2, script.owner);
 				else if (opcode == 105) st.lcg_rand_state = read(4);
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
@@ -20513,7 +20514,7 @@ struct state_functions {
 					}
 					if (!ok) continue;
 					hide_unit(u);
-					kill_unit(u);
+					kill_unit(u, false);
 				}
 			}
 			return true;
@@ -20549,7 +20550,7 @@ struct state_functions {
 					}
 					if (!ok) return;
 					hide_unit(u);
-					kill_unit(u);
+					kill_unit(u, false);
 
 				};
 				a_vector<unit_t*> units;

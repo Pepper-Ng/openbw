@@ -292,6 +292,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwprotoss07'), false, 'The Insurgent stays locked until Return to Char is complete');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 6).map(id => [id, true])) }));
   assert.equal(expansion.unlocked('bwprotoss07'), true, 'Completing Return to Char unlocks The Insurgent');
+  assert.equal(expansion.unlocked('bwprotoss08'), false, 'Countdown requires all seven preceding victories');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 7).map(id => [id, true])) }));
+  assert.equal(expansion.unlocked('bwprotoss08'), true, 'Completing The Insurgent unlocks Countdown');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -789,6 +792,11 @@ function testCampaign() {
     for (const [type, count] of [['Probe', 7], ['Dark Templar', 8], ['Dark Archon', 2], ['Dragoon', 4], ['Nexus', 1], ['Pylon', 7], ['Gateway', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
     assert.equal(units.filter(unit => unit[1] === 'Tassadar' && unit[2] === '7').length, 3, 'Preserve all three original Tassadar-type Aldaris actors');
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwprotoss08') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 8); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 1);
+    for (const [type, count] of [['Probe', 8], ['Nexus', 2], ['Zealot', 4], ['Dragoon', 6], ['Gateway', 2], ['Zeratul', 1], ['Artanis', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(units.filter(unit => unit[1].includes("Xel'Naga Temple") && unit[2] === '6').length, 1);
+    assert.equal(x.openbw_mission_countdown(), -1, 'The original timer starts only after both heroes enter the temple');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -810,7 +818,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'bwprotoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Countdown grants the original thousand gas');
   if (missionId === 'bwprotoss06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 400, 'Return to Char grants the original four hundred gas');
   if (missionId === 'bwprotoss07') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'The Insurgent grants the original one hundred fifty gas');
   if (missionId === 'bwprotoss03') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 75, 'The original expansion base grants exactly seventy-five gas');
@@ -904,13 +913,13 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
-  if (missionId === 'bwprotoss03' || missionId === 'bwprotoss06' || missionId === 'bwprotoss07') {
+  if (['bwprotoss03', 'bwprotoss06', 'bwprotoss07', 'bwprotoss08'].includes(missionId)) {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
     const gateway = owned().find(unit => unit[1] === 'Gateway');
     assert.ok(gateway);
     x.openbw_debug_select(Number(gateway[0]), 0); x.openbw_render(0); x.openbw_out_clear();
     const card = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t'));
-    assert.ok(card.some(row => row[1] === 'Dark Templar'), 'The original expansion base exposes normal Dark Templar production');
+    assert.ok(card.some(row => row[1] === (missionId === 'bwprotoss08' ? 'Zealot' : 'Dark Templar')), 'The original expansion Gateway exposes source-allowed production');
     const trainingName = missionId === 'bwprotoss07' ? 'Dark Templar' : 'Zealot';
     const training = card.find(row => row[1] === trainingName);
     assert.ok(training?.[0]);
@@ -920,12 +929,12 @@ function testCampaign() {
     new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
     x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     for (let tick = 0; tick < 24; tick++) x.openbw_step();
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {bwprotoss03: 150, bwprotoss06: 700, bwprotoss07: 75}[missionId], 'Native Gateway production pays the original unit cost');
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), {bwprotoss03: 75, bwprotoss06: 400, bwprotoss07: 50}[missionId]);
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {bwprotoss03: 150, bwprotoss06: 700, bwprotoss07: 75, bwprotoss08: 900}[missionId], 'Native Gateway production pays the original unit cost');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), {bwprotoss03: 75, bwprotoss06: 400, bwprotoss07: 50, bwprotoss08: 1000}[missionId]);
     const [progress, queued] = read(x.openbw_status()).split('\t');
     assert.equal(queued, trainingName, 'The saved production order remains in the original Gateway queue');
     assert.ok(Number(progress) > 0 && Number(progress) < 100, 'Recovery captures paid production still in flight');
-    assert.equal(owned().filter(unit => unit[1] === 'Dark Templar').length, missionId === 'bwprotoss07' ? 9 : 2, 'The original Dark Templars remain alongside any unfinished trainee');
+    assert.equal(owned().filter(unit => unit[1] === 'Dark Templar').length, missionId === 'bwprotoss07' ? 9 : missionId === 'bwprotoss08' ? 0 : 2, 'The original Dark Templars remain alongside any unfinished trainee');
     if (missionId === 'bwprotoss06') for (const [type, count] of [['Hatchery', 1], ['Drone', 3], ['Zergling', 6], ['Overlord', 2]]) assert.equal(owned().filter(unit => unit[1] === type).length, count, 'The original opening transfers the Zerg base to the Protoss human owner');
     assert.equal(x.openbw_outcome(), 0);
   }

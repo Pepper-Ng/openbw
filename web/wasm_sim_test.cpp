@@ -3926,6 +3926,143 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void countdown_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 8 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 2 && st.unit_counts[1][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[1][UnitTypes::Protoss_Dragoon] == 6 && st.unit_counts[6][UnitTypes::Special_XelNaga_Temple] == 1 && !st.countdown_active, "Countdown retains both original Protoss bases, the neutral temple and an inactive clock");
+		if (!scenario) {
+			auto alliances = st.alliances;
+			functions.start_campaign_ai_script(4, 0x65486148, st.locations.at(9).area);
+			functions.progress_campaign_ai_scripts();
+			require(st.campaign_ai_scripts.empty() && !st.campaign_ai[4].town_active && st.campaign_ai[4].military_region == ~(size_t)0 && st.alliances == alliances, "the original unused HaHe opcode consumes no operands and has no gameplay effect");
+			state_functions::execute_trigger_struct effects;
+			running_trigger running;
+			trigger::action action{};
+			action.group_n = 1;
+			action.extra_n = int(UnitTypes::Terran_Science_Vessel);
+			action.location = 64;
+			for (int type : {24, 25, 22}) {
+				require(functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Science_Vessel), xy(200, 200), 1), "an isolated actor distinguishes removal from killing");
+				action.type = type;
+				functions.execute_trigger_action(effects, 1, running, running.actions[0], action);
+				require(st.dead_unit_counts[1][UnitTypes::Terran_Science_Vessel] == (type == 22 ? 1 : 0), "both Remove Unit actions preserve Deaths while Kill Unit increments it");
+			}
+		}
+		auto step = [&]() {
+			for (int owner : {1, 2, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		a_vector<unit_t*> probes;
+		for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe)) {
+			probes.push_back(unit);
+			functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		}
+		unit_t* heroes[2] = {};
+		for (int owner : {1, 2}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Zeratul)) heroes[0] = unit;
+			if (functions.unit_is(unit, UnitTypes::Hero_Artanis)) heroes[1] = unit;
+		}
+		for (int index = 0; index != 2; ++index) {
+			require(heroes[index], "both original heroes remain available");
+			if (heroes[index]->owner != 1) {
+				functions.unit_finder_remove(probes[index]);
+				functions.move_unit(probes[index], heroes[index]->sprite->position + xy(64, 0));
+				functions.refresh_unit_position(probes[index]);
+				for (int tick = 0; tick != 128 && heroes[index]->owner != 1; ++tick) step();
+			}
+			require(heroes[index]->owner == 1, "native proximity rescues the same original Countdown hero");
+			functions.set_unit_order(heroes[index], functions.get_order_type(Orders::HoldPosition));
+		}
+		for (int tick = 0; tick != 400; ++tick) step();
+		require(st.current_minerals[1] == 1000 && st.current_gas[1] == 1000 && st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 1 && st.campaign_ai[4].town_active && st.campaign_ai[4].area_towns.size() == 1 && st.campaign_ai[5].town_active && st.campaign_ai[5].area_towns.size() == 2 && !st.countdown_active && !st.players[1].victory_state, "original 1000/1000 funding starts all three Zerg main programs and four area programs without starting the temple countdown");
+		if (!scenario) {
+			a_vector<unit_id> original;
+			a_vector<unit_t*> victims;
+			for (int owner : {0, 4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Zerg_Zergling)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool positioned[3] = {}, produced[3] = {}, fired[3] = {};
+			for (int tick = 0; tick != 36000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2]); ++tick) {
+				if (tick % 3000 == 0) { printf("Countdown AI tick %d: produced=%d/%d/%d fired=%d/%d/%d\n", tick, produced[0], produced[1], produced[2], fired[0], fired[1], fired[2]); fflush(stdout); }
+				step();
+				for (int index = 0; index != 3; ++index) {
+					int owner = index ? index + 3 : 0;
+					if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+						unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+						if (attacker) {
+							functions.unit_finder_remove(probes[index]);
+							functions.move_unit(probes[index], attacker->sprite->position + xy(64, 0));
+							functions.refresh_unit_position(probes[index]);
+							require(std::count_if(st.unit_finder_x.begin(), st.unit_finder_x.end(), [&](const state::unit_finder_entry& entry) { return entry.u == probes[index]; }) == 2, "relocating a Countdown fixture target retains exactly two spatial-index endpoints");
+							require(functions.u_flying(attacker) || functions.is_reachable(attacker, probes[index]), "each Countdown main program has a reachable protected original target");
+							positioned[index] = true;
+						}
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, UnitTypes::Zerg_Zergling) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[index] = true;
+						if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2], "all three original Countdown main programs replace fighters and fire native weapons within their source waits");
+		} else if (scenario <= 4) {
+			a_vector<unit_t*> victims;
+			if (scenario == 1) for (unit_t* unit : ptr(st.player_units[1])) { if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit); }
+			else if (scenario <= 3) victims.push_back(heroes[scenario - 2]);
+			else for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Special_XelNaga_Temple)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1200 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2 && st.trigger_switches[4], "loss of the base, either rescued hero or the original temple satisfies its independent authored defeat");
+		} else {
+			const auto& entrance = st.locations.at(6).area;
+			xy position = (entrance.from + entrance.to) / 2;
+			int first = scenario == 6 ? 1 : 0;
+			functions.unit_finder_remove(heroes[first]);
+			functions.move_unit(heroes[first], position);
+			functions.refresh_unit_position(heroes[first]);
+			for (int tick = 0; tick != 400; ++tick) step();
+			require(st.trigger_switches[first ? 0 : 1] && !st.trigger_switches[first ? 1 : 0] && !st.countdown_active && !st.players[1].victory_state, "one hero entering the original temple is removed without a death and cannot start the timer alone");
+			if (scenario == 7) {
+				functions.kill_unit(heroes[1]);
+				for (int tick = 0; tick != 1200 && !st.players[1].victory_state; ++tick) step();
+				require(st.players[1].victory_state == 2, "losing the remaining hero after Zeratul enters the temple still causes defeat");
+			} else {
+				functions.unit_finder_remove(heroes[1 - first]);
+				functions.move_unit(heroes[1 - first], position);
+				functions.refresh_unit_position(heroes[1 - first]);
+				for (int tick = 0; tick != 1600 && !st.trigger_switches[2]; ++tick) step();
+				require(st.trigger_switches[0] && st.trigger_switches[1] && st.trigger_switches[2] && st.countdown_active && st.countdown_timer > 880 && st.countdown_timer <= 900 && st.unit_counts[1][UnitTypes::Special_XelNaga_Temple] == 1 && !st.players[1].victory_state, "either hero arrival order starts the original fifteen-minute timer and transfers the temple to the human");
+				if (scenario == 6) {
+					for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Special_XelNaga_Temple)) { functions.kill_unit(unit); break; }
+					for (int tick = 0; tick != 1200 && !st.players[1].victory_state; ++tick) step();
+					require(st.players[1].victory_state == 2 && st.trigger_switches[4], "temple destruction during the original defense countdown causes defeat");
+				} else {
+					bool penultimate = false;
+					for (int tick = 0; tick != 18000 && !st.players[1].victory_state; ++tick) {
+						step();
+						if (st.countdown_timer == 1) { penultimate = true; require(!st.trigger_switches[9] && !st.players[1].victory_state, "one second remaining cannot satisfy the source victory"); }
+					}
+					require(penultimate && !st.countdown_timer && st.trigger_switches[9] && st.players[1].victory_state >= 3, "the full unshortened countdown runs the original temple ending to victory");
+				}
+			}
+		}
+		printf("Countdown original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void insurgent_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 6; ++scenario) {
 		game_player player(load_data_file);
@@ -4528,6 +4665,7 @@ int main(int argc, char** argv) {
 	bool battle_of_braxis = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss05");
 	bool return_to_char = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss06");
 	bool insurgent = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss07");
+	bool countdown = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4568,6 +4706,10 @@ int main(int argc, char** argv) {
 		}
 		if (insurgent) {
 			insurgent_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (countdown) {
+			countdown_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
