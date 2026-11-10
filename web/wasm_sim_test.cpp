@@ -3926,6 +3926,115 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void dylarian_shipyards_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].controller == player_t::controller_occupied && st.players[6].race == race_t::terran && !st.building_counts[6] && !st.unit_counts[6][UnitTypes::Terran_Marine] && st.unit_counts[2][UnitTypes::Terran_Dropship] == 3 && !st.current_minerals[6] && !st.current_gas[6], "Dylarian starts at original human slot 6 with only its revealer and three neutral delivery Dropships");
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[6])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 2400 && st.unit_counts[6][UnitTypes::Terran_Civilian] != 3; ++tick) step();
+		require(st.unit_counts[6][UnitTypes::Terran_Marine] == 8 && st.unit_counts[6][UnitTypes::Terran_Medic] == 4 && st.unit_counts[6][UnitTypes::Terran_Civilian] == 3 && st.unit_counts[1][UnitTypes::Terran_Battlecruiser] == 18 && st.trigger_switches[12] && !st.custom_score[6] && !st.players[6].victory_state, "the original delivery sequence transfers eight Marines, four Medics and three pilots and creates all eighteen docked Battlecruisers");
+		require(st.campaign_ai[0].town_active && st.campaign_ai[0].build_requests[UnitTypes::Terran_SCV].first == 0 && !functions.test_trigger_condition(st.game->triggers[72].conditions[0], 6), "TB2B retains its authored non-economic town, and the original Never condition remains false");
+		auto actor = [&](UnitTypes type, int owner) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, size_t location) {
+			const auto& area = st.locations.at(location - 1).area;
+			functions.unit_finder_remove(unit);
+			functions.move_unit(unit, (area.from + area.to) / 2);
+			functions.refresh_unit_position(unit);
+			functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		};
+		if (scenario == 1) {
+			state_functions::execute_trigger_struct effects;
+			running_trigger running;
+			auto deaths = st.game->triggers[16].actions[11];
+			require(deaths.type == 45 && deaths.extra_n == int(UnitTypes::Terran_Civilian), "the original sector transition supplies the Set Deaths record");
+			deaths.group_n = 13;
+			deaths.group2_n = 3;
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], deaths);
+			require(st.dead_unit_counts[6][UnitTypes::Terran_Civilian] == 3, "Set Deaths honors Current Player and the exact operand");
+			deaths.num_n = 8;
+			deaths.group2_n = 2;
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], deaths);
+			require(st.dead_unit_counts[6][UnitTypes::Terran_Civilian] == 5, "Add Deaths preserves the existing counter");
+			deaths.num_n = 9;
+			deaths.group2_n = 7;
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], deaths);
+			require(!st.dead_unit_counts[6][UnitTypes::Terran_Civilian], "Subtract Deaths saturates at zero");
+			deaths.num_n = 7;
+			deaths.group_n = 7;
+			deaths.group2_n = 1;
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], deaths);
+			require(st.dead_unit_counts[7][UnitTypes::Terran_Civilian] == 1, "an explicit unused slot retains its own death counter");
+			deaths.group2_n = 0;
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], deaths);
+			unit_t* marine = actor(UnitTypes::Terran_Marine, 6);
+			unit_t* medic = actor(UnitTypes::Terran_Medic, 6);
+			require(marine && medic, "original landing troops supply the healing fixture");
+			functions.set_unit_hp(marine, fp8::integer(10));
+			functions.unit_finder_remove(medic);
+			functions.move_unit(medic, marine->sprite->position + xy(32, 0));
+			functions.refresh_unit_position(medic);
+			auto energy = medic->energy;
+			functions.issue_order(medic, false, functions.get_order_type(Orders::MedicHeal), {marine->sprite->position, marine});
+			for (int tick = 0; tick != 256 && marine->hp <= fp8::integer(10); ++tick) step();
+			require(marine->hp > fp8::integer(10) && medic->energy < energy, "an original Medic heals an original wounded Marine through native energy-paid healing");
+			relocate(marine, 2);
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.custom_score[6] && st.unit_counts[6][UnitTypes::Terran_Civilian] == 3, "a Marine on a boarding beacon neither consumes a pilot nor captures a ship");
+		} else if (scenario == 3) {
+			for (int tick = 0; tick != 18000 && !st.players[6].victory_state; ++tick) {
+				a_vector<unit_t*> pilots;
+				bool sector_active = (st.trigger_switches[4] && !st.trigger_switches[8]) || (st.trigger_switches[5] && !st.trigger_switches[9]) || (st.trigger_switches[6] && !st.trigger_switches[10]) || (st.trigger_switches[7] && !st.trigger_switches[11]);
+				if (sector_active) for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Civilian) && !functions.unit_dying(unit)) pilots.push_back(unit);
+				for (unit_t* unit : pilots) functions.kill_unit(unit);
+				step();
+			}
+			require(st.trigger_switches[11] && !st.custom_score[6] && st.players[6].victory_state == 2, "exhausting every original and replacement pilot advances the source sectors and ends in the zero-capture defeat");
+		} else {
+			int captured = 0;
+			for (size_t location : {size_t(2), size_t(5), size_t(6), size_t(28), size_t(29), size_t(35), size_t(49), size_t(70), size_t(93), size_t(96), size_t(8), size_t(43), size_t(77), size_t(104), size_t(107), size_t(113), size_t(110), size_t(116)}) {
+				for (int tick = 0; tick != 3000 && (!actor(UnitTypes::Terran_Civilian, 6) || st.trigger_switches[14]); ++tick) step();
+				unit_t* pilot = actor(UnitTypes::Terran_Civilian, 6);
+				require(pilot, "the original or next-sector delivery supplies a real pilot for every boarding gate");
+				relocate(pilot, location);
+				for (int tick = 0; tick != 1600 && st.custom_score[6] == captured; ++tick) step();
+				++captured;
+				require(st.custom_score[6] == captured && !st.dead_unit_counts[6][UnitTypes::Terran_Civilian] && !st.players[6].victory_state, "each original beacon consumes one pilot without a death, captures one original ship and adds exactly one score");
+			}
+			for (int tick = 0; tick != 5000 && !(scenario == 4 ? st.trigger_switches[3] && !st.trigger_switches[0] : st.trigger_switches[2] && !st.trigger_switches[14] && !st.scripted_pause); ++tick) step();
+			require(st.trigger_switches[8] && st.trigger_switches[9] && st.trigger_switches[10] && st.trigger_switches[11] && (scenario == 4 ? st.countdown_timer > 0 : st.trigger_switches[2]) && st.custom_score[6] == 18 && st.unit_counts[6][UnitTypes::Terran_Battlecruiser] == 18 && st.unit_counts[0][UnitTypes::Terran_Battlecruiser] == (scenario == 4 ? 0 : 12) && !st.players[6].victory_state, "all four original sectors and crew resets assemble the captured fleet before the rally or the full original eighteen-versus-twelve battle");
+			a_vector<unit_t*> ships;
+			for (unit_t* unit : ptr(st.player_units[scenario == 2 || scenario == 4 ? 6 : 0])) if (functions.unit_is(unit, UnitTypes::Terran_Battlecruiser) && !functions.unit_dying(unit)) ships.push_back(unit);
+			if (scenario == 2 || scenario == 4) {
+				for (unit_t* unit : ships) functions.kill_unit(unit);
+				for (int tick = 0; tick != 256 && !st.players[6].victory_state; ++tick) step();
+				require((scenario == 4 ? !st.trigger_switches[0] : st.unit_counts[0][UnitTypes::Terran_Battlecruiser] > 0) && st.players[6].victory_state == 2, "losing the captured fleet before the rally or during combat reaches its distinct source defeat");
+			} else {
+				for (unit_t* unit : ships) functions.set_unit_hp(unit, fp8::integer(1));
+				for (int tick = 0; tick != 8000 && !st.players[6].victory_state; ++tick) step();
+				require(st.killed_unit_counts[6][UnitTypes::Terran_Battlecruiser] == 12 && st.unit_counts[6][UnitTypes::Terran_Battlecruiser] > 0 && st.players[6].victory_state >= 3, "captured ships fire native weapons to destroy the weakened original enemy fleet and satisfy the source victory");
+			}
+		}
+		printf("The Dylarian Shipyards original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void ued_first_strike_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -4759,6 +4868,7 @@ int main(int argc, char** argv) {
 	bool insurgent = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss07");
 	bool countdown = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss08");
 	bool ued_first_strike = campaign && argc > 4 && !strcmp(argv[4], "bwterran01");
+	bool dylarian = campaign && argc > 4 && !strcmp(argv[4], "bwterran02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4807,6 +4917,10 @@ int main(int argc, char** argv) {
 		}
 		if (ued_first_strike) {
 			ued_first_strike_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (dylarian) {
+			dylarian_shipyards_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

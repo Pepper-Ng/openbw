@@ -336,6 +336,7 @@ struct play_ui : ui_functions {
 	bool mission_speech_muted = false;
 	int mission_objective_string = 0;
 	int mission_leaderboard_unit = -1;
+	int mission_leaderboard_score = -1;
 	int mission_leaderboard_title = 0;
 	bool mission_leaderboard_computers = true;
 	struct mission_event {
@@ -412,6 +413,12 @@ struct play_ui : ui_functions {
 		if (action.type == 12) mission_objective_string = action.string_index;
 		if (action.type == 17) {
 			mission_leaderboard_unit = action.extra_n;
+			mission_leaderboard_score = -1;
+			mission_leaderboard_title = action.string_index;
+		}
+		if (action.type == 21) {
+			mission_leaderboard_unit = -1;
+			mission_leaderboard_score = action.extra_n;
 			mission_leaderboard_title = action.string_index;
 		}
 		if (action.type == 30) mission_speech_muted = true;

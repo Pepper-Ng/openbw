@@ -286,12 +286,13 @@ OPENBW_EXPORT(openbw_mission_unit_name) const char* openbw_mission_unit_name(int
 OPENBW_EXPORT(openbw_mission_leaderboard) const char* openbw_mission_leaderboard() {
 	static a_string result;
 	result.clear();
-	if (!g_ui || g_ui->mission_leaderboard_unit < 0) return "";
+	if (!g_ui || (g_ui->mission_leaderboard_unit < 0 && g_ui->mission_leaderboard_score < 0)) return "";
 	result = format("%d\t%d\n", g_ui->mission_leaderboard_title, g_ui->mission_leaderboard_unit);
 	for (int owner = 0; owner != 8; ++owner) {
 		int controller = g_ui->st.players[owner].controller;
 		if (controller != player_t::controller_occupied && !(g_ui->mission_leaderboard_computers && controller == player_t::controller_computer_game)) continue;
-		result += format("%d\t%d\n", owner, g_ui->trigger_command_count(g_ui->st, owner, owner, g_ui->mission_leaderboard_unit, true));
+		int count = g_ui->mission_leaderboard_score == 7 ? g_ui->st.custom_score[owner] : g_ui->trigger_command_count(g_ui->st, owner, owner, g_ui->mission_leaderboard_unit, true);
+		result += format("%d\t%d\n", owner, count);
 	}
 	return result.c_str();
 }

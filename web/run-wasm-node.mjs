@@ -298,6 +298,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwterran01'), false, 'The UED episode retains its preceding expansion victory requirement');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 8).map(id => [id, true])) }));
   assert.equal(expansion.unlocked('bwterran01'), true, 'Completing Countdown unlocks UED First Strike');
+  assert.equal(expansion.unlocked('bwterran02'), false, 'Dylarian requires UED First Strike victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 9).map(id => [id, true])) }));
+  assert.equal(expansion.unlocked('bwterran02'), true, 'Completing UED First Strike unlocks Dylarian');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -805,6 +808,11 @@ function testCampaign() {
     for (const [type, count] of [['SCV', 4], ['Marine', 3], ['Siege Tank', 2], ['Command Center', 1], ['Supply Depot', 2], ['Barracks', 1], ['Factory', 1], ['Machine Shop', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
     assert.equal(units.filter(unit => unit[1].includes('Duran') && unit[2] === '2').length, 1);
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwterran02') {
+    assert.equal(mission.episode, 5); assert.equal(mission.order, 2); assert.equal(mission.race, 1); assert.equal(mission.humanSlot, 6);
+    assert.deepEqual(human.map(unit => unit[1]), ['Map Revealer'], 'Only the original revealer precedes the source Dropship delivery');
+    assert.equal(units.filter(unit => unit[1] === 'Dropship' && unit[2] === '2').length, 3);
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -826,7 +834,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'bwterran01') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'UED First Strike starts without gas');
   if (missionId === 'bwprotoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Countdown grants the original thousand gas');
   if (missionId === 'bwprotoss06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 400, 'Return to Char grants the original four hundred gas');
@@ -922,6 +930,15 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId === 'bwterran02') {
+    const current = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+    for (const [type, count] of [['Marine', 8], ['Medic', 4], ['Civilian', 3]]) assert.equal(current.filter(unit => unit[1] === type && Number(unit[2]) === mission.humanSlot).length, count, 'The source Dropships deliver the original baseless landing force');
+    assert.equal(current.filter(unit => unit[1] === 'Battlecruiser' && unit[2] === '1').length, 18);
+    const [header, ...scores] = read(x.openbw_mission_leaderboard()).trim().split('\n').map(line => line.split('\t').map(Number));
+    assert.ok(header[0] > 0, 'The original custom-score leaderboard retains its authored title');
+    assert.equal(header[1], -1, 'The opening scoreboard displays custom score rather than a unit count');
+    assert.deepEqual(scores, [[mission.humanSlot, 0]], 'The original leaderboard excludes computers and displays the human capture score');
+  }
   if (missionId === 'bwterran01') {
     const barracks = human.find(unit => unit[1] === 'Barracks');
     assert.ok(barracks);
@@ -994,8 +1011,8 @@ function testCampaign() {
     assert.match(read(x.openbw_card()), /\tCancel\t/, 'Recovery is captured during actual paid Nexus construction');
     assert.equal(x.openbw_outcome(), 0);
   }
-  if (missionId === 'bwprotoss01' || missionId === 'bwprotoss04' || missionId === 'bwprotoss05') {
-    const unitName = missionId === 'bwprotoss01' ? 'Zeratul' : missionId === 'bwprotoss05' ? 'Zealot' : 'Probe';
+  if (['bwprotoss01', 'bwprotoss04', 'bwprotoss05', 'bwterran02'].includes(missionId)) {
+    const unitName = missionId === 'bwprotoss01' ? 'Zeratul' : missionId === 'bwprotoss05' ? 'Zealot' : missionId === 'bwterran02' ? 'Civilian' : 'Probe';
     const actor = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === unitName && Number(unit[2]) === mission.humanSlot);
     assert.ok(actor);
     const word = value => [value & 255, value >> 8 & 255];

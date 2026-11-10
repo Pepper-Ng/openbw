@@ -20103,6 +20103,8 @@ struct state_functions {
 			}
 		case 22: // always
 			return true;
+		case 23: // never
+			return false;
 		default:
 			error("unknown trigger condition %d\n", c.type);
 			return false;
@@ -20288,14 +20290,14 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 7 || type == 11 || type == 12 || type == 15 || type == 17 || type == 21 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 7 || type == 11 || type == 12 || type == 15 || type == 17 || type == 21 || type == 22 || type == 23;
 	}
 
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
-		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 27: case 32: case 38: case 39: case 42: case 43: case 44: case 46: case 47: case 48: case 49: case 51: case 57:
+		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 21: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
+		case 27: case 32: case 38: case 39: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20361,6 +20363,10 @@ struct state_functions {
 		case 8: case 9: case 10: case 12: case 17: case 28: case 30: case 31: case 32:
 			on_trigger_action(owner, a);
 			return true;
+		case 21: // leaderboard score
+			if (a.extra_n != 7) error("unsupported leaderboard score type %d", a.extra_n);
+			on_trigger_action(owner, a);
+			return true;
 		case 47:
 			return true;
 		case 13:
@@ -20384,6 +20390,20 @@ struct state_functions {
 				else error("unsupported score modifier %d", a.num_n);
 				if (value > std::numeric_limits<int>::max()) error("custom score out of range");
 				st.custom_score[player] = int(std::max<int64_t>(0, value));
+			}
+			return true;
+		case 45: // set deaths
+			if (a.extra_n >= 228) error("unsupported deaths unit %d", a.extra_n);
+			for (int player : all_player_slots) {
+				if (a.group_n < 12 ? player != a.group_n : !trigger_players_pred(owner, a.group_n, player)) continue;
+				auto& count = st.dead_unit_counts[player][(UnitTypes)a.extra_n];
+				int64_t value = count;
+				if (a.num_n == 7) value = a.group2_n;
+				else if (a.num_n == 8) value += a.group2_n;
+				else if (a.num_n == 9) value -= a.group2_n;
+				else error("unsupported deaths modifier %d", a.num_n);
+				if (value > std::numeric_limits<int>::max()) error("deaths count out of range");
+				count = int(std::max<int64_t>(0, value));
 			}
 			return true;
 		case 14:
