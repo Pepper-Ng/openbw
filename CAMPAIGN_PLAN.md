@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first eight Brood War missions are implemented in the catalogue. Countdown completes the expansion Protoss episode.
+- All thirty original numbered StarCraft missions and the first nine Brood War missions are implemented in the catalogue. Countdown completes Episode IV; First Strike begins the UED Terran episode.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current eighty-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`; the remote tip was verified against local HEAD. Countdown has passed focused checks and awaits publication with the next two chronological UED missions.
+- Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`; the remote tip was verified against local HEAD. Countdown (`63f3826`) and UED First Strike await publication with The Dylarian Shipyards.
 
 ### Historical Milestone Context
 
@@ -137,6 +137,17 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - AI fixtures protect original human/neutral actors, remove original enemy Zerglings to require replacement, and relocate three original Probes onto reachable terrain. All three original main programs produce completed replacement fighters and fire native weapons within their source waits and a 36,000-tick observation bound. Outcome fixtures relocate heroes or directly kill the relevant original actors; they do not supply outcome switches or shorten the clock.
 - Fixture relocation preserves exactly two spatial-index endpoints per actor. Profiling identified an initial test-only duplicate insertion during a gas-exit search; removing the old index entries before relocation resolved it without changing native placement behavior.
 - Recorded browser input pays 100 minerals for an unfinished Zealot in an original Gateway. Fresh reconstruction passes at 1,228 service ticks with one command batch and 900/1,000 remaining. An isolated loopback origin passes eight-mission ordering, sequential locks, briefing/Begin, visible Save Game, menu return and resumed simulation with the clock still inactive. Full human victory and classic comparison remain open.
+
+### Brood War 9: First Strike
+
+- Catalogue ID `bwterran01`, Episode V mission 1 and the ninth chronological expansion mission. The owned archive verifies `campaign\expterran\terran01\staredit\scenario.chk`; the extractor retains an explicit per-mission allowlist. The menu adds an Episode V Terran chapter after Countdown, preserving sequential expansion victories and published progress-code meanings.
+- Original CHK SHA-256 `48b3dee553ae2e0b2747b9cd4b85f5a4dfc982dc89bb523fad015acdc4c7b5ab`; 296 UNIT records, 12 gameplay triggers, one briefing and 14 audio dependencies. The 15-file pack is 9,516,046 bytes, decodes to 9,515,262 bytes and has SHA-256 `5e043cc2204ddedd6e9c84bed86a4b528451575c96dd613d99900323bb790243`.
+- Human slot 5 retains four SCVs, three Marines, two Siege Tanks and its original Command Center/Barracks/Factory base. Source funding is 250 minerals and zero gas. Samir Duran begins with rescue ownership; proximity rescues the same actor. His original paused dialogue transfers the neutral base, bringing the human to two Command Centers and nine SCVs.
+- The source remembers Duran acquisition and removes his initial invincibility. His subsequent loss causes defeat; his removal before acquisition does not satisfy that predicate. Loss of all human buildings is an independent defeat. Destroying the owner-0 Dominion Command Center wins with other enemy buildings still present; Duran acquisition is not an added victory requirement.
+- Five strict native cases pass for original startup/AI, building-loss defeat, rescue and subsequent Duran-loss defeat, post-rescue victory and victory without Duran acquisition. Fixtures protect the human/neutral force, relocate an original SCV for rescue and directly kill the relevant original objective actors. The unrescued-Duran boundary deliberately bypasses his initial invincibility in the fixture.
+- Original `TB1A` and eleven `EnBk` bunker activations reuse existing shared behavior. The AI fixture removes visible original Dominion Marines while retaining loaded garrisons, then observes completed replacement infantry and native weapon fire at a protected original SCV on reachable terrain.
+- Normal recorded input queues a Marine in the original Barracks, pays 50 minerals and reconstructs unfinished production at 1,228 service ticks with one command batch and 200/0 remaining.
+- Isolated browser checks verify the visible Next Mission transition from a GUI-only forced Countdown victory into UED First Strike, the original briefing/Begin, paid Marine production, nine-mission chapter ordering, visible Save Game, return to the Brood War menu and Resume with the same in-flight queue. Full human victory and classic comparison remain open.
 
 ### Brood War UI And Release Verification
 

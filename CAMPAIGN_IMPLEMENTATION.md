@@ -59,8 +59,9 @@ Identify the stable public ID, source request, campaign edition and chronologica
 
 - Original public `terran07`, `terran08`, `terran09`, `terran10` request archive `terran08`, `terran09`, `terran11`, `terran12`, respectively.
 - The unused original archive prototypes `terran07` and `terran10` are not shipping mission aliases.
-- Expansion public `bwprotossNN` currently maps to `campaign\expprotoss\protossNN\staredit\scenario.chk`.
-- Another expansion episode needs its own verified path mapping; the existing expansion branch handles Protoss paths only.
+- Expansion public `bwprotossNN` maps to `campaign\expprotoss\protossNN\staredit\scenario.chk`.
+- Expansion public `bwterranNN` maps to `campaign\expterran\terranNN\staredit\scenario.chk`.
+- Another expansion episode needs its own verified path mapping.
 
 Keep canonical titles in catalogue metadata. Preserve legacy scenario name strings.
 

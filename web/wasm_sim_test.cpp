@@ -3926,6 +3926,98 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void ued_first_strike_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[5].controller == player_t::controller_occupied && st.players[5].race == race_t::terran && st.unit_counts[5][UnitTypes::Terran_SCV] == 4 && st.unit_counts[5][UnitTypes::Terran_Marine] == 3 && st.unit_counts[5][UnitTypes::Terran_Siege_Tank_Tank_Mode] == 2 && st.unit_counts[5][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[5][UnitTypes::Terran_Factory] == 1 && st.unit_counts[2][UnitTypes::Hero_Samir_Duran] == 1, "UED First Strike retains its original slot-5 Terran base, two tanks and rescue-owned Duran");
+		auto step = [&]() {
+			for (int owner : {1, 2, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 400; ++tick) step();
+		require(st.current_minerals[5] == 250 && !st.current_gas[5] && !st.countdown_active && st.campaign_ai[0].town_active && !st.players[5].victory_state && !st.trigger_switches[4], "the source grants 250 minerals, starts TB1A and leaves the Duran-loss gate inactive before rescue");
+		if (!scenario) {
+			a_vector<unit_id> original;
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[0])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool positioned = false, produced = false, fired = false;
+			for (int tick = 0; tick != 18000 && !(produced && fired); ++tick) {
+				step();
+				if (!positioned && !st.campaign_ai[0].attack_party.empty()) {
+					unit_t* attacker = functions.get_unit(st.campaign_ai[0].attack_party.front());
+					unit_t* target = nullptr;
+					for (unit_t* unit : ptr(st.player_units[5])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) { target = unit; break; }
+					if (attacker && target) {
+						functions.unit_finder_remove(target);
+						functions.move_unit(target, attacker->sprite->position + xy(64, 0));
+						functions.refresh_unit_position(target);
+						require(functions.is_reachable(attacker, target), "TB1A receives a protected original target on reachable terrain");
+						positioned = true;
+					}
+				}
+				for (unit_t* unit : ptr(st.player_units[0])) if (!functions.unit_dying(unit)) {
+					if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced = true;
+					if (positioned && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired = true;
+				}
+			}
+			require(produced && fired, "TB1A replaces infantry and fires native weapons while the original bunker garrisons remain loaded");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[5])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[5].victory_state; ++tick) step();
+			require(st.players[5].victory_state == 2, "loss of all human buildings reaches the original First Strike defeat");
+		} else {
+			unit_t* duran = nullptr;
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Samir_Duran)) duran = unit;
+			require(duran, "the original rescue-owned Duran remains available");
+			if (scenario <= 3) {
+				unit_t* worker = nullptr;
+				for (unit_t* unit : ptr(st.player_units[5])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) { worker = unit; break; }
+				require(worker, "an original SCV can approach Duran");
+				functions.unit_finder_remove(worker);
+				functions.move_unit(worker, duran->sprite->position + xy(64, 0));
+				functions.refresh_unit_position(worker);
+				bool paused = false;
+				for (int tick = 0; tick != 3000 && !(st.trigger_switches[0] && st.trigger_switches[4] && !st.scripted_pause); ++tick) { step(); paused = paused || st.scripted_pause; }
+				require(paused && duran->owner == 5 && st.trigger_switches[0] && st.trigger_switches[4] && st.unit_counts[5][UnitTypes::Terran_Command_Center] == 2 && st.unit_counts[5][UnitTypes::Terran_SCV] == 9 && !functions.u_invincible(duran), "normal proximity rescues Duran, the original dialogue transfers his base and the source removes his initial invincibility");
+				if (scenario == 2) {
+					functions.kill_unit(duran);
+					for (int tick = 0; tick != 1200 && !st.players[5].victory_state; ++tick) step();
+					require(st.players[5].victory_state == 2, "loss of rescued Duran reaches the independent source defeat");
+				}
+			} else {
+				functions.kill_unit(duran);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.trigger_switches[4] && !st.players[5].victory_state, "the source does not apply the acquired-Duran loss predicate before acquisition");
+			}
+			if (scenario >= 3) {
+				unit_t* command_center = nullptr;
+				for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) command_center = unit;
+				require(command_center, "the original Dominion Command Center supplies the victory objective");
+				functions.kill_unit(command_center);
+				for (int tick = 0; tick != 1600 && !st.players[5].victory_state; ++tick) step();
+				require(st.building_counts[0] > 0 && st.players[5].victory_state >= 3, "destroying the Dominion Command Center completes the original ending with other enemy buildings still present");
+			}
+		}
+		printf("UED First Strike original mission case %d passed.\n", scenario);
+	}
+}
+
 static void countdown_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 8; ++scenario) {
 		game_player player(load_data_file);
@@ -4666,6 +4758,7 @@ int main(int argc, char** argv) {
 	bool return_to_char = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss06");
 	bool insurgent = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss07");
 	bool countdown = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss08");
+	bool ued_first_strike = campaign && argc > 4 && !strcmp(argv[4], "bwterran01");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4710,6 +4803,10 @@ int main(int argc, char** argv) {
 		}
 		if (countdown) {
 			countdown_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (ued_first_strike) {
+			ued_first_strike_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
