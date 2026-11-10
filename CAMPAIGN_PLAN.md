@@ -10,7 +10,7 @@ This document records coverage, decisions, mission evidence, publication history
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current eighty-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- Return to Char (`8f50522`) and The Insurgent have passed the release gate and await publication as separate sentence-only commits. Countdown is the next chronological expansion mission.
+- Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`; the remote tip was verified against local HEAD. Countdown is the next chronological expansion mission.
 
 ### Historical Milestone Context
 
