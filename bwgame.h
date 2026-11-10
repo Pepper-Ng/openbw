@@ -300,6 +300,8 @@ struct state_base_copyable {
 		a_vector<defense_region> regions;
 		struct defender { unit_id unit; size_t region; xy home; };
 		a_vector<defender> defending;
+		struct guard { UnitTypes type; xy home; unit_id unit; };
+		a_vector<guard> guards;
 		a_vector<unit_id> attack_party;
 		a_vector<unit_id> attacking;
 		a_vector<unit_id> transport_passengers;
@@ -19424,13 +19426,34 @@ struct state_functions {
 					}
 				}
 				else if (opcode == 56) ai.campaign = true;
+				else if (opcode == 61) {
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
+					int position = read(1);
+					if (position || script.town) error("unsupported campaign guard position %d in town %d", position, int(script.town));
+					ai.guards.push_back({type->id, ai.home, {}});
+				}
 				else if (opcode == 75) {
 					int amount = read(1);
 					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
 				}
+				else if (opcode == 76) {
+					int amount = read(1);
+					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
+					ai.build_requests[type->id] = {amount, 80};
+					int count = 0;
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || ut_turret(unit) || us_hidden(unit) && !ut_worker(unit) && !ut_building(unit)) continue;
+						if (campaign_ai_type(unit->unit_type->id) == type->id) ++count;
+						for (const auto* queued : unit->build_queue) if (campaign_ai_type(queued->id) == type->id) count += ut_two_units_in_one_egg(queued) ? 2 : 1;
+					}
+					if (count < amount) { script.position = position; script.wait = 15; break; }
+				}
 				else if (opcode == 77) ai.target_expansion = true;
 				else if (opcode == 32) {
 					for (int player = 0; player != 8; ++player) if (player != script.owner) st.alliances.at(script.owner)[player] = 0;
+				}
+				else if (opcode == 33) {
+					for (unit_t* unit : find_units(script.area)) if (unit->owner < 8 && unit->owner != script.owner) st.alliances.at(script.owner)[unit->owner] = 1;
 				}
 				else if (opcode == 87 || opcode == 88) {
 					int player = read(1);
@@ -19813,7 +19836,7 @@ struct state_functions {
 			auto order = unit->order_type->id;
 			if (order == Orders::NukePaint || order == Orders::CastNuclearStrike || order == Orders::NukeUnit || order == Orders::NukeTrack) return true;
 			unit_id id = get_unit_id(unit);
-			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end();
+			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end() || std::any_of(ai.guards.begin(), ai.guards.end(), [&](const auto& guard) { return guard.unit == id; });
 		};
 		progress_campaign_ai_attackers(owner);
 		type_indexed_array<int, UnitTypes> reserves{};
@@ -19843,6 +19866,20 @@ struct state_functions {
 			++reserves[campaign_ai_type(unit->unit_type->id)];
 			return false;
 		}), ai.defending.end());
+		type_indexed_array<int, UnitTypes> guard_requests{};
+		for (auto& guard : ai.guards) {
+			++guard_requests[guard.type];
+			++reserves[guard.type];
+			unit_t* unit = get_unit(guard.unit);
+			if (!unit || unit_dying(unit) || unit->owner != owner) {
+				guard.unit = {};
+				unit = find_nearest_unit(guard.home, map_bounds(), [&](const unit_t* candidate) {
+					return candidate->owner == owner && campaign_ai_type(candidate->unit_type->id) == guard.type && !unit_dying(candidate) && !us_hidden(candidate) && u_completed(candidate) && !unavailable(candidate) && !is_defending(candidate) && (u_flying(candidate) || is_reachable(candidate->sprite->position, guard.home));
+				});
+				if (unit) guard.unit = get_unit_id(unit);
+			}
+			if (unit && worker_idle(unit) && xy_length(unit->sprite->position - guard.home) > 96) issue_order(unit, false, get_order_type(Orders::Move), {guard.home, nullptr});
+		}
 		type_indexed_array<int, UnitTypes> defense_build{};
 		for (const auto& path_region : game_st.regions.regions) {
 			auto& region = ai.regions[path_region.index];
@@ -19954,6 +19991,7 @@ struct state_functions {
 			UnitTypes id = (UnitTypes)type_id;
 			int desired = ai.build_requests[id].first;
 			int priority = ai.build_requests[id].second;
+			if (guard_requests[id]) { desired = std::max(desired, reserves[id] + deployed[id]); priority = std::max(priority, 60); }
 			if (ai.attack_preparing && !ai.attack_launched && ai.attack_requests[id] + reserves[id] + deployed[id] > desired) {
 				desired = ai.attack_requests[id] + reserves[id] + deployed[id];
 				priority = std::max(priority, 80);
@@ -20140,7 +20178,7 @@ struct state_functions {
 	}
 
 	void apply_creation_properties(unit_t* unit, const unit_creation_properties& properties) {
-		if (properties.state_flags & properties.valid_state_flags & 5) error("unsupported cloaked/in-transit creation properties");
+		if (properties.state_flags & properties.valid_state_flags & 4) error("unsupported in-transit creation properties");
 		if (properties.state_flags & properties.valid_state_flags & 2) {
 			if (!ut_can_burrow(unit)) error("burrowed creation requires a burrow-capable unit");
 			set_unit_order(unit, get_order_type(Orders::Burrowing));
@@ -20153,6 +20191,7 @@ struct state_functions {
 		}
 		if (properties.valid_data_flags & 4) set_unit_shield_points(unit, fp8::integer(unit->unit_type->shield_points * properties.shields_percent / 100));
 		if (properties.valid_data_flags & 8) set_unit_energy(unit, unit_max_energy(unit) * properties.energy_percent / 100);
+		if (properties.state_flags & properties.valid_state_flags & 1) set_secondary_order(unit, get_order_type(Orders::Cloak));
 		if (properties.valid_data_flags & 16) set_unit_resources(unit, properties.resources);
 		if (properties.valid_state_flags & properties.state_flags & 8) make_unit_hallucination(unit);
 		if (properties.valid_state_flags & 16) u_set_status_flag(unit, unit_t::status_flag_invincible, ut_invincible(unit) || (properties.state_flags & 16));
@@ -20297,7 +20336,7 @@ struct state_functions {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
 		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 21: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 27: case 32: case 38: case 39: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 51: case 57:
+		case 27: case 32: case 36: case 38: case 39: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20365,6 +20404,10 @@ struct state_functions {
 			return true;
 		case 21: // leaderboard score
 			if (a.extra_n != 7) error("unsupported leaderboard score type %d", a.extra_n);
+			on_trigger_action(owner, a);
+			return true;
+		case 36: // leaderboard goal kills
+			if (a.extra_n >= 228 || a.group2_n < 0) error("unsupported leaderboard kill goal");
 			on_trigger_action(owner, a);
 			return true;
 		case 47:
@@ -20726,6 +20769,7 @@ struct state_functions {
 			return true;
 		case 48: // give units
 		case 49: // modify hit points
+		case 50: // modify energy
 		case 51: // modify shields
 			{
 				const auto& location = st.locations.at(a.location - 1);
@@ -20741,6 +20785,7 @@ struct state_functions {
 				for (unit_t* unit : units) {
 					if (a.type == 48) trigger_give_unit_to(unit, destination);
 					else if (a.type == 49) set_unit_hp(unit, std::max(fp8::integer(1), unit->unit_type->hitpoints * a.group2_n / 100));
+					else if (a.type == 50) set_unit_energy(unit, unit_max_energy(unit) * a.group2_n / 100);
 					else unit->shield_points = fp8::integer(unit->unit_type->shield_points) * a.group2_n / 100;
 					if (!--remaining) break;
 				}

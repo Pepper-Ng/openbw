@@ -3926,6 +3926,162 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void ruins_tarsonis_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 4; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].race == race_t::terran && st.players[6].controller == player_t::controller_occupied && !st.building_counts[6] && st.unit_counts[1][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[1][UnitTypes::Terran_Marine] == 12 && st.unit_counts[7][UnitTypes::Special_Psi_Disrupter] == 1, "Tarsonis retains the original slot-6 revealer-only start, neutral Terran base and Psi Disrupter");
+		if (!scenario) {
+			unit_t* center = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) center = unit;
+			require(center, "the original neutral Command Center supplies a bounded Ally-script fixture");
+			auto alliances = st.alliances;
+			st.alliances[0][1] = 0;
+			st.alliances[0][3] = 0;
+			st.alliances[1][0] = 2;
+			xy position = center->sprite->position;
+			functions.start_campaign_ai_script(0, 0x796c6c41, {position, position + xy(1, 1)});
+			functions.progress_campaign_ai_scripts();
+			require(st.alliances[0][1] == 1 && st.alliances[0][3] == 0 && st.alliances[1][0] == 2, "the original Ally script changes only outgoing relations to owners present in its location");
+			st.alliances = alliances;
+		}
+		auto step = [&]() {
+			for (int owner : {1, 2, 6, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		bool authored_cloak = false;
+		a_vector<unit_id> delivered_wraiths;
+		for (int tick = 0; tick != 3000 && !(st.unit_counts[6][UnitTypes::Hero_Samir_Duran] && st.building_counts[6] && st.trigger_switches[6]); ++tick) {
+			step();
+			for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Terran_Wraith)) {
+				if (unit->secondary_order_type->id == Orders::Cloak && unit->energy == functions.unit_max_energy(unit)) authored_cloak = true;
+			}
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Wraith) && std::find(delivered_wraiths.begin(), delivered_wraiths.end(), functions.get_unit_id(unit)) == delivered_wraiths.end()) delivered_wraiths.push_back(functions.get_unit_id(unit));
+		}
+		require(st.unit_counts[6][UnitTypes::Hero_Samir_Duran] == 1 && st.unit_counts[6][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[6][UnitTypes::Terran_SCV] == 4 && st.unit_counts[6][UnitTypes::Terran_Marine] == 12 && st.unit_counts[6][UnitTypes::Terran_Medic] == 2 && st.unit_counts[6][UnitTypes::Terran_Bunker] == 2 && st.current_minerals[6] == 500 && st.current_gas[6] == 100 && st.trigger_switches[1] && st.trigger_switches[6] && !st.players[6].victory_state, "the original Dropship arrival, base handoff, natural Duran rescue and forty-five-second briefing retain the 500/100 funding and exact force");
+		for (int owner : {0, 3, 4, 5}) require(st.unit_counts[owner][UnitTypes::Zerg_Hive] == 1 && st.campaign_ai[owner].town_active, "each original Zerg owner retains one Hive and its own main script");
+		require(authored_cloak && delivered_wraiths.size() == 4, "the source creates four energy-full cloaked Wraiths without an activation charge and delivers each original actor before its scripted departure");
+		if (!scenario) {
+			a_vector<unit_t*> workers;
+			a_vector<unit_id> original;
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) workers.push_back(unit);
+			for (int owner : {0, 3, 4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, owner == 0 || owner == 5 ? UnitTypes::Zerg_Zergling : UnitTypes::Zerg_Mutalisk) || owner == 4 && functions.unit_is(unit, UnitTypes::Zerg_Queen)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool positioned[4] = {}, produced[4] = {}, fired[4] = {};
+			unit_id first_guard{};
+			bool guard_replaced = false, train_queued = false;
+			for (int tick = 0; tick != 45000 && !(produced[0] && produced[1] && produced[2] && produced[3] && fired[0] && fired[1] && fired[2] && fired[3] && st.unit_counts[4][UnitTypes::Zerg_Queen] && guard_replaced && train_queued); ++tick) {
+				step();
+				if (!st.campaign_ai[0].guards.empty()) {
+					const auto& guard = st.campaign_ai[0].guards.front();
+					unit_t* unit = functions.get_unit(guard.unit);
+					if (unit && !functions.unit_dying(unit)) {
+						if (first_guard == unit_id{}) { first_guard = guard.unit; functions.kill_unit(unit); }
+						else if (!(guard.unit == first_guard) && functions.u_completed(unit)) guard_replaced = true;
+					}
+				}
+				if (st.campaign_ai[4].build_requests[UnitTypes::Zerg_Queen].first == 1 && !st.unit_counts[4][UnitTypes::Zerg_Queen]) {
+					for (const auto& script : st.campaign_ai_scripts) if (script.owner == 4 && script.wait > 15) train_queued = true;
+				}
+				for (int index = 0; index != 4; ++index) {
+					int owner = index ? index + 2 : 0;
+					if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+						unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+						if (attacker) {
+							functions.unit_finder_remove(workers[index]);
+							functions.move_unit(workers[index], attacker->sprite->position + xy(64, 0));
+							auto placement = functions.find_unit_placement(workers[index], workers[index]->sprite->position, true);
+							require(placement.first, "each source-timed Zerg wave has a legal protected original SCV target");
+							functions.move_unit(workers[index], placement.second);
+							functions.refresh_unit_position(workers[index]);
+							positioned[index] = true;
+						}
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, owner == 0 || owner == 5 ? UnitTypes::Zerg_Zergling : UnitTypes::Zerg_Mutalisk) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[index] = true;
+						if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && produced[2] && produced[3] && fired[0] && fired[1] && fired[2] && fired[3] && st.unit_counts[4][UnitTypes::Zerg_Queen] && st.campaign_ai[0].guards.size() == 1 && guard_replaced && train_queued, "all four original Zerg programs produce replacements and fire weapons, replace their Defiler guard and advance train when the Queen is queued rather than completed");
+		} else if (scenario <= 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[6])) if (scenario == 1 ? functions.ut_building(unit) : functions.unit_is(unit, UnitTypes::Hero_Samir_Duran)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1200 && !st.players[6].victory_state; ++tick) step();
+			require(st.players[6].victory_state == 2, "loss of the acquired base or original rescued Duran reaches its independent source defeat");
+		} else {
+			unit_t* duran = nullptr;
+			unit_t* marine = nullptr;
+			for (unit_t* unit : ptr(st.player_units[6])) {
+				if (functions.unit_is(unit, UnitTypes::Hero_Samir_Duran)) duran = unit;
+				if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) marine = unit;
+			}
+			require(duran && marine, "the original Duran and a visible original Marine remain available");
+			auto relocate = [&](unit_t* unit, xy position) {
+				functions.unit_finder_remove(unit);
+				functions.move_unit(unit, position);
+				auto placement = functions.find_unit_placement(unit, unit->sprite->position, true);
+				require(placement.first, "the outcome fixture uses native legal placement");
+				functions.move_unit(unit, placement.second);
+				functions.refresh_unit_position(unit);
+				functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			};
+			const auto& beacon = st.locations.at(4).area;
+			xy goal = (beacon.from + beacon.to) / 2;
+			relocate(duran, goal);
+			for (int tick = 0; tick != 256; ++tick) step();
+			require(!st.trigger_switches[5] && !st.players[6].victory_state, "Duran cannot complete the Psi Disrupter objective while an original Hive survives");
+			relocate(duran, xy(1360, 320));
+			int killed = 0;
+			for (int owner : {0, 3, 4, 5}) {
+				int reciprocal = st.alliances[6][owner];
+				unit_t* hive = nullptr;
+				for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Zerg_Hive)) hive = unit;
+				require(hive, "each separate original Hive remains available in sequence");
+				relocate(marine, hive->sprite->position + xy(128, 0));
+				functions.set_unit_hp(hive, fp8::integer(1));
+				functions.issue_order(marine, false, marine->unit_type->attack_unit, {hive->sprite->position, hive});
+				for (int tick = 0; tick != 1200 && st.killed_unit_counts[6][UnitTypes::Zerg_Hive] == killed; ++tick) step();
+				++killed;
+				require(st.killed_unit_counts[6][UnitTypes::Zerg_Hive] == killed && !st.players[6].victory_state, "an original Marine weapon kill advances the native Hive kill count without bypassing Duran's arrival");
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(st.alliances[owner][6] == 1 && st.alliances[6][owner] == reciprocal, "the defeated Zerg owner's original Ally program changes only its outgoing human relation");
+			}
+			relocate(marine, goal);
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.trigger_switches[5] && !st.players[6].victory_state, "a Marine at the beacon cannot replace Duran after all four Hives are gone");
+			relocate(duran, goal);
+			bool cloaked = false, decloaked = false;
+			for (int tick = 0; tick != 2400 && !st.players[6].victory_state; ++tick) {
+				step();
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Ghost)) {
+					cloaked = cloaked || functions.u_cloaked(unit) || functions.u_requires_detector(unit);
+					decloaked = decloaked || unit->energy < fp8::integer(5) && !functions.u_cloaked(unit) && !functions.u_requires_detector(unit);
+				}
+			}
+			printf("Tarsonis ending: switch=%d ghosts=%d cloaked=%d decloaked=%d outcome=%d\n", st.trigger_switches[5], st.unit_counts[1][UnitTypes::Terran_Ghost], cloaked, decloaked, st.players[6].victory_state);
+			fflush(stdout);
+			require(st.trigger_switches[5] && st.unit_counts[1][UnitTypes::Terran_Ghost] == 5 && cloaked && decloaked && st.players[6].victory_state >= 3, "the four Hive kills and original Duran run the authored cloaked-Ghost arrival, energy-draining reveal and victory");
+		}
+		printf("Ruins of Tarsonis original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void dylarian_shipyards_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -4869,6 +5025,7 @@ int main(int argc, char** argv) {
 	bool countdown = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss08");
 	bool ued_first_strike = campaign && argc > 4 && !strcmp(argv[4], "bwterran01");
 	bool dylarian = campaign && argc > 4 && !strcmp(argv[4], "bwterran02");
+	bool ruins_tarsonis = campaign && argc > 4 && !strcmp(argv[4], "bwterran03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4921,6 +5078,10 @@ int main(int argc, char** argv) {
 		}
 		if (dylarian) {
 			dylarian_shipyards_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (ruins_tarsonis) {
+			ruins_tarsonis_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

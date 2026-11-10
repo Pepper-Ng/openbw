@@ -337,6 +337,8 @@ struct play_ui : ui_functions {
 	int mission_objective_string = 0;
 	int mission_leaderboard_unit = -1;
 	int mission_leaderboard_score = -1;
+	int mission_leaderboard_goal = 0;
+	bool mission_leaderboard_kills = false;
 	int mission_leaderboard_title = 0;
 	bool mission_leaderboard_computers = true;
 	struct mission_event {
@@ -411,14 +413,18 @@ struct play_ui : ui_functions {
 	void on_trigger_action(int owner, const trigger::action& action) override {
 		if (!mission_mode || owner != my_player) return;
 		if (action.type == 12) mission_objective_string = action.string_index;
-		if (action.type == 17) {
+		if (action.type == 17 || action.type == 36) {
 			mission_leaderboard_unit = action.extra_n;
 			mission_leaderboard_score = -1;
+			mission_leaderboard_goal = action.type == 36 ? action.group2_n : 0;
+			mission_leaderboard_kills = action.type == 36;
 			mission_leaderboard_title = action.string_index;
 		}
 		if (action.type == 21) {
 			mission_leaderboard_unit = -1;
 			mission_leaderboard_score = action.extra_n;
+			mission_leaderboard_goal = 0;
+			mission_leaderboard_kills = false;
 			mission_leaderboard_title = action.string_index;
 		}
 		if (action.type == 30) mission_speech_muted = true;
