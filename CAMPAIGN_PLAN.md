@@ -7,7 +7,7 @@ This document records coverage, decisions, mission evidence, publication history
 - Status updated: 2026-11-10.
 - All thirty original numbered StarCraft missions and the first five Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras, Legacy of the Xel'Naga, Quest for Uraj and The Battle of Braxis.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
-- The expansion framework and first three mission milestones remain on `campaign` at `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj and The Battle of Braxis are separate commits without co-author trailers; their push to `campaign` is pending after the completed release gate.
+- The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
 - The primary follow-up is the explicit validation backlog below; Return to Char is the next chronological expansion mission.
