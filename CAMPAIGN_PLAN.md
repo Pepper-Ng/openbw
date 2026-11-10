@@ -1,6 +1,18 @@
-# Campaign Prototype: Findings And Implementation Plan
+# Campaign Implementation And Validation Plan
 
 ## Status And Scope
+
+- Handoff updated: 2026-11-10. Continue from this document and the current Git state, rather than restoring the full implementation conversation.
+- All thirty original numbered StarCraft missions are implemented in the catalogue: ten Terran, ten Zerg and ten Protoss. Brood War campaigns are outside this milestone.
+- Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
+- Publication bundle: Shadow Hunters is signed commit `8b494c1954225ace41bf7c44b66ad63ff8538e24`; Eye of the Storm is signed commit `ca62d2954a6c90452d1b484502400b819890bc83`. The user authorized publication of both with this separate handoff commit on 2026-11-10. Confirm the live `campaign` ref matches the local tip; Git publication and website rollout are separate checks.
+- The final recorded gate passed all sixty-six modes: thirty native missions, thirty browser deterministic recoveries, shared AI/combat, menu, commands, Protoss selection, network and lobby. All thirty original pack identities were rechecked unchanged. These are recorded checks, not permission to skip validation after a new engine change.
+- Work stays on `campaign`. Keep `sandbox` experiments separate, preserve uncommitted user changes, and publish source/plan text rather than proprietary assets or generated evidence.
+- The primary follow-up is the explicit validation backlog below, not reimplementation of the thirty missions. Reuse existing extraction, simulation, UI, replay and test paths.
+
+### Historical Milestone Context
+
+The following dated notes describe the prototype's progression. The current handoff above supersedes their earlier coverage and publication statements.
 
 - Research date: 2026-11-04.
 - Branch: `campaign`, based on `dev` at `9958fa5034ceb9f6ab1d05c9d240e031020732cb`.
@@ -28,11 +40,137 @@ No blocking product questions are needed to follow this plan. The defaults are E
 
 The campaign's game logic must remain authoritative. Do not mark the mission playable merely because terrain renders, replace scripted behavior with a melee bot, remove unsupported triggers, or grant Raynor directly to the player to bypass rescue support.
 
+## Start Here: Agent Handoff
+
+Read the current status, this workflow and the validation backlog first. Then read only the relevant mission evidence and owning code. The older P0-P7 roadmap and baseline hazards are historical records, not unfinished instructions to rebuild the campaign runtime.
+
+### Working Surfaces And Toolchain
+
+| Surface | Reuse it for |
+| --- | --- |
+| [web/campaign_pack.cpp](web/campaign_pack.cpp) | Bounded original archive extraction, original CHK/audio packing and native round-trip checks. |
+| [web/prepare-campaign.mjs](web/prepare-campaign.mjs) | Verified profiles, `campaignMissions`, `campaignSource`, `scenarioSections`, `scenarioStrings`, `auditScenario`, `auditAiScript` and `readPlainMissionPack`. |
+| [bwgame.h](bwgame.h) | UMS loading, native unit/order rules, trigger execution and original AI-program interpretation. |
+| [actions.h](actions.h) | Normal paid player commands; use these in native fixtures rather than directly granting production results. |
+| [web/wasm_sim_test.cpp](web/wasm_sim_test.cpp) and [web/run-sim.mjs](web/run-sim.mjs) | Fresh original-map cases, source outcomes, native AI/combat and shared-engine regressions. |
+| [web/run-wasm-node.mjs](web/run-wasm-node.mjs) | Real browser-engine initialization, command-card/input packets, audio dependencies and deterministic save reconstruction. |
+| [web/openbw.js](web/openbw.js), [web/index.html](web/index.html) and [web/campaign-saves.js](web/campaign-saves.js) | Chronological catalogue, strict victory gating, presentation and supported save IDs. |
+
+Run commands from the repository root. The verified Windows setup uses Node, PowerShell and WASI SDK 33 at `%LOCALAPPDATA%\OpenBW\tools\wasi-sdk-33.0-x86_64-windows`. [web/build-wasm.ps1](web/build-wasm.ps1) accepts `-WasiSdk` or `WASI_SDK` overrides. Reuse it; WSL, SDL, BWAPI bots and a new build system are unnecessary for the base browser engine.
+
+```powershell
+$mission = 'protoss10'
+& .\web\build-wasm.ps1 -CampaignPack
+node web/prepare-campaign.mjs --test
+node web/prepare-campaign.mjs $mission
+node web/prepare-campaign.mjs --audit-ai $mission
+& .\web\build-wasm.ps1 -SimulationTest
+node web/run-sim.mjs --test-campaign $mission
+& .\web\build-wasm.ps1
+node web/run-wasm-node.mjs --test-campaign-save $mission
+node web/run-wasm-node.mjs --test-campaign-menu
+```
+
+Rebuild only affected binaries: the packer after extractor/decoder changes, `sim.wasm` after native tests or engine changes, and `openbw.wasm` after engine/UI changes. A passing test against an old binary is not validation of the edit. The known build warnings are three existing nontrivial `memcpy` warnings, plus two existing C++17-extension warnings in the browser build; distinguish them from new failures.
+
+### Mission Implementation Sequence
+
+1. Establish the baseline. Check branch, HEAD, index, working-tree changes and live refs. Preserve user edits and existing signed commits. Reuse owned ignored archives; verify their configured size/hash and read executable-style MPQ wrappers as data only.
+2. Audit the source before enabling a mission. Reuse the production packer and bounded CHK/AI readers. For an unregistered mission, use the existing packer through Node WASI with `/input` and `/output` preopens, then inspect the resulting plain pack with the exported readers. Record CHK version/hash, OWNR/SIDE/FORC, UNIT/THG2, locations/elevation masks, UPRP, availability/research, TRIG/MBRF and referenced audio. Keep detailed generated audits under ignored data.
+3. Preserve the catalogue-to-source mapping. Public `terran07`, `terran08`, `terran09` and `terran10` map to archive `terran08`, `terran09`, `terran11` and `terran12`. The unused archive prototypes `terran07` and `terran10` are not shipping mission aliases. Compare an extractor allowlist edit with HEAD: retain every existing entry and add only the intended source ID. Preserve legacy map-name strings; put canonical titles in profiles/menu metadata.
+4. Derive a concrete behavioral contract. List exact original start actors/owners, resource grants, research and activation gates, each victory/loss predicate, reinforcement totals, waits and cutscene actors. Decode reachable AI branches/threads and operands. Distinguish trigger milliseconds, AI frame waits and game seconds. Story wording, numeric IDs and familiar mission names are not substitutes for source evidence.
+5. Add a small readiness check. Load the original pack through the existing UMS path with strict required-operation handling. Verify actual human slot/race, natural rescue, starts, funding, source scripts and no premature outcome. A fatal required order/opcode is a blocker; fix the owning shared code rather than skipping a trigger or rewriting the map.
+6. Make one local, falsifiable change at a time. Reproduce the failing contract, edit the existing owner and immediately rerun the focused check. Reuse native placement, pathing, commands, production, projectiles and ownership APIs. After a failure, inspect actual controller, generation-safe IDs, order/target, position, visibility, reachability, script address/wait and counts before enlarging a deadline or changing game rules.
+7. Extend focused coverage to meaningful branches. Use fresh-map cases for independent failures and missing victory requirements. Observe actual original-timed weapon fire and required production, not only queued orders or AI-party membership. Keep complete source countdowns where expiry is the contract. Protection, boss weakening, relocations and forced switches belong only to explicitly isolated native fixtures.
+8. Integrate every existing catalogue/save/test surface together. Append IDs, preserve strict prerequisite victories and published progress codes, and update menu totals, profile/packer support, save validation and both runners. Reuse existing controls; heroes use native unit-family/technology eligibility, not copied ordinary-unit filters. Check scripted and post-rescue availability rather than granting research to satisfy a test.
+9. Verify normal recorded input and one isolated GUI workflow. Pay source costs, retain original actor identities and replay to matching frame/checksum/state. Save during a meaningful in-flight state such as morphing, training, cargo or scripted pause. Keep debug gameplay mutations out of replay history. Close private browser contexts in `finally`; never reset normal user progress or navigate unshared pages. Use extra viewport/device checks when UI risk warrants them, not as a routine distraction.
+10. Finish the evidence and publication gate. Record original hashes, exercised behavior, fixture overrides, inferred compatibility rules and remaining comparison work. Run checks proportional to blast radius, then review exact source-only scope. Make separately signed milestones when requested. A commit, push and deployed application are different states; verify each state actually claimed.
+
+For Brood War or other new campaigns, first obtain authorization and audit the appropriate archive path, CHK version, AI binary and availability rules. Original format-59 restrictions and the thirty original profiles do not establish expansion support. Extend the existing reader/runtime at demonstrated boundaries rather than removing its validation guards.
+
+### Evidence And Test Boundaries
+
+- Treat protected native outcomes, original-timed AI observations, normal-input recovery, GUI smoke tests, full human victories and classic comparisons as separate evidence levels. State which passed.
+- Keep targets attackable when measuring enemy fire. Invulnerability can make a correct AI reject the target; a bounded test-only matrix/HP refresh can isolate the attack. Sample turret subunits for tanks/Goliaths and actual launched Scarabs/Interceptors for fighter-based weapons.
+- A failed unprotected automated rush can be a valid combat loss. Check the surviving actors before declaring a rescue or pathing defect. Protoss 4's failed eight-unit rush is not a reproducer for broken rescue.
+- Record exact observed deadlines separately from chosen test headroom. Source waits, native build times and path length justify a bound; a larger arbitrary timeout cannot repair a wrong owner, missing research, disconnected route or dead actor.
+- Recheck original hashes after a shared decoder change and affected earlier missions after a shared engine change. For broad native changes, use `campaignMissions` to run every native mission and every browser recovery, plus the six shared modes. The current total is 66; derive it from the catalogue rather than freezing that count in a new runner.
+- Shared gates are `--test-ai-combat` in `run-sim.mjs`, and `--test-campaign-menu`, `--test-commands`, `--test-protoss-selection`, `--test-network` and `--test-lobby` in `run-wasm-node.mjs`. Preparation/downloader safety checks remain in the existing preparation scripts. A documentation-only change does not require rerunning the whole game suite.
+
+### Known Debugging Shortcuts
+
+| Symptom or trap | Check or existing resolution |
+| --- | --- |
+| Wrong mission or force runs AI | Read OWNR/SIDE/FORC and normalize only at the loader boundary. A location's color/name is not an owner mapping. Protoss 5 and Zerg 10 exposed wrong fixture assumptions here. |
+| Source force includes a rescue/neutral owner | Keep its eligible triggers, but stop computer-only town programs for non-computer owners. Runtime computer controllers are `controller_computer_game`, not the pregame `controller_computer` value. Never assign town AI to the human to satisfy a force-wide action. |
+| Apparently missing objective object | Inspect all twelve UNIT ownership slots and existing neutral actors first. Egression has one original owner-11 Chrysalis; do not restore the removed duplicate-object fallback. |
+| Hallucination exists but Command count is zero | Inspect the live actor/handle as well as counters. Original Zerg 6 deliberately creates a hallucinated Tassadar. Preserve the source ending and compare classic before inventing a required kill. |
+| Empty Carrier/Reaver will not attack | Build a paid Interceptor/Scarab through native commands and observe its actual launch. Preserve original zero hangar contents and the mission's ammunition tip. |
+| Cinematic actors silently absent | Explicit Create Unit owner slots may be unused. Honor the explicit owner without activating its controller, AI or group-trigger membership. Protoss 8 tests this distinction. |
+| Triggered starting buildings missing in fog | Reuse the corrected scripted-creation path with bounds/grid/completed-placement checks. Normal worker construction has different exploration/prerequisite checks; do not reapply those to source setup. Protoss 10 covers the mixed-race setup. |
+| `Suic` flag set but placed troops never launch | Reuse standalone computer assault processing after the short script stops. It must not depend on a town, activate economy or grant troops/resources. Protoss 6 covers launch, continuation and dead-handle cleanup. |
+| Timed field creates actors unexpectedly | Decode action type and fields. Create With Properties' property index is not its quantity; legacy quantity zero means one in the documented format-59 compatibility rule. Protoss 6's field creates reinforcements, not a player teleport. |
+| Dialogue seems to freeze or needs protection | Action 30 mutes unit speech; action 5 pauses gameplay. Service ticks continue through scripted waits even when world frames stop. Zerg 10's Daggoth sequence is unpaused; its final ending is paused. |
+| Final-region approach or landing never works | Check terrain footprint, native ground-region reachability and elevation masks. A rectangle center may be unwalkable or across a wall. Select a legal same-region fixture approach, then use normal movement/unload; do not change production physics to fit bad coordinates. |
+| Ground wave cannot reach a base | Prove reachability before demanding cross-water walking. Test actual native transport separately; a relocated target proves local combat, not enemy drop coordination. Protoss 5 retains this open limitation. |
+| Spatial mutation crashes | Collect matching units before kill/hide/remove/teleport operations that change the active finder. Preserve quantities, failed placements and movement/path reset. |
+| A killed actor seems unchanged or replaced | Death is staged and storage is reused. Wait for the relevant state transition and compare generation-safe IDs, not stale pointers or immediate completed counters. |
+| No legal building site in a UI test | Select the actual worker before `openbw_debug_build_check`; it reads the primary selection. Its permission/footprint flags and race-specific placement must not be guessed from the global player race. |
+| Correct input produces no observed action | Render/consume selection and command-card changes before the next dependent input. Inspect synchronized command bytes and apply with the manifest's human slot. Do not infer the command from a DAT order field alone. |
+| Replay checksum differs only by sign | Normalize the WASM i32 result with `>>> 0` before comparing unsigned saved metadata. Keep unrecorded debug HP/resources out of the replay fixture. |
+
+### Tool And Browser Pitfalls
+
+- Reuse the existing Node WASI harness and structured parsers. Emit compact audit summaries; large terminal output can be truncated even in its saved wrapper. Keep the full generated JSON ignored and reread only targeted fields.
+- In this Windows terminal integration, quoted inline JavaScript containing `&&` or `||` has been rewritten as shell separators. Prefer an existing script, explicit conditionals or `??`. Keep terminal executions sequential; persistent cwd and typed PowerShell variables survive between calls.
+- Native `unit_id` wrappers need supported operations such as `.raw_value`; intrusive lists use `range_size` rather than the deleted `.size()`. Qualify `data_loading::value_at`/`set_value_at`. The custom `error` formatter and standard `printf` have different format support.
+- Wait for real native transitions: cloak fades over multiple frames, new actors may precede next-frame AI orders, and a switch can be set before the next owner starts its program. Probe actual state instead of inserting sleeps or advancing only a guessed number of renders.
+- Use synchronous browser wait predicates with explicit polling, commonly `{ polling: 100 }`. Do not freeze `requestAnimationFrame` to cap simulation; that can also freeze the automation waiter while simulation uses its own timer.
+- Convert world coordinates with the current camera and actual canvas scaling. Camera-only reframing is acceptable; gameplay teleports are not normal-input proof. Check actual framebuffer/viewport sizes after debounced resize or screenshot capture, not just the requested context size.
+- A nonblank video is not proof of audio decoding. Check actual PCM/decoded audio and human audibility where required; preserve mission audio/briefing variations instead of inventing idle transmissions.
+- Use short fresh agent sessions and a concise Git/document handoff. Large restored chat/editing histories can destabilize the editor. After interruption inspect commits, staged/working blobs, live refs and completed test records before repeating work. Never delete user history, restart windows or kill unrelated jobs as an automatic repair.
+
+### Publication Handoff
+
+Confirm repository-local personal author/committer and SSH signing settings; preserve the user's global/business identity. Stage only intended text files. Verify signature, parent links and working-tree blobs against committed HEAD before claiming the requested edits are committed. After push, compare live `campaign` with HEAD and confirm `sandbox` is unchanged. Remove only the task-created temporary public signer whitelist and verify its absence; private keys and permanent trust stay unchanged.
+
+The authorized publication contains the two signed mission commits above and a separate handoff-plan commit. A fresh agent must inspect the worktree and live refs, preserve any later edits and avoid recreating mission 9 or 10 commits. Once publication is verified, continue from the validation backlog. Live deployment remains a separate approved verification task: verify the actual image/revision, prepared manifests/packs and browser startup rather than inferring rollout from Git success.
+
+## Validation Backlog
+
+These are explicit follow-up gates, not a claim that the original source maps are wrong. Choose one bounded reproducer or comparison at a time. Keep the source hashes unchanged and record the classic version, mission, route/input, game time and observed result.
+
+| Priority and status | Area | Next useful validation |
+| --- | --- | --- |
+| First, known partial behavior | Zerg 8, Eye for an Eye | Compare original Observer `AIPatrol` movement/strategic role with classic. Current compatibility preserves detection, permanent cloak, follow targets and queued movement; it does not reproduce the strategic planner. Do not invent a patrol route as a fix. |
+| First, source-backed but counterintuitive | Zerg 6, The Dark Templar | Compare Kerrigan's alone-arrival challenge and hallucinated Tassadar ending with classic, including arrival without attacking. Current source/counter behavior reaches the ending without a new kill objective. Establish a trace before changing that contract. |
+| First, end-to-end acceptance | Thirty-mission normal-control playthrough | Record a matrix of real victories, defeats, retries and recovery separately from fixtures. Terran 10 has not been fully human-playtested on either classic PC or this implementation. Do not infer acceptance of all Terran missions from earlier wording. |
+| First, uncompleted route | Protoss 4, The Hunt for Tassadar | Complete the original rescue and paired-hero return through normal controls; the unprotected automated rush died. Native protected rescue/ending checks already pass. Compare before tuning encounter strength. |
+| Next, unverified transport strategy | Protoss 5 and shared island AI | Compare enemy Overlord-drop coordination and landing/assault behavior. Current air fire and same-landmass ground fire tests do not prove cross-water troop delivery. Also compare Revolution's bounded Dropship policies. |
+| Next, AI reference comparison | Zerg 9 and shared regional AI | Compare `value_area` lifecycle/ranking, defense assignment, grouping, scouting, guard replacement, town/area placement and spending cadence with classic. Existing source-contract tests are not bit-exact strategic-AI proof. |
+| Next, combat policy comparison | Shared computer abilities and heavy units | Compare the documented Stim health guard, cloak reserve/hysteresis, reactive scan timing, Siege transitions, nuclear cadence/targeting, and Carrier/Reaver ammunition resupply/micro. Verify actual paid enemy ammunition/weapon behavior rather than granting full hangars. |
+| Next, earlier user observation | Backwater Station and Desperate Alliance | Compare defender assistance, pursuit/acquisition, authored burrowed actors, surfacing and attack compositions/times. Separate placed UNIT burrow flags from supported trigger-created UPRP burrow properties; recheck current loader support before claiming either. Do not inflate waves/ranges from an easier-AI impression. |
+| Next, source-driven state recovery | Crystal/powerup and Cerebrate missions | Compare normal pickup/drop/recovery/transport in Egression, Zerg 9/10 and Shadow Hunters. Egression's duplicate startup object is fixed, not an open workaround. Shadow Hunters uses source Zeratul ground-presence and restoration triggers; do not replace them with a generic last-hit engine rule. |
+| Next, reference comparison | Indoor and staged mission flow | Compare original door/security ordering, trap detection/facing, teleport placement, paused continuations and cutscene camera/actors. Automated original-trigger cases cover these contracts but not every human route or overlapping wait interaction. |
+| Next, bounded compatibility inference | Legacy creation/doodad encodings | Compare the documented format-59 zero-value quantity/disable handling with classic. Keep the current narrow policies and original bytes; successful mission fixtures do not establish a general zero-means-All rule. |
+| Release gate, separate evidence | Device/input/audio/save performance | Test real iPhone Safari/Home Screen and Android, touch placement/repair/selection, browser audio/autoplay and longer journals near supported bounds. Viewport emulation is not physical-device acceptance; old engine-hash journals may be incompatible while progress codes remain valid. |
+| Deferred feature | Cinematics and animated portraits | Follow the existing cinematic conversion/delivery findings. Verify original movie order, aspect and actual audio; publish no prototype media or executable tooling. Brood War campaigns require their own authorized audit. |
+| Publication/integration gate | Source refs and live deployment | Confirm the authorized final-mission/handoff bundle from live Git refs, then independently verify any approved deployed revision, all thirty manifest/pack hashes and selected live startup. A matching remote commit does not establish a deployed image or published assets. |
+
+### Resolved Findings To Preserve
+
+- Egression's neutral-owner-11 Young Chrysalis is present in the original UNIT data. The old missing-object inference and extra startup spawn were removed. Preserve the single object and native pickup ownership/drop rules.
+- Original cloaked Ghost/Sarah Kerrigan idle and Attack-move acquisition is silent; Hold Position and explicit Attack fire. Wraith idle/Hold fire. This was corrected against the owned 1.16.1 binary and GPTP; a contradictory port and its earlier tests were wrong. Infested Kerrigan's Personal Cloaking eligibility does not make her a Ghost/nuclear caster, and there is no separate Hold Fire command.
+- Original projectile uphill checks use an inclusive raw-119 comparison: 120/256 misses and 136/256 hits on the verified paths. Raw zero still gives a 1/256 projectile miss; splash can damage after that miss. Preserve these original quirks rather than changing them to fit an older guide's 70-percent claim. This check is not universal proof of every weapon path.
+- Original format-59 missions exclude DAT-flagged Brood War production/upgrades and expansion technologies while preserving authored base-game restrictions and valid hero abilities. Medic/Valkyrie leakage was not the whole problem; keep the general all-race/player guard.
+- Original Nydus relations use reciprocal placement IDs, not coordinate guesses. Zerg 7's saturated creep-recession queue uses deferred retry and safe dead-provider retention. These are covered shared fixes, not reasons to edit source maps or increase arbitrary pools.
+- Standalone `Suic`, explicit unused-owner cinematic creation, and triggered buildings outside explored terrain now have demonstrated regressions and scoped shared fixes. Preserve their separation from town economy, active-player groups and normal worker construction.
+
 ## Decision Summary
 
 Build a reusable Use Map Settings mission runtime, not a separate implementation for each mission. The scenario supplies units, player settings, conditions, actions, objectives, and dialogue references. The runtime interprets those inputs and reports presentation events to the browser.
 
-Start with Wasteland because its inspected trigger stream has no explicit campaign-AI script action. Implement and verify the semantics it actually uses, then add the additional capabilities exercised by the next two missions. Do not silently skip required actions or claim general campaign compatibility.
+The thirty original entries now share this runtime. For a newly authorized campaign or a demonstrated compatibility gap, implement and verify the audited semantics it requires. Preserve required-operation failures and label unsupported behavior rather than silently skipping it.
 
 Use the existing C++ simulation and MPQ decoder, JavaScript host, and headless WebAssembly runner. Reuse existing ownership boundaries before creating new services or abstractions.
 
@@ -219,9 +357,9 @@ Before a mission runs, verify all required dependencies and supported operations
 - A local archive-import alternative can avoid network downloads for owners. A future browser importer should use bounded file slices, not require a multi-gigabyte whole-file memory allocation on iPhone.
 - Serving extracted packs publicly requires authorization. If relying on original remote archives instead, demonstrate byte-range requests, `206` responses, correct content ranges, and CORS on that exact source first. Do not silently fall back to downloading a full archive when a range request is ignored.
 
-## Existing Code And Compatibility Gaps
+## Historical Starting Baseline
 
-The table and numbered hazards in this section describe the research baseline. Current implementation results are recorded under Implementation Evidence below.
+The table, numbered hazards and design proposals in this section describe the original research baseline, not the current runtime. Their campaign blockers were addressed during implementation. Use the current handoff/backlog for next work and the mission evidence for demonstrated results.
 
 | Area           | Existing Behavior                                                                            | Campaign Requirement                                                                                                 |
 | -------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -241,9 +379,9 @@ The table and numbered hazards in this section describe the research baseline. C
 
 The simulation already contains an in-memory deep state-copy helper. This is not a browser save-game file format and does not establish reliable mid-mission save/load support.
 
-### Specific Baseline Hazards
+### Historical Baseline Hazards
 
-These are source-audit findings to turn into failing tests, not changes made by this document:
+These are retained initial source-audit findings. They explain the original tests and fixes; they are not ten current defects to rediscover:
 
 1. `game_load_functions::load_map` initializes `use_map_settings` to false, runs earlier mode-dependent player handling, and assigns the final mode later. Audit/reorder this so fixed SIDE races and mission controllers are not processed as melee first. Preserve existing callback/replay behavior under regression tests.
 2. Rescue-passive initialization calls `error("fixme rescue passive")`; both visible and hidden RescuePassive dispatch branches also error. Do not work around this by deleting Raynor or changing his owner at load time.
@@ -256,7 +394,7 @@ These are source-audit findings to turn into failing tests, not changes made by 
 9. Set Resources has two `num_n == 8` branches; the subtraction branch should be checked against raw modifier 9 and underflow behavior.
 10. Solo outcomes are currently ignored, and melee elimination heuristics do not represent mission objectives. Campaign outcome handling must use the actual mission trigger result.
 
-### Clock And Event Decisions
+### Historical Clock And Event Design
 
 Use deterministic logical time, not render frames or real audio playback completion. Keep world advancement, campaign trigger/wait progress, briefing progression, and manual user pause distinguishable.
 
@@ -270,7 +408,9 @@ For UI effects, extend the existing state-functions callback boundary with a sma
 
 Use a new queue only for the actual native-to-browser presentation need. Do not create a parallel worker/model/service layer around the existing simulation.
 
-## Research Status And Remaining Gates
+## Initial Research Checkpoint
+
+This checkpoint records the first-mission research. Current technical follow-up is listed in the validation backlog near the front.
 
 - [x] Verify local archive identities, mission paths, referenced sound availability, and scenario hashes.
 - [x] Identify the first three missions' operation sets and AI-script dependencies.
@@ -282,7 +422,7 @@ Use a new queue only for the actual native-to-browser presentation need. Do not 
 - [x] Verify Move Location direction and extent preservation with an authored native fixture. General custom-map compatibility remains outside this milestone.
 - [ ] Resolve public asset-delivery authorization/range support before a public campaign release; local packs do not require resolving public hosting first.
 
-The remaining technical gates have concrete owners and tests below. They are not product questions that need to block this document or require the user to explain implementation details.
+The following implementation evidence records the subsequent fixes and per-mission checks. Earlier menu totals and publication intentions belong to their checkpoint, not the current handoff.
 
 ### Implementation Evidence: Asset Preparation
 
@@ -489,7 +629,7 @@ node web/run-wasm-node.mjs --test-campaign terran05
 node web/run-wasm-node.mjs --test-commands
 ```
 
-## Reusable Implementation Lessons
+## Mission And Shared-Feature Evidence
 
 ### Norad II Evidence
 
@@ -917,8 +1057,8 @@ The campaign menu displays a six-character hexadecimal progress code and accepts
 
 - An imported code must be ahead of the current consecutive prefix. Valid forward imports mark the preceding known missions won, preserve all existing later victory flags and select the next available uncleared mission. Equal, older and invalid codes do not replace local progress. Existing later wins can extend the resulting prefix beyond the imported count when its gaps are filled.
 - Format version 1 hashes the fixed domain `OpenBW campaign progress v1:<count>` with the existing cyrb53 helper and uses its final six hex digits. Decoding deterministically checks the seventy-one supported counts. All codes are unique in that range, and fixed test vectors protect compatibility. Codes are case-insensitive and accept surrounding whitespace. This is a compact, non-obvious progress representation with typo rejection, not encryption, authentication or achievement verification.
-- The canonical ordering begins with the existing ten `campaignMissionIds`; future missions must extend that order rather than reorder it. An optional `importedPrefix` in the existing version-2 store retains progress beyond the currently implemented catalogue. Later catalogue entries inherit the imported prefix. A counter contradicting an explicitly false local flag is rejected. Ordinary victory writes preserve the imported prefix, and confirmed progress reset clears it.
-- Copy and Apply controls are separate from local save recovery and multiplayer game codes. Debug mode hides the controls, refuses imports and does not migrate or write normal progress. Failed storage writes preserve the prior record. The original ten Terran missions and first Zerg mission are playable; the portable format's remaining capacity does not implement other missions. Existing code vectors remain unchanged when `zerg01` is appended.
+- The canonical ordering is the existing thirty `campaignMissionIds`; future missions must extend that order rather than reorder it. An optional `importedPrefix` in the existing version-2 store retains progress beyond the currently implemented catalogue. Later catalogue entries inherit the imported prefix. A counter contradicting an explicitly false local flag is rejected. Ordinary victory writes preserve the imported prefix, and confirmed progress reset clears it.
+- Copy and Apply controls are separate from local save recovery and multiplayer game codes. Debug mode hides the controls, refuses imports and does not migrate or write normal progress. Failed storage writes preserve the prior record. All thirty original numbered missions are implemented; the portable format's remaining capacity does not implement Brood War. Existing code vectors remain unchanged as the catalogue grows.
 - The existing `--test-campaign-menu` checks all seventy-one round trips, unique six-hex codes, golden vectors, forward-only merging, later-win preservation, future catalogue expansion, storage failures and debug isolation. Two isolated browser contexts transfer three clears into a profile with later wins, producing four consecutive clears while preserving mission 9's locked win. The selected mission advances to mission 5. Browser checks also cover future-count persistence after reload, copy invocation, reset, invalid/older rejection and debug read-only behavior. Desktop and 390 x 640 controls fit without horizontal overflow; user storage was not modified.
 
 ### Short-Code Multiplayer
@@ -974,6 +1114,8 @@ Future implementation direction:
 
 ### Private Container Campaign Delivery
 
+This delivery checkpoint was recorded with eleven missions. Verify current thirty-mission output and the deployed revision independently; the historical counts below are not evidence of the final catalogue's live rollout.
+
 The container now builds the existing native campaign preparation module and runs verified preparation before starting Nginx. A named `campaign-data` volume holds the private owned source under `/opt/openbw/web/data`, outside the HTTP document root. The first deployment downloads the same pinned 601,389,682-byte source used in local preparation; later redeploys verify and reuse it. This is a one-time server-side download, not a full-archive browser download.
 
 Only supported mission manifests and their approximately 3.6-7.2 MB packs are copied to `/usr/share/nginx/html/data/campaign`. The original source archive and generated audit files are not copied to the served directory. Browsers retain the existing selected-mission download and content-hash cache behavior. Owned-data preparation does not authorize redistribution outside this private test deployment.
@@ -988,23 +1130,15 @@ Only supported mission manifests and their approximately 3.6-7.2 MB packs are co
 
 Verify the live Git revision and all manifest/pack hashes after the campaign push and rollout delay; then start the browser mission from `openbw.stefhermans.nl`. No Portainer credentials are stored in this repository.
 
-```powershell
-node web/prepare-campaign.mjs terran06
-node web/prepare-campaign.mjs --audit-ai terran06
-& .\web\build-wasm.ps1 -SimulationTest
-node web/run-sim.mjs --test-campaign terran06
-& .\web\build-wasm.ps1
-node web/run-wasm-node.mjs --test-campaign terran06
-node web/run-wasm-node.mjs --test-commands
-```
+## Detailed Implementation Lessons
 
-Apply these lessons to later missions. The evidence above records what was tested; it does not establish support for untested scenarios or operations. Update this section when another mission changes a reusable rule.
+Use the current handoff's commands and workflow. The lessons below retain additional native contracts established during implementation. Update them when a new source-driven check changes a rule.
 
 ### Asset Preparation
 
 - Cross-check decoded scenario bytes independently before accepting a new hash. A pack round-trip can repeat the same decoder error. The Python partial-word decryption bug changed hashes and could make unused bytes look like required operations; regenerate affected audits after decoder changes.
 - Reuse the production C++ MPQ/audio codecs and the existing offline pack tool. Preserve the original CHK, resolve mission-relative dependencies, and verify every output entry. Measure the generated pack; compressed source sizes do not predict the first plain-pack download size.
-- Parameterize the existing preparation and manifest-validation paths for each audited mission. Wasteland's original `terran01`, slot, race, source-hash, and pack-path assumptions have now been removed from the shared paths for T1/T2. Derive and validate these values per mission; do not copy the whole tool or weaken path/hash validation.
+- Derive profile, human slot/race, source hash and pack path from each audited mission. The shared paths now cover all thirty original entries; retain their validation instead of copying a tool or restoring Wasteland-only assumptions.
 
 ### Engine Contracts
 
@@ -1018,6 +1152,7 @@ Apply these lessons to later missions. The evidence above records what was teste
 - Audit placed-unit orders separately from AI-script actions. Wasteland exercises working guard/combat behavior without an AI VM; this does not implement ComputerAI, town management, or scripted attacks. Rescue must remain a proximity-based ownership transfer, including whole-player transfer through an active grounded depot, not a mission-specific grant.
 - Backwater confirms that an empty AI-script action set can still activate ComputerAI through a placed building's DAT idle order. Include building idle orders in the next mission's readiness audit. Verify numeric IDs against the repository enums: mistaking the Infested Command Center for a Hatchery falsely suggested a broader AI requirement.
 - Inventory reachable AI instructions, including branches and child threads, before choosing runtime scope. Desperate Alliance requests production through `build`, defense and attack operations without using `train`. Keep AI frame waits separate from trigger millisecond waits; audit the scheduler before assigning wall-clock timing.
+- Read PTEC for original technology availability/research and TECS for costs. An available technology is not necessarily researched. Reuse paid native research and hero eligibility; Protoss 9's Recall/Stasis may be researched but must not be granted for free. Mixed-race human ownership in Protoss 10 requires the selected worker/producer's native controls, not the mission SIDE alone.
 - Match stable native idle states, not only DAT entry orders. `Guard` transitions to `PlayerGuard`; missing that transition stalled both resource reassignment and abandoned building recovery. Count active construction and pending eggs, and retry failed unstarted building requests without charging twice.
 - Use generation-safe unit IDs for AI parties and destruction/rebuilding fixtures. A dead unit's storage can be reused; pointer equality does not prove that a later actor is the original unit.
 - Distinguish strategic movement goals from direct combat eligibility. A party can move toward an enemy position before it can see or attack that unit. Keep actual attack acquisition in the native combat engine.
@@ -1044,11 +1179,11 @@ Apply these lessons to later missions. The evidence above records what was teste
 - Keep transient events ordered and acknowledged, while objectives remain persistent. Use the existing native sound bridge, separate narration from mission beeps, and test muted/rejected audio. Cancel pending playback and close audio on session exit; retry uses a fresh engine rather than stacked listeners.
 - Use native unit-family and ability eligibility checks for hero command cards. Raw ordinary-caster IDs can omit a campaign hero's innate abilities. Keep special commands such as Nuclear Strike separately gated, and allow original scripted pauses to service their waits before judging a queued native transition.
 - Keep download state, session outcome, and saved completion independent. Verify the complete pack before caching or starting; failed replacements must preserve the good cache. Defeat, cancellation, and runtime failure must not save victory. Storage failure must not prevent local play.
-- Add only the next mission's required capabilities and retain Wasteland plus melee regressions. UI/mobile optimization, onboarding, animated presentation, and linked mission flow remain deferred. Physical-device testing and authorized public asset delivery remain separate release checks.
+- Add only demonstrated required capabilities and retain affected earlier-mission plus melee regressions. Automated next-mission flow and command-journal recovery already exist. Physical-device acceptance, animated presentation and authorized public asset delivery remain separate checks.
 
-## Implementation Milestones
+## Historical Milestone Roadmap
 
-Each milestone is a small reviewable commit or a short sequence of commits with its evidence recorded here. Keep this document current when a gate passes, a design changes, or a reference contradicts an assumption. Do not mark a checkbox complete from static inspection alone when it requires runtime evidence.
+P0-P7 record the original rollout sequence. Their proposed commands, missing-runtime statements and next-mission language describe that starting point. The current handoff and validation backlog supersede them; do not restart at P0 or interpret an old non-goal as the current feature set. Evidence above records the completed implementation and remaining acceptance limits.
 
 ### P0: Reproducible Audit And Baseline Fixtures
 
@@ -1220,37 +1355,37 @@ Do not silently remove fixed-race/rescue settings, grant resources/units for nor
 | Browser memory/storage is constrained.                     | Small selected packs, bounded decode buffers, no full campaign archive in browser RAM, caught quota errors. |
 | Reference documentation omits an original-game quirk.      | Keep a failing reproducer/reference trace and update this plan before implementing a guessed special case.  |
 
-There is no reliable calendar estimate for all campaigns yet. P1-P3 runtime evidence is the point to reassess effort. The plan is intentionally milestone-based rather than promising a fixed completion date.
+The original numbered catalogue is implemented. Estimate further work from a specific validation gap or an authorized new campaign audit, not the historical first-three-mission roadmap.
 
 ## Follow-Up Session Checklist
 
 1. Open this file; confirm `campaign` and inspect the actual worktree before editing.
-2. Reconfirm the three core archives and the original CD archive locally; do not redownload or commit them unnecessarily.
-3. Use the corrected Desperate Alliance pack and `--audit-ai` inventory; read its groundwork evidence above. Do not revive the superseded 14-WAV/MBRF-29 findings.
-4. Add a failing check for each newly required operation, then extend the existing runtime. Keep milestone evidence and open questions here.
-5. Play Desperate Alliance through normal defensive victory/defeat and compare its provisional town/defense policies with classic StarCraft. Retain both earlier missions' regressions and the deferred Backwater defender-assistance comparison. Keep UI/mobile polish, onboarding, and linked mission flow deferred.
-6. Commit related milestones on `campaign` with the established personal author/signing setup when requested. Do not merge or deploy to `dev`/`master` without instruction.
+2. Verify whether the two signed final-mission commits and this plan update have since been published. Preserve local changes and completed evidence.
+3. Choose one validation-backlog item with the user; read its mission evidence and the nearest owning implementation/test. Reuse ignored owned data.
+4. Define the original behavior and one discriminating check before editing. Label reference uncertainties; separate a bad fixture from a production defect.
+5. Apply a small fix only when evidence warrants it. Rebuild the touched binary and rerun the focused check immediately.
+6. Scale regression coverage to shared risk, then record normal-input, GUI, human and classic evidence separately. Keep the backlog current.
+7. When requested, sign/commit/publish on `campaign` and verify committed blobs, live refs, signatures and cleanup. Live deployment and Brood War need their own scope/authorization.
 
 ## Validation Baseline
 
-Existing commands, from the repository root:
+Use the mission-specific build/test sequence near the front, then these inexpensive source/review checks from the repository root:
 
 ```powershell
-& .\web\build-wasm.ps1
-node web/run-wasm-node.mjs --test-commands
 node --check web/openbw.js
+node --check web/campaign-saves.js
 git diff --check
 ```
 
-Use the WASI SDK setup documented in [README.md](README.md). Add focused mission checks to the existing runner or a small dedicated mission mode only when the current runner cannot hold the scenario cleanly. Generated packs and proprietary fixtures must remain ignored.
+For shared native changes, rerun the full catalogue and six shared modes described in the handoff. Reuse the existing runners/helpers. Generated packs and proprietary fixtures remain ignored; syntax checks alone do not validate native gameplay or recovered state.
 
-## Non-Goals For The First Playable Milestone
+## Scope Boundaries
 
-- Full compatibility with every official campaign or custom scenario.
+- Brood War campaign implementation, until separately authorized and audited.
+- General compatibility with every custom scenario.
 - Extended triggers, EUD tricks, mods, or Remastered-specific features.
-- A complete campaign-AI interpreter before Wasteland actually requires one.
-- SMK cinematic playback or pixel-identical talking portraits.
-- Mid-mission save/load, cloud saves, or cross-device progression.
+- Bit-exact strategic AI and full cinematic/animated-portrait fidelity without their outstanding comparisons and implementation.
+- Instant structural save snapshots or cloud saves. Current local command-journal recovery and portable unlock codes are implemented.
 - Campaign multiplayer or campaign BWAPI bots.
 - Publishing proprietary assets or changing the existing Pages deployment branches.
 
