@@ -1133,7 +1133,7 @@ async function boot(session) {
   const RACE_NAME = ['Zerg', 'Terran', 'Protoss'];
   const PLAYER_COLORS = ['#f40404', '#0c48cc', '#2cb494', '#88409c', '#f88c14', '#703014', '#cce0d0', '#fcfc38'];
   let gameOverShown = false;
-  const toMainMenu = () => location.replace(location.origin + location.pathname + (session.mission ? campaignDebug ? '?campaign=1&campaign-debug=1' : '?campaign=1' : '?campaign=0'));
+  const toMainMenu = () => location.replace(session.mission ? campaignMenuAddress(session.mission.id) : location.origin + location.pathname + '?campaign=0');
   const showGameOver = (title, won) => {
     if (gameOverShown) return;
     gameOverShown = true;
@@ -1147,7 +1147,8 @@ async function boot(session) {
         try { saveCampaignProgress(progress); $('go-progress').textContent = 'Mission complete.'; }
         catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
       }
-      const next = campaignMissionIds[campaignMissionIds.indexOf(session.mission.id) + 1];
+      const editionIds = campaignEditionIds(session.mission.id.startsWith('bw') ? 'bw' : 'sc');
+      const next = editionIds[editionIds.indexOf(session.mission.id) + 1];
       $('go-next').hidden = !won || !next;
       $('go-next').disabled = !!next && !campaignUnlocked(next);
       $('go-next').onclick = () => location.replace(campaignAddress(next, null, true));
@@ -2344,6 +2345,16 @@ const selectedMission = new URLSearchParams(location.search).get('mission');
 const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10'];
 let campaignManifest = null;
 let campaignDownload = null;
+function campaignEditionIds(edition = $('campaign-edition').value) {
+  return campaignMissionIds.filter(id => id.startsWith('bw') === (edition === 'bw'));
+}
+function campaignMenuAddress(mission = $('mission-select').value) {
+  const address = new URL(location.origin + location.pathname);
+  address.searchParams.set('campaign', '1');
+  address.searchParams.set('edition', mission.startsWith('bw') ? 'bw' : 'sc');
+  if (campaignDebug) address.searchParams.set('campaign-debug', '1');
+  return address;
+}
 function campaignProgress() {
   let value = null, legacy = null;
   try {
@@ -2392,7 +2403,8 @@ function campaignApplyCode(code) {
 function campaignUnlocked(missionId) {
   const index = campaignMissionIds.indexOf(missionId);
   const victories = campaignProgress().victories;
-  return index >= 0 && (campaignDebug || campaignMissionIds.slice(0, index).every(id => victories[id] === true));
+  const first = missionId.startsWith('bw') ? campaignMissionIds.findIndex(id => id.startsWith('bw')) : 0;
+  return index >= 0 && (campaignDebug || campaignMissionIds.slice(first, index).every(id => victories[id] === true));
 }
 function selectGameMode(campaign) {
   if (!campaign) probeMeleeMaps();
@@ -2405,8 +2417,18 @@ function selectGameMode(campaign) {
 }
 function loadSelectedMission() {
   for (const option of $('mission-select').options) option.disabled = !campaignUnlocked(option.value);
-  if (!campaignUnlocked($('mission-select').value)) $('mission-select').value = campaignMissionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || campaignMissionIds[0];
+  const editionIds = campaignEditionIds();
+  if (!editionIds.includes($('mission-select').value) || !campaignUnlocked($('mission-select').value)) $('mission-select').value = editionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
   const missionId = $('mission-select').value;
+  $('campaign-start').disabled = !editionIds.length;
+  if (!editionIds.length) {
+    campaignManifest = null;
+    $('campaign-selected-name').textContent = 'Brood War';
+    $('mission-size').textContent = 'Missions are not available yet.';
+    $('campaign-resume').hidden = true;
+    renderCampaignSelection();
+    return;
+  }
   if (!campaignMissionIds.includes(missionId)) return;
   $('campaign-selected-name').textContent = $('mission-select').selectedOptions[0].textContent;
   renderCampaignSelection();
@@ -2427,9 +2449,12 @@ function loadSelectedMission() {
 function renderCampaignSelection() {
   const progress = campaignProgress(), completed = progress.completed;
   const list = $('campaign-missions');
-  if (!list.querySelector('input')) {
+  if (!list.querySelector('input') || list.dataset.edition !== $('campaign-edition').value) {
+    list.replaceChildren();
+    list.dataset.edition = $('campaign-edition').value;
     let chapter = '';
     for (const option of $('mission-select').options) {
+      if (!campaignEditionIds().includes(option.value)) continue;
       const label = option.parentElement.label || '';
       if (label && label !== chapter) {
         const heading = document.createElement('h3'); heading.className = 'campaign-episode'; heading.textContent = label;
@@ -2454,14 +2479,14 @@ function renderCampaignSelection() {
     state.textContent = radio.disabled ? completed.includes(radio.value) ? 'Won (locked)' : 'Locked' : completed.includes(radio.value) ? 'Completed' : 'Available';
     state.classList.toggle('completed', !radio.disabled && completed.includes(radio.value));
   }
-  let cleared = 0;
-  while (completed.includes(campaignMissionIds[cleared])) cleared++;
+  const editionIds = campaignEditionIds();
+  const cleared = editionIds.filter(id => completed.includes(id)).length;
   $('campaign-progress').hidden = campaignDebug;
   $('campaign-tools').hidden = campaignDebug;
   $('campaign-code-tools').hidden = campaignDebug;
   $('campaign-code').value = campaignProgressCode(campaignSequentialProgress(progress));
-  $('campaign-progress').querySelector('span').textContent = `${cleared} of ${campaignMissionIds.length} completed${completed.length > cleared ? ` - ${completed.length - cleared} later victories recorded` : ''}`;
-  $('campaign-progress').querySelector('progress').max = campaignMissionIds.length;
+  $('campaign-progress').querySelector('span').textContent = `${cleared} of ${editionIds.length} completed`;
+  $('campaign-progress').querySelector('progress').max = Math.max(1, editionIds.length);
   $('campaign-progress').querySelector('progress').value = cleared;
 }
 function campaignAddress(mission, resume = null, fresh = false) {
@@ -2528,7 +2553,7 @@ function campaignFailure(error) {
   $('load-fresh').hidden = !campaignMissionIds.includes($('mission-select').value);
   setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : `Mission unavailable: ${error.message}`);
 }
-const returnToStartup = () => location.replace(location.origin + location.pathname + (campaignDebug ? '?campaign=1&campaign-debug=1' : '?campaign=1'));
+const returnToStartup = () => location.replace(campaignMenuAddress());
 $('load-return').onclick = returnToStartup;
 $('load-fresh').onclick = () => location.replace(campaignAddress($('mission-select').value, null, true));
 $('load-retry').onclick = () => location.reload();
@@ -2536,6 +2561,7 @@ $('load-cancel').onclick = () => campaignDownload?.abort();
 $('mode-sandbox').onclick = () => selectGameMode(false);
 $('mode-campaign').onclick = () => selectGameMode(true);
 $('mission-select').onchange = loadSelectedMission;
+$('campaign-edition').onchange = loadSelectedMission;
 $('campaign-start').onclick = async () => {
   $('campaign-start').disabled = true;
   $('mission-select').disabled = true;
@@ -2601,7 +2627,8 @@ $('campaign-code-apply').onclick = () => {
   try {
     if (campaignApplyCode($('campaign-code-input').value)) {
       const progress = campaignProgress();
-      $('mission-select').value = campaignMissionIds.find(id => !progress.victories[id] && campaignUnlocked(id)) || campaignMissionIds[campaignMissionIds.length - 1];
+      const editionIds = campaignEditionIds();
+      $('mission-select').value = editionIds.find(id => !progress.victories[id] && campaignUnlocked(id)) || editionIds[editionIds.length - 1] || '';
       loadSelectedMission();
       status.textContent = 'Campaign progress restored.';
     } else { renderCampaignSelection(); status.textContent = 'Code is not ahead of current progress.'; }
@@ -2623,15 +2650,18 @@ $('campaign-reset').onclick = () => {
   delete button.dataset.confirm;
   button.title = button.ariaLabel = 'Reset campaign progress';
   $('campaign-code-input').value = ''; $('campaign-code-apply').disabled = true; $('campaign-code-status').textContent = '';
-  $('mission-select').value = campaignMissionIds[0];
+  $('mission-select').value = campaignEditionIds()[0] || '';
   loadSelectedMission();
 };
 if (campaignMissionIds.includes(selectedMission)) {
+  $('campaign-edition').value = selectedMission.startsWith('bw') ? 'bw' : 'sc';
   $('mission-select').value = selectedMission;
   selectGameMode(true);
   if (new URLSearchParams(location.search).get('autostart') === '1') $('campaign-start').click();
 } else if (!location.search || new URLSearchParams(location.search).get('campaign') === '1') {
-  $('mission-select').value = campaignMissionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || campaignMissionIds[0];
+  if (new URLSearchParams(location.search).get('edition') === 'bw') $('campaign-edition').value = 'bw';
+  const editionIds = campaignEditionIds();
+  $('mission-select').value = editionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
   selectGameMode(true);
 } else {
   selectGameMode(false);

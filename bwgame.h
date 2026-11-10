@@ -125,6 +125,7 @@ struct global_state {
 
 	a_vector<uint8_t> melee_trg;
 	a_vector<uint8_t> ai_script;
+	a_vector<uint8_t> bw_script;
 
 	std::array<a_vector<uint8_t>, 8> tileset_vf4;
 	std::array<a_vector<uint8_t>, 8> tileset_cv5;
@@ -250,6 +251,7 @@ struct state_base_copyable {
 	struct campaign_ai_script {
 		int owner;
 		size_t position;
+		bool broodwar = false;
 		int wait = 0;
 		size_t town = 0;
 		rect area;
@@ -19179,11 +19181,28 @@ struct state_functions {
 			if (cursor > bytes.size() - 16) error("truncated campaign AI entry");
 			if (entry != id) continue;
 			size_t position = data_loading::value_at<uint32_t, true>(bytes.data() + cursor + 4);
-			if (position < 4 || position >= table) error("unsupported campaign AI entry %d", id);
+			bool broodwar = position == 0;
+			if (broodwar) {
+				const auto& expansion = st.global->bw_script;
+				if (expansion.size() < 8) error("missing expansion AI binary");
+				size_t expansion_table = data_loading::value_at<uint32_t, true>(expansion.data());
+				if (expansion_table < 4 || expansion_table > expansion.size() - 4) error("unsupported expansion AI binary format");
+				for (size_t offset = expansion_table, entries = 0; entries != 4096; offset += 8, ++entries) {
+					if (offset > expansion.size() - 4) error("unterminated expansion AI table");
+					uint32_t expansion_id = data_loading::value_at<uint32_t, true>(expansion.data() + offset);
+					if (!expansion_id) break;
+					if (offset > expansion.size() - 8) error("truncated expansion AI entry");
+					if (expansion_id != id) continue;
+					position = data_loading::value_at<uint32_t, true>(expansion.data() + offset + 4);
+					break;
+				}
+				if (position < 4 || position >= expansion_table) error("unsupported expansion AI entry %d", id);
+			} else if (position < 4 || position >= table) error("unsupported campaign AI entry %d", id);
 			if (st.campaign_ai_scripts.size() >= 64) error("campaign AI script limit exceeded");
 			state_base_copyable::campaign_ai_script script;
 			script.owner = owner;
 			script.position = position;
+			script.broodwar = broodwar;
 			script.area = area;
 			st.campaign_ai_scripts.push_back(script);
 			return;
@@ -19228,10 +19247,10 @@ struct state_functions {
 	}
 
 	void progress_campaign_ai_scripts() {
-		const auto& bytes = st.global->ai_script;
 		bool has_scripts = !st.campaign_ai_scripts.empty();
-		size_t table = has_scripts ? data_loading::value_at<uint32_t, true>(bytes.data()) : 0;
 		for (auto& script : st.campaign_ai_scripts) {
+			const auto& bytes = script.broodwar ? st.global->bw_script : st.global->ai_script;
+			size_t table = data_loading::value_at<uint32_t, true>(bytes.data());
 			if (script.wait) { --script.wait; continue; }
 			auto& ai = st.campaign_ai.at(script.owner);
 			auto read = [&](size_t width) {
@@ -23708,6 +23727,7 @@ void global_init(global_state& st, load_data_file_F&& load_data_file) {
 	load_iscript_bin();
 	load_images();
 	load_data_file(st.ai_script, "scripts/aiscript.bin");
+	load_data_file(st.bw_script, "scripts/bwscript.bin");
 
 	std::array<const char*, 8> tileset_names = {
 		"badlands", "platform", "install", "AshWorld", "Jungle", "Desert", "Ice", "Twilight"

@@ -45,9 +45,15 @@ export const campaignSource = Object.freeze({
   sha256: 'ba155a30ca11a57a2ea917cb4f25715f79bee7397ebb16db4816e7725395e58d',
   url: 'https://archive.org/download/sc-classic-installer_202311/StarCraft%20Portable.zip/Starcraft%20Brood%20War%2FStarCraft.mpq',
 });
+export const broodWarSource = Object.freeze({
+  file: 'BroodWar.mpq',
+  bytes: 571847688,
+  sha256: '180425f53094c71b208b1244dab3cb2f63492a9120d96e3a9362f4c5ff7404b2',
+  url: 'https://archive.org/download/sc-classic-installer_202311/StarCraft%20Portable.zip/Starcraft%20Brood%20War%2FBroodWar.mpq',
+});
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 
-export function auditAiScript(bytes, scriptIds = ['Ter3', 'Suic']) {
+export function auditAiScript(bytes, scriptIds = ['Ter3', 'Suic'], broodwar = false) {
   assert.ok(bytes.length >= 8 && bytes.length <= 1048576, 'Invalid AI binary size');
   const table = bytes.readUInt32LE(0);
   assert.ok(table >= 4 && table <= bytes.length - 4, 'Invalid AI header offset');
@@ -56,12 +62,13 @@ export function auditAiScript(bytes, scriptIds = ['Ter3', 'Suic']) {
   while (true) {
     assert.ok(cursor <= bytes.length - 4, 'Unterminated AI header table');
     if (bytes.readUInt32LE(cursor) === 0) break;
-    assert.ok(cursor <= bytes.length - 16, 'Truncated AI header');
+    const width = broodwar ? 8 : 16;
+    assert.ok(cursor <= bytes.length - width, 'Truncated AI header');
     const id = bytes.toString('ascii', cursor, cursor + 4);
     assert.ok(!entries.has(id), 'Duplicate AI script ID');
-    entries.set(id, { id, offset: bytes.readUInt32LE(cursor + 4), flags: bytes.readUInt32LE(cursor + 12) });
+    entries.set(id, { id, offset: bytes.readUInt32LE(cursor + 4), ...(broodwar ? {} : { flags: bytes.readUInt32LE(cursor + 12) }) });
     assert.ok(entries.size <= 4096, 'Too many AI scripts');
-    cursor += 16;
+    cursor += width;
   }
   const commands = {
     0: ['goto', 'w'], 1: ['notowns_jump', 'ww'], 2: ['wait', 'w'], 3: ['start_town', ''],
@@ -228,7 +235,8 @@ export function triggerProfile(bytes, strings, briefing = false) {
 
 export function auditScenario(bytes) {
   const sections = scenarioSections(bytes);
-  assert.equal(sections.get('VER ')?.readUInt16LE(0), 59, 'Unsupported CHK version');
+  const version = sections.get('VER ')?.readUInt16LE(0);
+  assert.ok([59, 205].includes(version), 'Unsupported CHK version');
   assert.equal(sections.get('OWNR')?.length, 12, 'Invalid OWNR section');
   assert.equal(sections.get('SIDE')?.length, 12, 'Invalid SIDE section');
   const strings = scenarioStrings(sections.get('STR '));
@@ -248,7 +256,7 @@ export function auditScenario(bytes) {
   for (let offset = 0; offset < unitSection.length; offset += 36) {
     units.push({ type: unitSection.readUInt16LE(offset + 8), owner: unitSection[offset + 16], x: unitSection.readUInt16LE(offset + 4), y: unitSection.readUInt16LE(offset + 6) });
   }
-  return { sha256: sha256(bytes), controllers: [...sections.get('OWNR')], races: [...sections.get('SIDE')], units, gameplay, briefing, wavePaths: [...wavePaths].sort() };
+  return { sha256: sha256(bytes), version, controllers: [...sections.get('OWNR')], races: [...sections.get('SIDE')], units, gameplay, briefing, wavePaths: [...wavePaths].sort() };
 }
 
 function cryptTable() {
@@ -395,6 +403,17 @@ function testAudit() {
   assert.throws(() => auditAiScript(invalidAi, ['Test']), /out of bounds/);
   assert.throws(() => auditAiScript(ai.subarray(0, 20), ['Test']), /Truncated AI header/);
   assert.throws(() => auditAiScript(ai, ['None']), /Missing AI script/);
+  const bw = Buffer.alloc(18);
+  bw.writeUInt32LE(6);
+  bw.set([36, 36], 4);
+  bw.write('ExpA', 6, 'ascii');
+  bw.writeUInt32LE(4, 10);
+  assert.equal(auditAiScript(bw, ['ExpA'], true).scripts[0].instructions[0].name, 'stop');
+  assert.throws(() => auditAiScript(bw.subarray(0, 13), ['ExpA'], true), /Truncated AI header/);
+  const scenario = version => Buffer.concat([section('VER ', Buffer.from([version & 255, version >> 8])), section('OWNR', Buffer.alloc(12)), section('SIDE', Buffer.alloc(12)), section('STR ', Buffer.alloc(2))]);
+  assert.equal(auditScenario(scenario(59)).version, 59);
+  assert.equal(auditScenario(scenario(205)).version, 205);
+  assert.throws(() => auditScenario(scenario(63)), /Unsupported CHK version/);
   console.log('Campaign audit synthetic checks passed.');
 }
 
@@ -410,6 +429,7 @@ async function prepareAi(missionId = 'terran03') {
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
   const temporary = resolve(directory, 'aiscript.bin.tmp');
+  const expansionTemporary = resolve(directory, 'bwscript.bin.tmp');
   try {
     await extractSource(resolve(root, 'web/data/patch_rt.mpq'), '--ai-script', directory, basename(temporary));
     const bytes = readFileSync(temporary);
@@ -424,23 +444,37 @@ async function prepareAi(missionId = 'terran03') {
         return id.toString('ascii');
       })))];
     }
-    const audit = auditAiScript(bytes, scripts);
+    await extractSource(resolve(root, 'web/data/BROODAT.MPQ'), '--bw-script', directory, basename(expansionTemporary));
+    const expansionBytes = readFileSync(expansionTemporary);
+    assert.equal(sha256(expansionBytes), '15a1a5b3fb4f2cab2e7b7b507ae04d4e2ef097c77081cfeb950d9a2e4ebee382', 'Expansion AI binary changed');
+    const audit = auditAiScript(bytes, []);
+    const table = bytes.readUInt32LE(0);
+    audit.scripts = scripts.flatMap(id => {
+      let offset = null;
+      for (let cursor = table; bytes.readUInt32LE(cursor); cursor += 16) if (bytes.toString('ascii', cursor, cursor + 4) === id) offset = bytes.readUInt32LE(cursor + 4);
+      assert.notEqual(offset, null, `Missing AI script ${id}`);
+      return auditAiScript(offset === 0 ? expansionBytes : bytes, [id], offset === 0).scripts.map(script => ({ ...script, binary: offset === 0 ? 'bwscript.bin' : 'aiscript.bin' }));
+    });
+    audit.expansionSha256 = sha256(expansionBytes);
     writeFileSync(resolve(directory, `${missionId}.ai.audit.json`), `${JSON.stringify(audit, null, 2)}\n`);
     renameSync(temporary, resolve(directory, 'aiscript.bin'));
+    renameSync(expansionTemporary, resolve(directory, 'bwscript.bin'));
     console.log(JSON.stringify({ bytes: audit.bytes, sha256: audit.sha256, entryCount: audit.entryCount, scripts: audit.scripts.map(script => ({ id: script.id, offset: script.offset, instructionCount: script.instructions.length, commands: [...new Set(script.instructions.map(instruction => instruction.name))].sort() })) }, null, 2));
   } finally {
     rmSync(temporary, { force: true });
+    rmSync(expansionTemporary, { force: true });
   }
 }
 
 export async function prepare(missionId = 'terran01') {
   assert.ok(Object.hasOwn(missions, missionId), 'Unsupported mission ID');
   const mission = missions[missionId];
-  const source = resolve(root, 'web/data', campaignSource.file);
-  assert.equal(statSync(source).size, campaignSource.bytes, 'Unexpected source archive size');
+  const archive = mission.episode >= 4 ? broodWarSource : campaignSource;
+  const source = resolve(root, 'web/data', archive.file);
+  assert.equal(statSync(source).size, archive.bytes, 'Unexpected source archive size');
   const sourceHasher = createHash('sha256');
   for await (const chunk of createReadStream(source)) sourceHasher.update(chunk);
-  assert.equal(sourceHasher.digest('hex'), campaignSource.sha256, 'Source archive hash mismatch');
+  assert.equal(sourceHasher.digest('hex'), archive.sha256, 'Source archive hash mismatch');
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
   const temporary = resolve(directory, `${missionId}.mpq.tmp`);
@@ -452,6 +486,7 @@ export async function prepare(missionId = 'terran01') {
     const scenario = read('staredit/scenario.chk');
     assert.equal(sha256(scenario), mission.scenarioHash, `${mission.title} scenario changed`);
     const audit = auditScenario(scenario);
+    assert.equal(audit.version, mission.episode >= 4 ? 205 : 59, 'Mission format must match its campaign edition');
     assert.equal(audit.units.length, mission.units);
     assert.equal(audit.gameplay.records.length, mission.triggers);
     assert.equal(audit.briefing.records.length, 1);

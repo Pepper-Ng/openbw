@@ -3730,6 +3730,25 @@ static void eye_storm_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void expansion_ai_binary_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	game_player player(load_data_file);
+	data_loading::mpq_file<> map_loader(map_file);
+	game_load_functions loader(player.st());
+	loader.setup_info.starting_minerals = 0;
+	loader.load_map(map_loader);
+	auto& st = player.st();
+	state_functions functions(st);
+	st.players[4].controller = player_t::controller_computer_game;
+	functions.start_campaign_ai_script(4, 0x41314250, rect{xy(0, 0), xy(640, 640)});
+	functions.start_campaign_ai_script(4, 0x42314250, rect{xy(640, 640), xy(1280, 1280)});
+	require(st.campaign_ai_scripts.size() == 2 && st.campaign_ai_scripts[0].broodwar && st.campaign_ai_scripts[0].position == 4 && st.campaign_ai_scripts[1].broodwar && st.campaign_ai_scripts[1].position == 25, "zero-offset original headers route both adjacent eight-byte expansion entries to their actual binary");
+	functions.progress_campaign_ai_scripts();
+	require(st.campaign_ai[4].campaign && st.campaign_ai[4].area_towns.size() == 2 && !st.campaign_ai[4].default_build && st.campaign_ai_scripts[0].wait > 0 && st.campaign_ai_scripts[1].wait > 0, "both original expansion programs execute their own town setup and authored waits");
+	functions.start_campaign_ai_script(4, 0x63697553);
+	require(!st.campaign_ai_scripts.back().broodwar, "ordinary AI programs continue using the original binary");
+	printf("Original and expansion AI binary routing passed.\n");
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3781,7 +3800,7 @@ int main(int argc, char** argv) {
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
-		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (combat_ai) { expansion_ai_binary_checks(load_data_file, map_file); cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
 		if (eye_storm) {
 			auto& st = player.st();
 			state_functions functions(st);

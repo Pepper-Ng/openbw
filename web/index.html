@@ -423,6 +423,8 @@
   #controls [hidden], #load-actions[hidden] { display: none !important; }
   #campaign-setup { text-align: left; }
   #campaign-setup label { display: block; margin-bottom: 8px; }
+  #campaign-edition { width: 100%; min-height: 44px; padding: 8px; background: #161d22; color: #dce5e9; border: 1px solid #56616a; border-radius: 4px; font: inherit; }
+  #campaign-order { font-size: 12px; color: #aeb8bf; }
   #mission-select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 10px; background: #111827; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; font: inherit; }
   #mission-size { min-height: 20px; margin: 10px 0; color: #94a3b8; font-size: 13px; }
   #campaign-start, #load-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
@@ -651,6 +653,12 @@
     </div>
     <div id="campaign-setup" hidden>
       <h2>Campaign</h2>
+      <label for="campaign-edition">Campaign edition</label>
+      <select id="campaign-edition">
+        <option value="sc">StarCraft</option>
+        <option value="bw">Brood War</option>
+      </select>
+      <p id="campaign-order">Each edition starts independently. Complete missions in story order within that edition.</p>
       <div id="campaign-progress"><span>0 of 30 completed</span><progress max="30" value="0" aria-label="Campaign progress"></progress></div>
       <div id="campaign-code-tools">
         <div><label for="campaign-code">Progress Code</label><div class="campaign-code-row"><input id="campaign-code" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Current campaign progress code"><button id="campaign-code-copy" type="button" title="Copy progress code" aria-label="Copy progress code"><i data-lucide="copy"></i></button></div></div>

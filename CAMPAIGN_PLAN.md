@@ -3,7 +3,7 @@
 ## Status And Scope
 
 - Handoff updated: 2026-11-10. Continue from this document and the current Git state, rather than restoring the full implementation conversation.
-- All thirty original numbered StarCraft missions are implemented in the catalogue: ten Terran, ten Zerg and ten Protoss. Brood War campaigns are outside this milestone.
+- All thirty original numbered StarCraft missions are implemented in the catalogue: ten Terran, ten Zerg and ten Protoss. Brood War implementation is authorized as of 2026-11-10.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - Publication bundle: Shadow Hunters is signed commit `8b494c1954225ace41bf7c44b66ad63ff8538e24`; Eye of the Storm is signed commit `ca62d2954a6c90452d1b484502400b819890bc83`. The user authorized publication of both with this separate handoff commit on 2026-11-10. Confirm the live `campaign` ref matches the local tip; Git publication and website rollout are separate checks.
 - The final recorded gate passed all sixty-six modes: thirty native missions, thirty browser deterministic recoveries, shared AI/combat, menu, commands, Protoss selection, network and lobby. All thirty original pack identities were rechecked unchanged. These are recorded checks, not permission to skip validation after a new engine change.
@@ -37,6 +37,18 @@ The following dated notes describe the prototype's progression. The current hand
 - Campaign selection, sequential local progress, victory continuation and local save/recovery are implemented in signed commit `60a218319920c0c787da34b8205d6120dbbc445c`. On 2026-11-05 the user authorized that implementation commit, a separate plan commit, and a push. Cinematic work is recorded in this plan only; its prototype page, media and tools are excluded from publication. Shared computer combat decisions are implemented below; exact classic thresholds and terrain micro remain comparison items.
 
 No blocking product questions are needed to follow this plan. The defaults are English assets, browser single-player, desktop plus the existing mobile interface, local development delivery first, and persistent completed-mission progress. Animated portraits, cinematics, mid-mission saves, and public asset hosting are not first-milestone requirements.
+
+### Brood War Framework
+
+- The campaign menu separates StarCraft and Brood War with a labelled edition selector. Each edition starts independently and retains sequential victory requirements internally.
+- Strict cross-edition gating preserves story order but requires returning players to replay thirty missions. Independent entry avoids that barrier without unlocking later expansion missions.
+- Original six-character progress codes retain their ordered-prefix meaning. Expansion-only victories remain local until the original prefix is complete; they do not fabricate original victories.
+- The owned expansion source is `BroodWar.mpq`, 571847688 bytes, SHA-256 `180425f53094c71b208b1244dab3cb2f63492a9120d96e3a9362f4c5ff7404b2`. Mission paths start at `campaign\expprotoss\protoss01`.
+- Expansion missions use CHK format 205. Preparation checks each profile's edition against its format; format-59 availability restrictions remain unchanged.
+- Zero-offset entries in the patched `aiscript.bin` refer to `bwscript.bin` in shared `BROODAT.MPQ`. Its eight-byte table differs from the original sixteen-byte table. Expansion binary SHA-256 is `15a1a5b3fb4f2cab2e7b7b507ae04d4e2ef097c77081cfeb950d9a2e4ebee382`.
+- The existing deployment preparation path verifies both source archives when expansion profiles exist. `OPENBW_BROODWAR_SOURCE_URL` overrides the expansion download location.
+- Native routing checks exercise adjacent PB1A/PB1B entries, original-script coexistence, native town initialization and stored waits. Synthetic readers cover both table layouts and CHK format boundaries.
+- Framework verification passed: both rebuilt binaries, shared native AI/combat, original Eye of the Storm recorded-input recovery, menu/progress-code checks and bounded source-download tests. Only the documented existing compiler warnings remain.
 
 The campaign's game logic must remain authoritative. Do not mark the mission playable merely because terrain renders, replace scripted behavior with a melee bot, remove unsupported triggers, or grant Raynor directly to the player to bypass rescue support.
 

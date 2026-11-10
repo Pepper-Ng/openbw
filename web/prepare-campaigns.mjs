@@ -7,7 +7,7 @@ import { basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { campaignMissions, campaignSource, prepare } from './prepare-campaign.mjs';
+import { campaignMissions, campaignSource, broodWarSource, prepare } from './prepare-campaign.mjs';
 
 async function verifySource(file, source) {
   assert.equal(statSync(file).size, source.bytes, 'Campaign source size mismatch');
@@ -68,6 +68,13 @@ async function prepareAll() {
   assert.ok(!url.username && !url.password, 'Campaign source URL must not contain credentials');
   console.log('Preparing campaign assets from the verified private source archive.');
   await ensureSource(directory, source);
+  if (campaignMissions.some(id => id.startsWith('bw'))) {
+    const expansion = { ...broodWarSource, url: process.env.OPENBW_BROODWAR_SOURCE_URL || broodWarSource.url };
+    const expansionUrl = new URL(expansion.url);
+    assert.equal(expansionUrl.protocol, 'https:', 'Expansion source requires HTTPS');
+    assert.ok(!expansionUrl.username && !expansionUrl.password, 'Expansion source URL must not contain credentials');
+    await ensureSource(directory, expansion);
+  }
   const output = resolve(process.env.OPENBW_CAMPAIGN_PUBLIC_DIR || '/usr/share/nginx/html/data/campaign');
   mkdirSync(output, { recursive: true });
   for (const mission of campaignMissions) {
