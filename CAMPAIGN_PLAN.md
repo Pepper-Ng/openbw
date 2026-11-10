@@ -50,6 +50,18 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Native routing checks exercise adjacent PB1A/PB1B entries, original-script coexistence, native town initialization and stored waits. Synthetic readers cover both table layouts and CHK format boundaries.
 - Framework verification passed: both rebuilt binaries, shared native AI/combat, original Eye of the Storm recorded-input recovery, menu/progress-code checks and bounded source-download tests. Only the documented existing compiler warnings remain.
 
+### Brood War 1: Escape from Aiur
+
+- Catalogue ID `bwprotoss01`, Episode IV mission 1. Original CHK SHA-256 `ef8153dbfc7d9216207aaac7cda7a2950980cdb35a9c72612a67dc7b76a09e67`; 293 UNIT records, 117 triggers and 28 audio files. Pack SHA-256 `cc68e6e93a2715c4412b774f0bc58f50f764ea233056fe5d476c118b3eba2b7f`.
+- Human slot 2 starts with Zeratul and naturally rescues six Zealots and three Dragoons. The source grants no minerals, gas, base or countdown.
+- PB1A and PB1B run their original expansion area programs for Zerg owners 4 and 3. Random switches use the native deterministic random stream.
+- Shared trigger support now covers custom-score conditions, ownership transfers through `trigger_give_unit_to`, percentage hit points/shields and one-way alliance changes. Existing Create Unit and Order implementations are advertised to the browser capability gate.
+- The source uses zero-count unit creation in format 205, as the original format-59 campaign does. The compatibility rule now accepts both audited formats.
+- Native neutral retaliation now changes the attacked neutral owner to computer control and uses native idle/attack orders. The source's neutral Protoss combat exposed the previous fatal placeholder.
+- Five fresh native cases passed: idle start, Zeratul death, ordinary-unit rejection at the Warp Gate, the full original shuttle/Raynor/Fenix escape ending and identity-preserving natural rescue.
+- Outcome fixtures protect actors with a test-only matrix. They relocate Zeratul to isolate the ending/rescue gates and create one ordinary Zealot for the wrong-actor case.
+- Browser verification passed original briefing/audio/objectives, framed normal Zeratul movement and deterministic recovery at 1228 service ticks with one command batch. Full normal-control human victory and classic difficulty comparison remain open.
+
 The campaign's game logic must remain authoritative. Do not mark the mission playable merely because terrain renders, replace scripted behavior with a melee bot, remove unsupported triggers, or grant Raynor directly to the player to bypass rescue support.
 
 ## Start Here: Agent Handoff

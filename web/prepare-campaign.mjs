@@ -37,6 +37,7 @@ const missions = {
   protoss08: { title: 'The Trial of Tassadar', episode: 3, order: 8, scenarioHash: '4ee5b213ce8e46b5a3b1ab3e815767a91b0b1f720d503cb203548730ce0efc37', units: 260, triggers: 8, sounds: 15 },
   protoss09: { title: 'Shadow Hunters', episode: 3, order: 9, scenarioHash: '5af7dd1b80328ee75501b18e54c5f8849c320ca247e3380e1aae1349d4a8a15c', units: 348, triggers: 12, sounds: 6 },
   protoss10: { title: 'Eye of the Storm', episode: 3, order: 10, scenarioHash: 'e8bc84347cd8810d423e76c8e739612de777f579dd287eca2ef5bc620ff4ebdd', units: 407, triggers: 8, sounds: 10 },
+  bwprotoss01: { title: 'Escape from Aiur', episode: 4, order: 1, scenarioHash: 'ef8153dbfc7d9216207aaac7cda7a2950980cdb35a9c72612a67dc7b76a09e67', units: 293, triggers: 117, sounds: 28 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignSource = Object.freeze({

@@ -3730,6 +3730,71 @@ static void eye_storm_mission_cases(data_loading::data_files_loader<>& load_data
 	}
 }
 
+static void escape_aiur_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[2].controller == player_t::controller_occupied && st.players[2].race == race_t::protoss && st.unit_counts[2][UnitTypes::Hero_Zeratul] == 1 && !st.building_counts[2], "Escape from Aiur retains the original expansion format, human slot, Zeratul and baseless start");
+		unit_t* zeratul = nullptr;
+		for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Zeratul)) zeratul = unit;
+		require(zeratul, "the original Zeratul supplies the escape and survival predicates");
+		functions.set_unit_order(zeratul, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		require(!st.players[2].victory_state && !st.current_minerals[2] && !st.current_gas[2] && !st.countdown_active && st.campaign_ai[3].area_towns.size() == 1 && st.campaign_ai[4].area_towns.size() == 1 && st.campaign_ai_scripts.size() == 2, "both expansion Zerg area programs run while the source retains its zero-resource, untimed opening");
+		for (const auto& script : st.campaign_ai_scripts) require(script.broodwar, "Escape from Aiur uses the original expansion AI bytes");
+		if (scenario == 0) {
+			for (int tick = 0; tick != 1200; ++tick) step();
+			require(!st.players[2].victory_state && !st.trigger_switches[43], "waiting at the original start cannot complete the escape objective");
+		} else if (scenario == 1) {
+			functions.kill_unit(zeratul);
+			for (int tick = 0; tick != 500 && !st.players[2].victory_state; ++tick) step();
+			require(st.players[2].victory_state == 2, "Zeratul death runs the original delayed defeat sequence");
+		} else if (scenario == 2) {
+			const auto& area = st.locations[21].area;
+			require(functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Protoss_Zealot), (area.from + area.to) / 2, 2), "isolated nonhero gate fixture has an ordinary Zealot");
+			for (int tick = 0; tick != 1200; ++tick) step();
+			require(!st.trigger_switches[43] && !st.players[2].victory_state, "an ordinary unit at the Warp Gate cannot substitute for Zeratul");
+		} else if (scenario == 3) {
+			const auto& area = st.locations[21].area;
+			functions.move_unit(zeratul, (area.from + area.to) / 2);
+			functions.refresh_unit_position(zeratul);
+			bool paused = false, raynor = false, fenix = false;
+			for (int tick = 0; tick != 5000 && !st.players[2].victory_state; ++tick) {
+				step();
+				paused = paused || st.scripted_pause;
+				raynor = raynor || st.unit_counts[2][UnitTypes::Hero_Jim_Raynor_Vulture] > 0;
+				fenix = fenix || st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon] > 0;
+			}
+			require(paused && st.trigger_switches[43] && st.trigger_switches[45] && raynor && fenix && st.players[2].victory_state >= 3, "the original Warp Gate, shuttle arrivals, Raynor/Fenix conversation and departure reach native victory");
+		} else {
+			unit_t* rescue = nullptr;
+			for (unit_t* unit : ptr(st.player_units[5])) if (functions.unit_is(unit, UnitTypes::Protoss_Dragoon) && unit->sprite->position.y < 500) rescue = unit;
+			require(rescue, "original rescue-owned Dragoons remain present");
+			unit_id id = functions.get_unit_id(rescue);
+			xy destination = rescue->sprite->position + xy(-48, 0);
+			functions.move_unit(zeratul, destination + xy(-160, 0));
+			functions.refresh_unit_position(zeratul);
+			functions.issue_order(zeratul, false, functions.get_order_type(Orders::Move), {destination, nullptr});
+			for (int tick = 0; tick != 600 && functions.get_unit(id)->owner == 5; ++tick) step();
+			require(functions.get_unit(id) && functions.get_unit(id)->owner == 2, "normal native movement rescues the same original Dragoon rather than granting a replacement");
+		}
+		printf("Escape from Aiur original mission case %d passed.\n", scenario);
+	}
+}
+
 static void expansion_ai_binary_checks(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	game_player player(load_data_file);
 	data_loading::mpq_file<> map_loader(map_file);
@@ -3785,6 +3850,7 @@ int main(int argc, char** argv) {
 	bool trial_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss08");
 	bool shadow_hunters = campaign && argc > 4 && !strcmp(argv[4], "protoss09");
 	bool eye_storm = campaign && argc > 4 && !strcmp(argv[4], "protoss10");
+	bool escape_aiur = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss01");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3799,6 +3865,10 @@ int main(int argc, char** argv) {
 		game_load.setup_info.starting_minerals = 0;
 		game_load.setup_info.create_melee_units_for_player = {};
 		game_load.load_map(map_loader);
+		if (escape_aiur) {
+			escape_aiur_mission_cases(load_data_file, map_file);
+			return 0;
+		}
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { expansion_ai_binary_checks(load_data_file, map_file); cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
 		if (eye_storm) {

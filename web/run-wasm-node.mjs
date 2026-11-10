@@ -722,6 +722,11 @@ function testCampaign() {
     assert.equal(units.some(unit => unit[1].includes('Hyperion')), false, 'Raynor and the Terran force must come from the original setup trigger');
     assert.equal(x.openbw_mission_countdown(), -1, 'Eye of the Storm has no invented countdown');
     console.log('Eye of the Storm original slot-1 Protoss start and deferred Terran setup checks passed.');
+  } else if (missionId === 'bwprotoss01') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 1); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 2);
+    for (const [type, count] of [['Zeratul', 1], ['Zealot', 6], ['Dragoon', 3], ['Nexus', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count, 'Preserve the original Zeratul and native opening rescues without a melee base');
+    assert.ok(units.some(unit => unit[1] === 'Dragoon' && unit[2] === '7'), 'Keep the original rescuable Protoss force');
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -743,7 +748,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
   if (missionId === 'protoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Trial of Tassadar starts without gas');
@@ -814,7 +819,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -834,6 +839,20 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId === 'bwprotoss01') {
+    const hero = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Zeratul' && Number(unit[2]) === mission.humanSlot);
+    assert.ok(hero);
+    const word = value => [value & 255, value >> 8 & 255];
+    const target = [Number(hero[3]) + 160, Number(hero[4]) + 64];
+    const selection = [9, 1, ...word(Number(hero[0]))], movement = [21, ...word(target[0]), ...word(target[1]), 0, 0, 228, 0, 6, 0];
+    const bytes = Uint8Array.from([...word(selection.length), ...selection, ...word(movement.length), ...movement]);
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(mission.humanSlot, bytes.length);
+    for (let tick = 0; tick < 24; tick++) x.openbw_step();
+    const moved = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === hero[0]);
+    assert.ok(moved && Math.hypot(Number(moved[3]) - Number(hero[3]), Number(moved[4]) - Number(hero[4])) > 16, 'Normal recorded movement retains and moves the original Zeratul');
+    assert.equal(x.openbw_outcome(), 0);
+  }
   if (missionId === 'terran06' && !recoveryTest) {
     const currentUnits = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
     const word = value => [value & 255, value >> 8 & 255];

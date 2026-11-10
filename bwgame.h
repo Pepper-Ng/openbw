@@ -232,6 +232,7 @@ struct state_base_copyable {
 
 	std::array<int, 12> unit_score;
 	std::array<int, 12> building_score;
+	std::array<int, 12> custom_score{};
 
 	std::array<std::array<fp1, 3>, 12> supply_used;
 	std::array<std::array<fp1, 3>, 12> supply_available;
@@ -7863,7 +7864,10 @@ struct state_functions {
 				st.players[u->owner].controller = player_t::controller_computer_game;
 				st.alliances[u->owner][target->owner] = 0;
 				st.alliances[target->owner][u->owner] = 0;
-				error("a neutral unit attacked something. this triggers computer player behavior which is not supported yet :(");
+				for (unit_t* unit : ptr(st.player_units[u->owner])) {
+					if (unit->order_type->id == Orders::Neutral && !unit_dying(unit)) set_unit_order(unit, unit->unit_type->return_to_idle);
+				}
+				if (unit_can_attack_target(u, target)) set_unit_order(u, u->unit_type->attack_unit, target);
 			}
 		}
 	}
@@ -20049,6 +20053,13 @@ struct state_functions {
 			return false;
 		case 14: // opponents
 			return trigger_count_comparison(c, trigger_opponent_count(owner, c.group));
+		case 21: // score
+			{
+				if (c.extra_n != 7) error("unsupported campaign score type %d", c.extra_n);
+				int score = 0;
+				for (int player : trigger_players(owner, c.group)) score += st.custom_score[player];
+				return trigger_count_comparison(c, score);
+			}
 		case 22: // always
 			return true;
 		default:
@@ -20208,14 +20219,14 @@ struct state_functions {
 	};
 
 	static bool campaign_condition_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 7 || type == 11 || type == 12 || type == 15 || type == 17 || type == 22;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 7 || type == 11 || type == 12 || type == 15 || type == 17 || type == 21 || type == 22;
 	}
 
 	static bool campaign_action_supported(int type) {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
 		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 32: case 38: case 39: case 42: case 43: case 47:
+		case 32: case 38: case 39: case 42: case 43: case 44: case 46: case 47: case 48: case 49: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20289,6 +20300,7 @@ struct state_functions {
 				if (a.num_n == 4) value = true;
 				else if (a.num_n == 5) value = false;
 				else if (a.num_n == 6) value = !value;
+				else if (a.num_n == 11) value = (lcg_rand(0) & 1) != 0;
 				else error("unsupported switch modifier %d", a.num_n);
 				return true;
 			}
@@ -20569,7 +20581,7 @@ struct state_functions {
 				auto& loc = st.locations.at(a.location - 1);
 				xy pos = (loc.area.from + loc.area.to) / 2;
 				int count = a.num_n;
-				if (!count && game_st.scenario_format == 59) count = 1;
+				if (!count && (game_st.scenario_format == 59 || game_st.scenario_format == 205)) count = 1;
 				if (!count) error("unsupported zero-quantity unit creation for scenario format %d", game_st.scenario_format);
 				unit_creation_properties properties{};
 				if (a.type == 11 && a.group2_n) properties = game_st.unit_properties.at(a.group2_n - 1);
@@ -20611,6 +20623,34 @@ struct state_functions {
 					if (!unit_can_receive_order(u, order, u->owner)) continue;
 					set_unit_order(u, order, target_pos);
 				}
+			}
+			return true;
+		case 48: // give units
+		case 49: // modify hit points
+		case 51: // modify shields
+			{
+				const auto& location = st.locations.at(a.location - 1);
+				int remaining = a.num_n ? a.num_n : std::numeric_limits<int>::max();
+				int destination = a.group2_n == 13 ? owner : a.group2_n;
+				if (a.type == 48 && (destination < 0 || destination >= 12)) error("unsupported ownership destination %d", destination);
+				if (a.type != 48 && a.group2_n > 100) error("unit percentage exceeds 100");
+				a_vector<unit_t*> units;
+				for (unit_t* unit : find_units(location.area)) {
+					if (ut_turret(unit) || unit_dying(unit) || !unit_is_at_elevation_flags(unit, location.elevation_flags)) continue;
+					if (trigger_unit_pred(owner, unit, a.group_n, a.extra_n)) units.push_back(unit);
+				}
+				for (unit_t* unit : units) {
+					if (a.type == 48) trigger_give_unit_to(unit, destination);
+					else if (a.type == 49) set_unit_hp(unit, std::max(fp8::integer(1), unit->unit_type->hitpoints * a.group2_n / 100));
+					else unit->shield_points = fp8::integer(unit->unit_type->shield_points) * a.group2_n / 100;
+					if (!--remaining) break;
+				}
+				return true;
+			}
+		case 57: // alliance status
+			if (a.extra_n > 2) error("unsupported alliance status %d", a.extra_n);
+			for (int player : trigger_players(owner, a.group_n)) {
+				st.alliances[owner][player] = a.extra_n;
 			}
 			return true;
 		case 52: // set unit resources
@@ -21239,6 +21279,7 @@ struct game_load_functions : state_functions {
 
 		st.unit_score = {};
 		st.building_score = {};
+		st.custom_score = {};
 
 		st.supply_used = {};
 		st.supply_available = {};
