@@ -20547,7 +20547,8 @@ struct state_functions {
 			}
 		case 11:
 		case 44: // create unit
-			for (int p : trigger_players(owner, a.group_n)) {
+			for (int p : all_player_slots) {
+				if (a.group_n < 12 ? p != a.group_n : !trigger_players_pred(owner, a.group_n, p)) continue;
 				const unit_type_t* ut = get_unit_type((UnitTypes)a.extra_n);
 				if (unit_is_mineral_field(ut) || unit_is(ut, UnitTypes::Resource_Vespene_Geyser)) p = 11;
 				auto& loc = st.locations.at(a.location - 1);

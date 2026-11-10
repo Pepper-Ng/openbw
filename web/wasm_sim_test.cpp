@@ -3468,6 +3468,96 @@ static void homeland_mission_cases(data_loading::data_files_loader<>& load_data_
 	}
 }
 
+static void trial_tassadar_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+		auto step = [&]() {
+			for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		unit_t* raynor = nullptr;
+		unit_t* fenix = nullptr;
+		unit_t* carrier = nullptr;
+		unit_t* escort = nullptr;
+		unit_t* prison = nullptr;
+		for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) {
+			if (functions.unit_is(unit, UnitTypes::Hero_Hyperion)) raynor = unit;
+			if (functions.unit_is(unit, UnitTypes::Hero_Fenix_Dragoon)) fenix = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[7])) {
+			if (functions.unit_is(unit, UnitTypes::Protoss_Carrier)) carrier = unit;
+			if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) escort = unit;
+		}
+		for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Special_Stasis_Cell_Prison)) prison = unit;
+		require(raynor && fenix && carrier && escort && prison && st.trigger_switches[13] && !functions.unit_interceptor_count(carrier), "original Raynor and source-created Fenix survive setup with an empty Carrier and original Stasis Cell");
+		auto cinematic_controller = st.players[1].controller;
+		if (scenario < 3) {
+			if (scenario == 0) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			} else functions.kill_unit(scenario == 1 ? raynor : fenix);
+			for (int tick = 0; tick != 1000 && !st.players[7].victory_state; ++tick) step();
+			require(st.players[7].victory_state == 2, "original human-force, Raynor or source-guarded Fenix loss reaches Trial of Tassadar defeat");
+		} else {
+			for (unit_t* hero : {raynor, fenix}) {
+				unit_id original_id = functions.get_unit_id(hero);
+				if (hero->owner != 7) {
+					functions.issue_order(escort, false, functions.get_order_type(Orders::Move), {hero->sprite->position, nullptr});
+					for (int tick = 0; tick != 1600 && hero->owner != 7; ++tick) step();
+				}
+				require(functions.get_unit(original_id) == hero && hero->owner == 7, "normal original-army proximity naturally rescues the same Raynor and Fenix without grants");
+				functions.set_unit_order(hero, functions.get_order_type(Orders::HoldPosition));
+			}
+			if (scenario == 3) {
+				a_vector<unit_t*> victims;
+				for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 160; ++tick) step();
+				require(!st.players[7].victory_state && st.unit_counts[0][UnitTypes::Special_Stasis_Cell_Prison] == 1, "destroying all Conclave Nexuses cannot replace the original Stasis Cell objective");
+				functions.move_unit(carrier, prison->sprite->position + xy(192, -160));
+				for (int tick = 0; tick != 64; ++tick) step();
+				fp8 initial_hp = prison->hp, initial_shields = prison->shield_points;
+				functions.issue_order(carrier, false, carrier->unit_type->attack_unit, {prison->sprite->position, prison});
+				for (int tick = 0; tick != 160; ++tick) step();
+				require(!functions.unit_interceptor_count(carrier) && prison->hp >= initial_hp && prison->shield_points >= initial_shields && !st.players[7].victory_state, "the original empty Carrier cannot damage the Stasis Cell without real Interceptors");
+				action_state player_commands;
+				action_functions actions(st, player_commands);
+				require(actions.action_select(7, carrier) && actions.action_train_fighter(7), "the original Carrier accepts normal paid Interceptor production");
+				for (int tick = 0; tick != 600 && !functions.unit_interceptor_count(carrier); ++tick) step();
+				require(functions.unit_interceptor_count(carrier) == 1 && st.current_minerals[7] == 45 && !st.current_gas[7], "native Interceptor production charges twenty-five of the original seventy minerals without funding or ammunition grants");
+				functions.set_unit_shield_points(prison, 0_fp8);
+				functions.set_unit_hp(prison, fp8::integer(1));
+				functions.issue_order(carrier, false, carrier->unit_type->attack_unit, {prison->sprite->position, prison});
+				bool launched = false;
+				for (int tick = 0; tick != 2400 && !st.killed_unit_counts[7][UnitTypes::Special_Stasis_Cell_Prison]; ++tick) { step(); launched = launched || carrier->carrier.outside_count > 0; }
+				require(launched && st.killed_unit_counts[7][UnitTypes::Special_Stasis_Cell_Prison] == 1, "a paid native Interceptor launches and supplies an actual player weapon kill of the original Stasis Cell");
+			} else functions.kill_unit(prison);
+			bool ending_paused = false;
+			for (int tick = 0; tick != 6000 && !st.players[7].victory_state; ++tick) { step(); ending_paused = ending_paused || st.scripted_pause; }
+			require(ending_paused && st.players[7].victory_state >= 3 && st.building_counts[0] + st.building_counts[3] > 0, "Stasis Cell destruction runs the original paused rescue ending and victory with other enemy buildings remaining");
+			require(st.unit_counts[2][UnitTypes::Hero_Tassadar] + st.unit_counts[7][UnitTypes::Hero_Tassadar] == 1 && st.unit_counts[2][UnitTypes::Hero_Zeratul] + st.unit_counts[7][UnitTypes::Hero_Zeratul] == 1 && st.unit_counts[1][UnitTypes::Hero_Dark_Templar] == 9, "the source ending creates its single Tassadar, single Zeratul and nine classic Dark Templars without dropping inactive-owner cinematic actors");
+			bool cinematic_slot_active = false;
+			for (int owner : functions.trigger_players(7, 17)) if (owner == 1) cinematic_slot_active = true;
+			require(st.players[1].controller == cinematic_controller && !cinematic_slot_active && !st.campaign_ai[1].town_active, "explicit cinematic creation does not activate the unused slot, its group-trigger membership or economy AI");
+		}
+		printf("The Trial of Tassadar original mission case %d passed.\n", scenario);
+	}
+}
+
 int main(int argc, char** argv) {
 	const char* data_dir = argc > 1 ? argv[1] : "/data";
 	const char* map_file = argc > 2 ? argv[2] : "/maps/Benzene.scx";
@@ -3501,6 +3591,7 @@ int main(int argc, char** argv) {
 	bool choosing_sides = campaign && argc > 4 && !strcmp(argv[4], "protoss05");
 	bool into_darkness = campaign && argc > 4 && !strcmp(argv[4], "protoss06");
 	bool homeland = campaign && argc > 4 && !strcmp(argv[4], "protoss07");
+	bool trial_tassadar = campaign && argc > 4 && !strcmp(argv[4], "protoss08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -3517,6 +3608,39 @@ int main(int argc, char** argv) {
 		game_load.load_map(map_loader);
 		original_campaign_availability_checks(player.st());
 		if (combat_ai) { cloaked_targeting_checks(load_data_file, map_file); shared_combat_ai_checks(player.st()); return 0; }
+		if (trial_tassadar) {
+			auto& st = player.st();
+			state_functions functions(st);
+			st.strict_triggers = true;
+			require(st.players[7].controller == player_t::controller_occupied && st.players[7].race == race_t::protoss && st.unit_counts[7][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[7][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[7][UnitTypes::Protoss_Dragoon] == 3 && st.unit_counts[7][UnitTypes::Protoss_Carrier] == 1 && st.unit_counts[7][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[7][UnitTypes::Protoss_Pylon] == 3 && st.unit_counts[0][UnitTypes::Special_Stasis_Cell_Prison] == 1 && st.unit_counts[7][UnitTypes::Hero_Hyperion] + st.unit_counts[2][UnitTypes::Hero_Hyperion] == 1, "The Trial of Tassadar retains its original base, Carrier, Raynor Hyperion and enemy Stasis Cell");
+			for (unit_t* unit : ptr(st.player_units[7])) functions.set_unit_order(unit, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 64; ++tick) functions.next_frame();
+			require(st.trigger_switches[13] && st.unit_counts[7][UnitTypes::Hero_Fenix_Dragoon] + st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon] == 1 && !st.unit_counts[7][UnitTypes::Hero_Tassadar] && !st.unit_counts[2][UnitTypes::Hero_Tassadar] && st.current_minerals[7] == 70 && !st.current_gas[7] && !st.countdown_active && !st.players[7].victory_state, "the original setup creates Fenix and enables his survival guard, grants only seventy minerals and retains Tassadar for the Stasis Cell ending");
+			require(st.campaign_ai[3].town_active && st.campaign_ai[3].area_towns.size() == 1 && st.campaign_ai[0].town_active && st.campaign_ai_scripts.size() == 3 && !st.campaign_ai[7].town_active, "the original Pro8/Pr8B and Pr8D programs start without substituting human AI");
+			for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Protoss_Carrier)) require(!functions.unit_interceptor_count(unit), "the original Carrier starts without invented Interceptors");
+			bool area_ground_fire = false, defenders_air_fire = false;
+			int combat_budget = 6502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time + 2 * st.game->map_width;
+			for (int tick = 0; tick != combat_budget && !(area_ground_fire && defenders_air_fire); ++tick) {
+				for (int owner : {2, 7}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+					unit->defensive_matrix_hp = fp8::integer(64000);
+					unit->defensive_matrix_timer = 250;
+					functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				}
+				functions.next_frame();
+				for (int owner : {0, 3}) for (unit_id id : st.campaign_ai[owner].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
+					if (!unit->ground_weapon_cooldown && !unit->air_weapon_cooldown) continue;
+					if (owner == 3 && !functions.u_flying(unit)) area_ground_fire = true;
+					if (owner == 0 && functions.u_flying(unit)) defenders_air_fire = true;
+				}
+			}
+			require(area_ground_fire && defenders_air_fire, "original Pro8 ground and Pr8D Scout parties fire native weapons at authored waits, requests and funding");
+			printf("The Trial of Tassadar original area-ground and defender-air attacks passed.\n");
+			trial_tassadar_mission_cases(load_data_file, map_file);
+			printf("The Trial of Tassadar original initialization passed.\n");
+			return 0;
+		}
 		if (homeland) {
 			auto& st = player.st();
 			state_functions functions(st);

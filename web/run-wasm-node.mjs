@@ -260,6 +260,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(normal.unlocked('protoss07'), false, 'Homeland requires Into the Darkness victory');
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 26).map(id => [id, true])) }));
   assert.equal(normal.unlocked('protoss07'), true, 'Completing Into the Darkness unlocks Homeland');
+  assert.equal(normal.unlocked('protoss08'), false, 'The Trial of Tassadar requires Homeland victory');
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 27).map(id => [id, true])) }));
+  assert.equal(normal.unlocked('protoss08'), true, 'Completing Homeland unlocks The Trial of Tassadar');
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -305,7 +308,7 @@ const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? process.argv[3] || 'terran01' : null;
-if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07'].includes(missionId), 'Unsupported test mission');
+if (campaign) assert.ok(['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08'].includes(missionId), 'Unsupported test mission');
 const out = campaign || protossSelectionTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
@@ -677,6 +680,15 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Nexus' && unit[2] === '4').length, 1, 'Original shrine force keeps its Nexus');
     assert.equal(x.openbw_mission_countdown(), -1, 'Homeland has no invented countdown');
     console.log('Homeland original full base, heroes and Conclave Nexus checks passed.');
+  } else if (missionId === 'protoss08') {
+    assert.equal(mission.episode, 3); assert.equal(mission.order, 8); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 7);
+    for (const [type, count] of [['Probe', 4], ['Zealot', 4], ['Dragoon', 3], ['Carrier', 1], ['Nexus', 1], ['Pylon', 3]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.ok(units.some(unit => unit[1].includes('Hyperion')), 'Keep the original rescuable Raynor Battlecruiser');
+    assert.ok(units.some(unit => unit[1].includes('Stasis') && unit[2] === '0'), 'Keep the original enemy Stasis Cell');
+    assert.equal(units.some(unit => unit[1].includes('Interceptor')), false, 'The original Carrier starts without invented Interceptors');
+    assert.equal(units.some(unit => unit[1] === 'Tassadar'), false, 'Tassadar must be created by the original prison-destruction ending');
+    assert.equal(x.openbw_mission_countdown(), -1, 'The Trial of Tassadar has no invented countdown');
+    console.log('The Trial of Tassadar original base, empty Carrier, Raynor and Stasis Cell checks passed.');
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -690,7 +702,7 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : missionId === 'terran02' ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : ['terran02', 'protoss08'].includes(missionId) ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -698,7 +710,8 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70}[missionId], 'Preserve original mission minerals');
+  if (missionId === 'protoss08') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Trial of Tassadar starts without gas');
   if (missionId === 'protoss07') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 2500, 'Original Homeland grants 2500 gas');
   if (missionId === 'protoss06') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Into the Darkness has no injected gas');
   if (missionId === 'protoss05') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 0, 'Original Choosing Sides starts without gas');
@@ -766,7 +779,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -1142,6 +1155,37 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 100, 'Transport commands do not invent resources after the paid Probe');
     assert.equal(x.openbw_outcome(), 0, 'Local boarding and unloading cannot satisfy the distant original entrance objective');
     console.log('Choosing Sides normal Shuttle boarding/unloading and native actor identity passed.');
+  }
+  if (missionId === 'protoss08') {
+    const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
+    const carrier = owned().find(unit => unit[1] === 'Carrier');
+    assert.ok(carrier && owned().some(unit => unit[1].includes('Fenix')) && owned().some(unit => unit[1].includes('Hyperion')), 'Original setup and native rescue retain the original Carrier, Fenix and Raynor');
+    x.openbw_debug_select(Number(carrier[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    const interceptor = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t')).find(row => row[1] === 'Build Interceptor');
+    assert.ok(interceptor?.[0], 'The original empty Carrier exposes native Interceptor production');
+    x.openbw_key(1, interceptor[0].charCodeAt(0), 0); x.openbw_key(0, interceptor[0].charCodeAt(0), 0); x.openbw_render(0);
+    const production = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(production.length > 0, 'Interceptor production uses normal synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(production.length), production.length).set(production);
+    x.openbw_apply(mission.humanSlot, production.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 600; tick++) x.openbw_step();
+    assert.equal(owned().filter(unit => unit[1].includes('Interceptor')).length, 1, 'Native player production adds one actual original Carrier fighter');
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 45, 'Native Interceptor production charges twenty-five of the original seventy minerals without test funding');
+    const current = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/), cameraX = Math.max(0, Math.min(Number(carrier[3]) - 640, x.openbw_map_w() * 32 - 1280)), cameraY = Math.max(0, Math.min(Number(carrier[4]) - 400, x.openbw_map_h() * 32 - 800));
+    x.openbw_pan(cameraX - Number(current[1]), cameraY - Number(current[2]));
+    x.openbw_debug_select(Number(carrier[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    x.openbw_key(1, 109, 0); x.openbw_key(0, 109, 0);
+    const targetX = Number(carrier[3]) + 160 - cameraX, targetY = Number(carrier[4]) - 96 - cameraY;
+    x.openbw_mouse_button(1, 1, targetX, targetY, 1); x.openbw_mouse_button(0, 1, targetX, targetY, 1); x.openbw_render(0);
+    const movement = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(movement.length > 0, 'Original Carrier flight uses normal synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(movement.length), movement.length).set(movement);
+    x.openbw_apply(mission.humanSlot, movement.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 96; tick++) x.openbw_step();
+    const moved = owned().find(unit => unit[0] === carrier[0]);
+    assert.ok(moved && Math.hypot(Number(moved[3]) - Number(carrier[3]), Number(moved[4]) - Number(carrier[4])) > 48, 'The same original Carrier moves through native flight without teleportation');
+    assert.equal(x.openbw_outcome(), 0, 'Paid ammunition and local flight cannot bypass the original Stasis Cell objective');
+    console.log('The Trial of Tassadar native paid Interceptor production and original Carrier flight passed.');
   }
   if (['protoss04', 'protoss06'].includes(missionId)) {
     const templar = missionId === 'protoss04' ? human.find(unit => unit[1] === 'High Templar') : read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Tassadar' && unit[2] === '7');
