@@ -3926,6 +3926,51 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void battle_of_braxis_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 2; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && !st.building_counts[1] && st.unit_counts[1][UnitTypes::Protoss_Observer] == 3 && st.unit_counts[1][UnitTypes::Protoss_Shuttle] == 2 && st.unit_counts[1][UnitTypes::Protoss_Scout] == 3 && st.unit_counts[1][UnitTypes::Protoss_Zealot] == 4 && st.unit_counts[1][UnitTypes::Protoss_Dragoon] == 2, "The Battle of Braxis retains its original slot-1 baseless Protoss force");
+		require(st.unit_counts[1][UnitTypes::Hero_Artanis] == 1 && st.unit_counts[7][UnitTypes::Special_Power_Generator] == 5 && !st.current_minerals[1] && !st.current_gas[1] && !st.countdown_active, "The original Artanis is naturally rescued, and the five generators, zero setup resources and untimed start are retained");
+		auto step = [&]() {
+			for (int owner : {1, 2}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		const auto& artanis_loss_gate = st.game->triggers[2].conditions[0];
+		require(artanis_loss_gate.unit_id == int(UnitTypes::Hero_Artanis) && !functions.test_trigger_condition(artanis_loss_gate, 1), "the authored Artanis loss predicate remains false while the naturally rescued hero survives");
+		require(!st.players[1].victory_state, "The original idle opening does not award an early outcome");
+		if (scenario == 0) {
+			a_vector<unit_t*> generators;
+			for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Special_Power_Generator) && !functions.unit_dying(unit)) generators.push_back(unit);
+			require(generators.size() == 5, "the original UED owner supplies all five power generators");
+			for (int index = 0; index != 4; ++index) functions.kill_unit(generators[index]);
+			for (int tick = 0; tick != 512; ++tick) step();
+			require(!st.players[1].victory_state && !(st.trigger_switches[1] && st.trigger_switches[2] && st.trigger_switches[3] && st.trigger_switches[4] && st.trigger_switches[5]), "one surviving original generator blocks the source victory");
+			functions.kill_unit(generators[4]);
+			for (int tick = 0; tick != 5000 && !st.players[1].victory_state; ++tick) step();
+			require(st.trigger_switches[1] && st.trigger_switches[2] && st.trigger_switches[3] && st.trigger_switches[4] && st.trigger_switches[5] && st.players[1].victory_state >= 3, "destroying all five original generators satisfies the source victory and ending");
+		} else {
+			unit_t* artanis = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Artanis) && !functions.unit_dying(unit)) artanis = unit;
+			require(artanis, "the original rescued Artanis remains available for its loss predicate");
+			functions.kill_unit(artanis);
+			for (int tick = 0; tick != 1000 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2, "losing the original Artanis reaches the authored defeat");
+		}
+		printf("The Battle of Braxis original mission case %d passed.\n", scenario);
+	}
+}
+
 static void quest_for_uraj_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 4; ++scenario) {
 		game_player player(load_data_file);
@@ -4280,6 +4325,7 @@ int main(int argc, char** argv) {
 	bool dunes_shakuras = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss02");
 	bool legacy_xelnaga = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss03");
 	bool quest_for_uraj = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss04");
+	bool battle_of_braxis = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4308,6 +4354,10 @@ int main(int argc, char** argv) {
 		}
 		if (quest_for_uraj) {
 			quest_for_uraj_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (battle_of_braxis) {
+			battle_of_braxis_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

@@ -277,10 +277,12 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwprotoss01'), true, 'Brood War does not require original campaign completion');
   assert.equal(expansion.unlocked('bwprotoss02'), false, 'Brood War remains sequential internally');
   assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later expansion mission stays locked');
+  assert.equal(expansion.unlocked('bwprotoss05'), false, 'The fifth expansion mission stays locked');
   stored.set('v2', JSON.stringify({ version: 2, victories: { bwprotoss01: true, bwprotoss03: true } }));
   assert.equal(expansion.unlocked('bwprotoss02'), true);
   assert.equal(expansion.unlocked('bwprotoss03'), false, 'A later victory cannot bypass an expansion prerequisite');
   assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later victory cannot bypass preceding expansion missions');
+  assert.equal(expansion.unlocked('bwprotoss05'), false, 'A later victory cannot bypass preceding expansion missions');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -760,6 +762,13 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Shuttle' && unit[2] === '2').length, 3, 'Retain the original rescue-owned Shuttles');
     assert.equal(units.filter(unit => unit[1].includes('Uraj') && unit[2] === '6').length, 1, 'Retain the original Uraj crystal owner');
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwprotoss05') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 5); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 1);
+    for (const [type, count] of [['Observer', 3], ['Shuttle', 2], ['Scout', 3], ['Zealot', 4], ['Dragoon', 2]]) assert.equal(human.filter(unit => unit[1] === type).length, count, 'Preserve the original baseless Protoss force');
+    assert.equal(human.filter(unit => unit[1] === 'Nexus' || unit[1] === 'Probe').length, 0, 'Do not invent a Protoss base or workers');
+    assert.equal(units.filter(unit => unit[1] === 'Artanis' && unit[2] === '1').length, 1, 'Keep the original naturally rescued Artanis');
+    assert.equal(units.filter(unit => unit[1].includes('Power Generator') && unit[2] === '7').length, 5, 'Keep all five powered generators');
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -773,7 +782,7 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : ['terran02', 'protoss08'].includes(missionId) ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : ['terran02', 'protoss08', 'bwprotoss05'].includes(missionId) ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -781,7 +790,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'bwprotoss03') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 75, 'The original expansion base grants exactly seventy-five gas');
   if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
@@ -853,7 +862,7 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
-  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01', 'bwprotoss02'].includes(missionId);
+  const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01', 'bwprotoss02', 'bwprotoss05'].includes(missionId);
   if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
@@ -926,8 +935,8 @@ function testCampaign() {
     assert.match(read(x.openbw_card()), /\tCancel\t/, 'Recovery is captured during actual paid Nexus construction');
     assert.equal(x.openbw_outcome(), 0);
   }
-  if (missionId === 'bwprotoss01' || missionId === 'bwprotoss04') {
-    const unitName = missionId === 'bwprotoss01' ? 'Zeratul' : 'Probe';
+  if (missionId === 'bwprotoss01' || missionId === 'bwprotoss04' || missionId === 'bwprotoss05') {
+    const unitName = missionId === 'bwprotoss01' ? 'Zeratul' : missionId === 'bwprotoss05' ? 'Zealot' : 'Probe';
     const actor = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === unitName && Number(unit[2]) === mission.humanSlot);
     assert.ok(actor);
     const word = value => [value & 255, value >> 8 & 255];

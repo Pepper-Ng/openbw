@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first four Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras, Legacy of the Xel'Naga and Quest for Uraj.
+- All thirty original numbered StarCraft missions and the first five Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras, Legacy of the Xel'Naga, Quest for Uraj and The Battle of Braxis.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
-- The expansion framework and first three mission milestones were committed without co-author trailers. Their push to `campaign` was verified at `befa0c7d508260b4bedff260fc889003cff79b4d`; Quest for Uraj is committed separately, and its push remains pending until Battle of Braxis is committed.
+- The expansion framework and first three mission milestones remain on `campaign` at `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj and The Battle of Braxis are separate commits without co-author trailers; their push to `campaign` is pending after the completed release gate.
 - The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- The primary follow-up is the explicit validation backlog below and the next chronological expansion mission, Battle of Braxis.
+- The primary follow-up is the explicit validation backlog below; Return to Char is the next chronological expansion mission.
 
 ### Historical Milestone Context
 
@@ -96,13 +96,22 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Four fresh native cases pass: strict original initialization/AI, the Drop02 Reaver and Scarabs plus native Terran attack, the two-building Shuttle/Kerrigan/Uraj victory sequence, final-building defeat and Kerrigan-loss defeat. Test-only protection and relocation are recorded separately from normal gameplay.
 - Browser verification passes the original briefing, all three opening transmissions, the 200-mineral source start, normal framed Probe movement and fresh-instance recovery at 1228 service ticks with one command batch. The isolated menu displays four ordered Brood War missions with Quest for Uraj locked behind the first three. Full normal-control victory and classic comparison remain open.
 
+### Brood War 5: The Battle of Braxis
+
+- Catalogue ID `bwprotoss05`, Episode IV mission 5. Original CHK SHA-256 `b32673a2c6b5aa4479202df8ddc408c2cca29cca094b77e357fb1f930103b963`; 405 UNIT records, 102 gameplay triggers, one briefing and 11 audio dependencies. The 12-file pack is 5,702,099 bytes, decodes to 5,701,363 bytes and has SHA-256 `bd3814fe6664152d5c3f984bfe33bb50d9f2ff4a52cfca2e62a9367aaa33c345`.
+- Human slot 1 is Protoss and starts without a base or injected resources: three Observers, two Shuttles, three Scouts, four Zealots and two Dragoons. The original Artanis starts in rescue ownership and naturally transfers to the human force. Five original Special Power Generators remain with UED owner 7; the source has no countdown.
+- The source enables victory only after all five generator switches are set. One surviving generator blocks victory. Losing the naturally rescued Artanis reaches the separate source defeat. The trigger suite retains the original generator-sector score/bring gates, UED bunker garrisons, creation/give-unit operations and alliance changes.
+- The original AI audit routes `+Vi3` and `EnBk`; there is no invented economic program. Strict native checks pass for the original baseless force, initial Artanis rescue, the all-five-generator victory and Artanis-loss defeat.
+- Browser verification passes the original briefing, the zero-resource/untimed opening, normal framed Zealot movement and fresh-instance recovery at 1228 service ticks with one command batch. The isolated menu displays five ordered Brood War missions with The Battle of Braxis locked behind the preceding four. Full normal-control victory and classic comparison remain open.
+
 ### Brood War UI And Release Verification
 
 - At the three-expansion-mission milestone, the rebuilt native/browser engines passed 72 modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
-- Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed. Only the documented existing compiler warnings remain.
+- After missions 4 and 5, all 76 release modes passed: 35 native mission suites, 35 recorded-input recoveries and six shared AI/combat, menu, commands, Protoss-selection, network and lobby suites. The source/AI reader tests, source-download/cache/checksum/stall tests, signalling-server suite, JavaScript syntax checks and `git diff --check` also passed.
+- Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed at the three-mission milestone. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.
-- Full normal-control human victories, physical-device acceptance and exact classic AI/difficulty comparison remain open for all three expansion missions. Automated fixtures and GUI smoke checks do not establish those acceptance levels.
+- Full normal-control human victories, physical-device acceptance and exact classic AI/difficulty comparison remain open for the five implemented expansion missions. Automated fixtures and GUI smoke checks do not establish those acceptance levels.
 
 ## Validation Backlog
 
