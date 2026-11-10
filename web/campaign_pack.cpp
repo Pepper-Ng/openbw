@@ -141,7 +141,7 @@ static void write_output(const char* path, const a_vector<uint8_t>& bytes) {
 int main(int argc, char** argv) {
 	if (argc != 4) error("usage: campaign-pack SOURCE MISSION OUTPUT");
 	a_string mission = argv[2];
-	bool expansion = mission == "bwprotoss01" || mission == "bwprotoss02" || mission == "bwprotoss03";
+	bool expansion = mission == "bwprotoss01" || mission == "bwprotoss02" || mission == "bwprotoss03" || mission == "bwprotoss04";
 	if (!expansion && mission != "terran01" && mission != "terran02" && mission != "terran03" && mission != "terran04" && mission != "terran05" && mission != "terran06" && mission != "terran08" && mission != "terran09" && mission != "terran11" && mission != "terran12" && mission != "zerg01" && mission != "zerg02" && mission != "zerg03" && mission != "zerg04" && mission != "zerg05" && mission != "zerg06" && mission != "zerg07" && mission != "zerg08" && mission != "zerg09" && mission != "zerg10" && mission != "protoss01" && mission != "protoss02" && mission != "protoss03" && mission != "protoss04" && mission != "protoss05" && mission != "protoss06" && mission != "protoss07" && mission != "protoss08" && mission != "protoss09" && mission != "protoss10" && mission != "--ai-script" && mission != "--bw-script") error("unsupported preparation request");
 	a_string mission_root = expansion ? "campaign\\expprotoss\\" + mission.substr(2) + "\\" : "campaign\\" + a_string(mission.compare(0, 7, "protoss") == 0 ? "protoss" : mission.compare(0, 4, "zerg") == 0 ? "zerg" : "terran") + "\\" + mission + "\\";
 	embedded_mpq_reader source(argv[1]);

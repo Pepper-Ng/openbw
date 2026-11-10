@@ -77,7 +77,7 @@ play_ui* g_ui = nullptr;
 
 // Build the game with `n` occupied slots. Every peer must pass an identical slot list (and
 // the same map) or their initial states differ and lockstep is broken from frame 0.
-static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n, bool mission = false) {
+static void init_game(int width, int height, int my_slot, const mp_slot* slots, size_t n, bool mission = false, bool campaign_start_units = false) {
 	if (g_ui || my_slot < 0 || my_slot >= 8) error("invalid or already initialized game session");
 	g_loader = new loader_t(data_loading::data_files_directory<loader_t>(""));
 	if (mission) g_loader->mpqs.emplace_front("openbw.mission");
@@ -118,7 +118,7 @@ static void init_game(int width, int height, int my_slot, const mp_slot* slots, 
 			st.strict_triggers = true;
 			if (st.players[my_slot].controller != player_t::controller_open || st.players[my_slot].race != my_race) error("mission human slot/race mismatch");
 			for (size_t owner = 0; owner != 12; ++owner) {
-				game_load.setup_info.create_melee_units_for_player[owner] = false;
+				game_load.setup_info.create_melee_units_for_player[owner] = campaign_start_units && int(owner) == my_slot;
 				if (st.players[owner].controller == player_t::controller_open) st.players[owner].controller = int(owner) == my_slot ? player_t::controller_occupied : player_t::controller_inactive;
 				if (st.players[owner].controller == player_t::controller_computer) st.players[owner].controller = player_t::controller_computer_game;
 			}
@@ -188,9 +188,10 @@ OPENBW_EXPORT(openbw_init) void openbw_init(int width, int height, int race, int
 	init_game(width, height, slot, &s, 1);
 }
 
-OPENBW_EXPORT(openbw_init_campaign) void openbw_init_campaign(int width, int height, int race, int slot) {
+OPENBW_EXPORT(openbw_init_campaign) void openbw_init_campaign(int width, int height, int race, int slot, int create_starting_units) {
+	if (create_starting_units != 0 && create_starting_units != 1) error("invalid mission starting-unit setting");
 	mp_slot human{slot, (race_t)race};
-	init_game(width, height, slot, &human, 1, true);
+	init_game(width, height, slot, &human, 1, true, create_starting_units != 0);
 }
 
 // Resize the render target (e.g. when the browser window changes). Recreates

@@ -5,12 +5,12 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first three Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras and Legacy of the Xel'Naga.
+- All thirty original numbered StarCraft missions and the first four Brood War missions are implemented in the catalogue. The expansion begins with Escape from Aiur, Dunes of Shakuras, Legacy of the Xel'Naga and Quest for Uraj.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
-- The expansion framework and three mission milestones were committed without co-author trailers as requested. The push to `campaign` was verified at `befa0c7d508260b4bedff260fc889003cff79b4d`; website rollout was not established.
+- The expansion framework and first three mission milestones were committed without co-author trailers. Their push to `campaign` was verified at `befa0c7d508260b4bedff260fc889003cff79b4d`; Quest for Uraj is committed separately, and its push remains pending until Battle of Braxis is committed.
 - The previous original-campaign gate passed sixty-six modes. Expansion verification and the new seventy-two-mode gate are recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
-- The primary follow-up is the explicit validation backlog below and, when authorized, the next chronological expansion mission.
+- The primary follow-up is the explicit validation backlog below and the next chronological expansion mission, Battle of Braxis.
 
 ### Historical Milestone Context
 
@@ -86,9 +86,19 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Native fixtures protect actors with matrices. Outcome cases relocate the original Dark Templars and weaken Cerebrates to one hit point. The AI-fire case lets PB3C assemble its timed party, then relocates one protected original Probe onto terrain reachable from that otherwise isolated eastern party. PB3A attacks the original starting base; no attack wait, production result, AI opcode or map route is bypassed.
 - Browser verification uses normal Gateway input to pay 100 minerals for a Zealot. Recovery captures its incomplete native training queue, preserves both original Dark Templars and 75 gas, and reconstructs matching state at 1228 service ticks with one command batch.
 
+### Brood War 4: Quest for Uraj
+
+- Catalogue ID `bwprotoss04`, Episode IV mission 4. Original CHK SHA-256 `f495e751fb3975fa7a701f5a250d554dadee5776a7a2d35c038980883293c863`; 261 UNIT records, 29 gameplay triggers, one briefing and 21 audio dependencies. The 22-file pack is 9,623,380 bytes, decodes to 9,621,972 bytes and has SHA-256 `f99c803c73e69f1f9599dbc3b43426a8e2924fc079c65511f074079726d7324f`.
+- Human slot 1 is Protoss. Its start location and Nexus-dependent triggers require the standard UMS start of one Nexus and four Probes; only that human slot receives standard starting units. Setup injects no minerals or gas. The original source trigger grants 200 minerals at startup, then the Shuttle drop grants 800 minerals and 100 gas.
+- Three original rescue-owned Shuttles and the owner-6 Uraj Crystal are preserved. Destroying two original owner-5 Terran buildings enables the Shuttle event; bringing a player-2 Shuttle to Drop01 creates four rescue-owned Kerrigans and four human Probes. Proximity naturally transfers the Kerrigans and arms their survival predicate.
+- The source requires the human-owned Kerrigan and the original Uraj Crystal to meet at the moving KerriganCenter location for victory. A human Probe can pick up and carry the original crystal. The source then pauses and awards victory. Independent defeats occur when the human loses its last building after switch 99, or loses the rescued Kerrigan after switch 6. The map has no countdown.
+- PB4A, PB4B and PB4C run for the original Terran owner, with TARE and EnBk supporting the other authored towns/bunkers. The owner-5 Enmy program requires native `player_enemy` opcode 32; its one-way alliance updates preserve other owners' rows and neutral slots. The original Drop02 property creates a Reaver with ten real Scarabs. PB4A's authored waits, town build requests and native weapon fire pass; the combat fixture protects original actors and relocates an original Probe only when needed to provide reachable target terrain.
+- Four fresh native cases pass: strict original initialization/AI, the Drop02 Reaver and Scarabs plus native Terran attack, the two-building Shuttle/Kerrigan/Uraj victory sequence, final-building defeat and Kerrigan-loss defeat. Test-only protection and relocation are recorded separately from normal gameplay.
+- Browser verification passes the original briefing, all three opening transmissions, the 200-mineral source start, normal framed Probe movement and fresh-instance recovery at 1228 service ticks with one command batch. The isolated menu displays four ordered Brood War missions with Quest for Uraj locked behind the first three. Full normal-control victory and classic comparison remain open.
+
 ### Brood War UI And Release Verification
 
-- The rebuilt native/browser engines passed all 72 final modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
+- At the three-expansion-mission milestone, the rebuilt native/browser engines passed 72 modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
 - Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.

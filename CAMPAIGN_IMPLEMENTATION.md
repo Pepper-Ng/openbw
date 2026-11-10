@@ -315,7 +315,7 @@ Build a gap table:
 Start with a short strict readiness case in [web/wasm_sim_test.cpp](web/wasm_sim_test.cpp). Reuse the fresh-map setup in the adjacent expansion mission function.
 
 - Route the new ID to that function in `main` before testing. An expansion case must return before original-only availability assertions.
-- Set mission setup overrides as existing campaign dispatch does: UMS, no melee units and no injected minerals.
+- Set mission setup overrides as existing campaign dispatch does: UMS, no generic melee starts and no injected minerals. If the original scenario has no placed human force but its start location and triggers prove that it expects standard starting units, enable those units only for the authored human slot and record the evidence.
 - Enable `st.strict_triggers`.
 - Assert actual slot/race, original actors, natural rescue, funding, availability, script activation and no premature outcome.
 - Step the real engine; do not skip initialization or convert an unsupported computer owner to human control.

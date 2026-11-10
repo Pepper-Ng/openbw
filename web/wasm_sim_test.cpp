@@ -3926,6 +3926,135 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void quest_for_uraj_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 4; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.setup_info.create_melee_units_for_player[1] = true;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && st.unit_counts[1][UnitTypes::Protoss_Probe] == 4 && st.unit_counts[1][UnitTypes::Protoss_Nexus] == 1 && st.unit_counts[2][UnitTypes::Protoss_Shuttle] == 3 && st.unit_counts[6][UnitTypes::Powerup_Uraj_Crystal] == 1, "Quest for Uraj retains the authored Protoss start, three rescuable Shuttles and Uraj crystal");
+		require(st.game->unit_type_allowed[1][UnitTypes::Protoss_Probe] && st.game->unit_type_allowed[1][UnitTypes::Protoss_Nexus] && !st.current_minerals[1] && !st.current_gas[1] && !st.countdown_active, "Quest for Uraj keeps native unit availability, zero resources and no invented countdown");
+		auto step = [&]() {
+			for (int owner : {1, 2, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		require(st.trigger_switches[12] && st.trigger_switches[99] && st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 2 && st.campaign_ai[0].build_requests[UnitTypes::Terran_SCV].first == 4 && st.campaign_ai[5].area_towns.size() == 1 && st.players[5].controller == player_t::controller_computer_game && !st.alliances[5][1], "the original start activates Terran town/build requests and the enemy-owned AI relation");
+		require(!st.players[1].victory_state, "The original idle opening does not award an early outcome");
+		if (scenario == 0) {
+			unit_t* shuttle = nullptr;
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Protoss_Shuttle) && !functions.unit_dying(unit)) { shuttle = unit; break; }
+			require(shuttle, "the original player-2 Shuttle is available for the Drop02 check");
+			const auto& drop02 = st.locations.at(1).area;
+			functions.move_unit(shuttle, drop02.from + xy(8, 8));
+			functions.refresh_unit_position(shuttle);
+			functions.set_unit_order(shuttle, functions.get_order_type(Orders::HoldPosition));
+			for (int tick = 0; tick != 3000 && !st.trigger_switches[2]; ++tick) step();
+			unit_t* reaver = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Reaver) && !functions.unit_dying(unit)) reaver = unit;
+			require(st.trigger_switches[2] && reaver && functions.unit_scarab_count(reaver) == 10, "the original Drop02 property creates one Reaver with ten real Scarabs");
+			bool reachable_target = false;
+			bool fired = false;
+			int combat_budget = 18000;
+			for (int tick = 0; tick != combat_budget && !fired; ++tick) {
+				step();
+				if (!reachable_target && st.campaign_ai[0].attack_party.size() >= 5) {
+					unit_t* attacker = nullptr;
+					for (unit_id id : st.campaign_ai[0].attack_party) {
+						unit_t* candidate = functions.get_unit(id);
+						if (candidate && !functions.unit_dying(candidate) && functions.unit_can_attack(candidate)) { attacker = candidate; break; }
+					}
+					if (attacker) {
+						for (unit_t* target : ptr(st.player_units[1])) {
+							if (functions.unit_dying(target) || !functions.unit_is(target, UnitTypes::Protoss_Probe)) continue;
+							if (!functions.is_reachable(attacker, target)) {
+								functions.move_unit(target, attacker->sprite->position + xy(96, 0));
+								functions.refresh_unit_position(target);
+							}
+							require(functions.is_reachable(attacker, target), "the PB4A attack fixture keeps an original Probe on reachable terrain");
+							reachable_target = true;
+							break;
+						}
+					}
+				}
+				for (unit_id id : st.campaign_ai[0].attacking) {
+					unit_t* unit = functions.get_unit(id);
+					if (unit && !functions.unit_dying(unit) && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired = true;
+				}
+			}
+			require(reachable_target && fired && !st.players[1].victory_state, "PB4A follows its authored waits and attacks with native weapons");
+		} else if (scenario == 2) {
+			unit_t* nexus = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus)) nexus = unit;
+			require(nexus && st.trigger_switches[99], "the original building-loss gate is armed after the start");
+			functions.kill_unit(nexus);
+			for (int tick = 0; tick != 256 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2, "losing the final original human building reaches the authored defeat");
+		} else {
+			a_vector<unit_t*> enemy_buildings;
+			for (unit_t* unit : ptr(st.player_units[5])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) enemy_buildings.push_back(unit);
+			require(enemy_buildings.size() >= 2, "the original Terran owner supplies the two-building progression gate");
+			functions.kill_unit(enemy_buildings[0]);
+			functions.kill_unit(enemy_buildings[1]);
+			for (int tick = 0; tick != 256 && !st.trigger_switches[3]; ++tick) step();
+			require(st.trigger_switches[3] && st.unit_counts[2][UnitTypes::Protoss_Shuttle] == 4, "destroying two original Terran buildings creates the source Shuttle");
+			unit_t* shuttle = nullptr;
+			for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Protoss_Shuttle) && !functions.unit_dying(unit)) { shuttle = unit; break; }
+			require(shuttle, "the original rescue Shuttle is available for the authored drop");
+			const auto& drop = st.locations.at(2).area;
+			functions.move_unit(shuttle, (drop.from + drop.to) / 2);
+			functions.refresh_unit_position(shuttle);
+			for (int tick = 0; tick != 3000 && !st.trigger_switches[5]; ++tick) step();
+			require(st.trigger_switches[5] && st.current_minerals[1] == 1000 && st.current_gas[1] == 100 && st.unit_counts[1][UnitTypes::Protoss_Probe] == 8, "the original Shuttle drop creates four human Probes and grants only its authored resources");
+			for (int tick = 0; tick != 512 && !st.trigger_switches[6]; ++tick) step();
+			require(st.trigger_switches[6] && st.unit_counts[1][UnitTypes::Hero_Infested_Kerrigan] > 0, "the original Kerrigan presence is naturally rescued and arms its survival gate");
+			require(!st.players[1].victory_state, "the Uraj crystal must reach the original Kerrigan before victory");
+			if (scenario == 1) {
+				unit_t* kerrigan = nullptr;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan) && !functions.unit_dying(unit)) { kerrigan = unit; break; }
+				unit_t* uraj = nullptr;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Powerup_Uraj_Crystal) && !functions.unit_dying(unit)) { uraj = unit; break; }
+				unit_t* probe = nullptr;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Probe) && !functions.unit_dying(unit)) { probe = unit; break; }
+				require(kerrigan && uraj && probe, "the original Kerrigan, Uraj and Probe remain available for the source outcome gate");
+				unit_id kerrigan_id = functions.get_unit_id(kerrigan), probe_id = functions.get_unit_id(probe);
+				functions.set_unit_order(kerrigan, functions.get_order_type(Orders::HoldPosition));
+				functions.move_unit(probe, uraj->sprite->position);
+				functions.refresh_unit_position(probe);
+				for (int tick = 0; tick != 128; ++tick) {
+					probe = functions.get_unit(probe_id);
+					if (!probe || probe->worker.powerup) break;
+					step();
+				}
+				probe = functions.get_unit(probe_id);
+				require(probe && probe->worker.powerup == uraj && uraj->owner == 1, "an original Probe naturally carries the original Uraj crystal");
+				kerrigan = functions.get_unit(kerrigan_id);
+				functions.move_unit(probe, kerrigan->sprite->position);
+				functions.refresh_unit_position(probe);
+				bool paused = false;
+				for (int tick = 0; tick != 5000 && !st.players[1].victory_state; ++tick) { step(); paused = paused || st.scripted_pause; }
+				require(paused && st.trigger_switches[7] && st.players[1].victory_state >= 3, "the original Uraj/Kerrigan gate runs the scripted ending and victory");
+			} else {
+				a_vector<unit_t*> kerrigans;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Hero_Infested_Kerrigan) && !functions.unit_dying(unit)) kerrigans.push_back(unit);
+				require(!kerrigans.empty(), "the original human Kerrigan is available for its survival predicate");
+				for (unit_t* unit : kerrigans) functions.kill_unit(unit);
+				for (int tick = 0; tick != 3000 && !st.players[1].victory_state; ++tick) step();
+				require(st.players[1].victory_state == 2 && !st.trigger_switches[7], "losing the naturally rescued Kerrigan reaches the independent authored defeat");
+			}
+		}
+		printf("Quest for Uraj original mission case %d passed.\n", scenario);
+	}
+}
+
 static void dunes_shakuras_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 10; ++scenario) {
 		game_player player(load_data_file);
@@ -4098,9 +4227,16 @@ static void expansion_ai_binary_checks(data_loading::data_files_loader<>& load_d
 	functions.start_campaign_ai_script(4, 0x3269562d);
 	functions.progress_campaign_ai_scripts();
 	require(!(st.shared_vision[2] & (1 << 4)), "shared-vision binary opcode removes the matching grant");
+	auto original_alliances = st.alliances;
+	functions.start_campaign_ai_script(4, 0x796d6e45);
+	functions.progress_campaign_ai_scripts();
+	for (int player = 0; player != 8; ++player) require(st.alliances[4][player] == (player == 4 ? original_alliances[4][player] : 0), "player_enemy changes only the AI owner's relation to other active players");
+	for (int owner = 0; owner != 12; ++owner) if (owner != 4) require(st.alliances[owner] == original_alliances[owner], "player_enemy preserves other owners' alliance rows");
+	for (int player = 8; player != 12; ++player) require(st.alliances[4][player] == original_alliances[4][player], "player_enemy preserves neutral and unused slots");
 	functions.start_campaign_ai_script(1, 0x42374254);
 	functions.progress_campaign_ai_scripts();
 	require(st.lcg_rand_state == 123456789u, "the original TB7B four-byte operand sets the exact deterministic native seed");
+	printf("Original player_enemy AI command passed.\n");
 	printf("Original and expansion AI binary routing passed.\n");
 }
 
@@ -4143,6 +4279,7 @@ int main(int argc, char** argv) {
 	bool escape_aiur = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss01");
 	bool dunes_shakuras = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss02");
 	bool legacy_xelnaga = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss03");
+	bool quest_for_uraj = campaign && argc > 4 && !strcmp(argv[4], "bwprotoss04");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -4167,6 +4304,10 @@ int main(int argc, char** argv) {
 		}
 		if (legacy_xelnaga) {
 			legacy_xelnaga_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (quest_for_uraj) {
+			quest_for_uraj_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

@@ -966,7 +966,7 @@ async function boot(session) {
     const capabilities = new Set(new TextDecoder().decode(bytes.subarray(pointer, end)).trim().split('\n'));
     const missing = session.mission.requirements.filter(required => !capabilities.has(required));
     if (missing.length) throw new Error('Unsupported mission operations: ' + missing.join(', '));
-    x.openbw_init_campaign(...winSize(), session.mission.race, session.mission.humanSlot);
+    x.openbw_init_campaign(...winSize(), session.mission.race, session.mission.humanSlot, session.mission.createStartingUnits ? 1 : 0);
   } else if (slots.length > 1) {
     // Hand the slot list to the wasm as int32 [slot, race] pairs via the scratch buffer.
     const pairs = new Int32Array(slots.length * 2);
@@ -2342,7 +2342,7 @@ const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
 const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignEditionIds(edition = $('campaign-edition').value) {
@@ -2535,7 +2535,7 @@ async function refreshCampaignSaves(mission) {
   } catch (error) { $('mission-size').textContent = `Saved games unavailable: ${error.message}`; }
 }
 function validateMissionManifest(manifest, missionId) {
-  if (!campaignMissionIds.includes(missionId) || manifest.schemaVersion !== 1 || manifest.id !== missionId || !Number.isInteger(manifest.humanSlot) || manifest.humanSlot < 0 || manifest.humanSlot >= 8 || ![0, 1, 2].includes(manifest.race) || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files)) throw new Error('Unsupported mission manifest.');
+  if (!campaignMissionIds.includes(missionId) || manifest.schemaVersion !== 1 || manifest.id !== missionId || !Number.isInteger(manifest.humanSlot) || manifest.humanSlot < 0 || manifest.humanSlot >= 8 || ![0, 1, 2].includes(manifest.race) || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files) || manifest.createStartingUnits !== undefined && typeof manifest.createStartingUnits !== 'boolean') throw new Error('Unsupported mission manifest.');
   if (!Number.isInteger(manifest.pack?.bytes) || manifest.pack.bytes <= 32 || manifest.pack.bytes > 32 * 1048576 || !/^[a-f0-9]{64}$/.test(manifest.pack.sha256)) throw new Error('Invalid mission pack metadata.');
   const url = new URL(manifest.pack.url, location.href);
   if (url.origin !== location.origin || url.pathname !== new URL(`data/campaign/${missionId}.mpq`, location.href).pathname) throw new Error('Invalid mission pack location.');

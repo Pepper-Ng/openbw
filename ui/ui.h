@@ -666,6 +666,7 @@ struct ui_functions: ui_util_functions {
 		if (!sound_audible(source_unit, position)) return;   // nothing heard through the fog
 		if (add_race_index) id += 1;
 		if ((size_t)id >= has_loaded_sound.size()) return;
+		if (sound_filenames[id].empty()) return;
 		if (!has_loaded_sound[id]) {
 			has_loaded_sound[id] = true;
 			a_vector<uint8_t> data;
@@ -768,7 +769,7 @@ struct ui_functions: ui_util_functions {
 		load_data_file(tbl.data, "arr/sfxdata.tbl");
 		for (size_t i = 0; i != sound_types.vec.size(); ++i) {
 			size_t index = sound_types.vec[i].filename_index;
-			sound_filenames[i] = tbl[index];
+			if (index) sound_filenames[i] = tbl[index];
 		}
 		native_sound::frequency = 44100;
 		native_sound::channels = 8;
@@ -2315,4 +2316,3 @@ struct ui_functions: ui_util_functions {
 };
 
 }
-

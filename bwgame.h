@@ -19429,6 +19429,9 @@ struct state_functions {
 					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
 				}
 				else if (opcode == 77) ai.target_expansion = true;
+				else if (opcode == 32) {
+					for (int player = 0; player != 8; ++player) if (player != script.owner) st.alliances.at(script.owner)[player] = 0;
+				}
 				else if (opcode == 87 || opcode == 88) {
 					int player = read(1);
 					if (player >= 8) error("shared vision AI player out of range");
@@ -20105,13 +20108,41 @@ struct state_functions {
 		}
 	}
 
+	void create_hangar_units(unit_t* unit, int count) {
+		if (!count) return;
+		const unit_type_t* fighter_type = nullptr;
+		if (unit_is_carrier(unit)) fighter_type = get_unit_type(UnitTypes::Protoss_Interceptor);
+		else if (unit_is_reaver(unit)) fighter_type = get_unit_type(UnitTypes::Protoss_Scarab);
+		if (!fighter_type) return;
+		auto& inside_units = unit_is_reaver(unit) ? unit->reaver.inside_units : unit->carrier.inside_units;
+		size_t& inside_count = unit_is_reaver(unit) ? unit->reaver.inside_count : unit->carrier.inside_count;
+		for (int index = 0; index != count; ++index) {
+			unit_t* fighter = create_unit(fighter_type, unit->sprite->position, unit->owner);
+			if (!fighter) {
+				display_last_error_for_player(unit->owner);
+				error("failed to create hangar unit for unit %d", int(unit->unit_type->id));
+			}
+			finish_building_unit(fighter);
+			if (!place_completed_unit(fighter)) {
+				kill_unit(fighter);
+				error("failed to place hangar unit for unit %d", int(unit->unit_type->id));
+			}
+			fighter->fighter.parent = unit;
+			fighter->fighter.is_outside = false;
+			complete_unit(fighter);
+			hide_unit(fighter);
+			inside_units.push_front(*fighter);
+			++inside_count;
+		}
+	}
+
 	void apply_creation_properties(unit_t* unit, const unit_creation_properties& properties) {
 		if (properties.state_flags & properties.valid_state_flags & 5) error("unsupported cloaked/in-transit creation properties");
 		if (properties.state_flags & properties.valid_state_flags & 2) {
 			if (!ut_can_burrow(unit)) error("burrowed creation requires a burrow-capable unit");
 			set_unit_order(unit, get_order_type(Orders::Burrowing));
 		}
-		if ((properties.valid_data_flags & 32) && properties.hangar_count) error("unsupported creation hangar count");
+		if (properties.valid_data_flags & 32) create_hangar_units(unit, properties.hangar_count);
 		if (properties.valid_data_flags & 2) {
 			using extended_hp = fixed_point<32, 8, true>;
 			auto hp = extended_hp::extend(unit->unit_type->hitpoints) * properties.hitpoints_percent / 100;
@@ -20407,7 +20438,6 @@ struct state_functions {
 					unit_t* u = &*i++;
 					if (ut_turret(u)) continue;
 					if (unit_dying(u)) continue;
-					if (ut_powerup(u)) error("trigger kill unit fixme: powerup");
 					if (u->owner != p) continue;
 					if (uid == 229) kill_unit(u);
 					else if (uid == 230) {
@@ -20469,7 +20499,6 @@ struct state_functions {
 					unit_t* u = &*i++;
 					if (ut_turret(u)) continue;
 					if (unit_dying(u)) continue;
-					if (ut_powerup(u)) error("trigger kill unit fixme: powerup");
 					if (u->owner != p) continue;
 					bool ok = false;
 					if (uid == 229) ok = true;
@@ -20506,7 +20535,6 @@ struct state_functions {
 
 					if (ut_turret(u)) return;
 					if (unit_dying(u)) return;
-					if (ut_powerup(u)) error("trigger remove unit fixme: powerup");
 					if (!trigger_players_pred(owner, a.group_n, u->owner)) return;
 					bool ok = false;
 					if (uid == 229) ok = true;

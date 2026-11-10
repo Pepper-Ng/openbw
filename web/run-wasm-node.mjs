@@ -272,12 +272,15 @@ if (process.argv[2] === '--test-campaign-menu') {
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(ids.slice(0, 29).map(id => [id, true])) }));
   assert.equal(normal.unlocked('protoss10'), true, 'Completing Shadow Hunters unlocks Eye of the Storm');
   stored.clear();
-  const expansion = functions(false, ids.filter(id => !id.startsWith('bw')).concat(['bwprotoss01', 'bwprotoss02', 'bwprotoss03']));
+  const expansionMissions = ids.filter(id => id.startsWith('bw'));
+  const expansion = functions(false, ids.filter(id => !id.startsWith('bw')).concat(expansionMissions));
   assert.equal(expansion.unlocked('bwprotoss01'), true, 'Brood War does not require original campaign completion');
   assert.equal(expansion.unlocked('bwprotoss02'), false, 'Brood War remains sequential internally');
+  assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later expansion mission stays locked');
   stored.set('v2', JSON.stringify({ version: 2, victories: { bwprotoss01: true, bwprotoss03: true } }));
   assert.equal(expansion.unlocked('bwprotoss02'), true);
   assert.equal(expansion.unlocked('bwprotoss03'), false, 'A later victory cannot bypass an expansion prerequisite');
+  assert.equal(expansion.unlocked('bwprotoss04'), false, 'A later victory cannot bypass preceding expansion missions');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -390,7 +393,7 @@ const x = recoveryTest ? {
     nativeExports.openbw_apply(owner, length);
   },
 } : nativeExports;
-if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
+if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot, mission.createStartingUnits ? 1 : 0);
 else x.openbw_init(1280, 800, protossSelectionTest ? 2 : 1, 0 /*slot*/);
 if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
@@ -429,7 +432,7 @@ if (out) {
     memory = resumed.exports.memory;
     resumedWasi.initialize(resumed);
     const restored = resumed.exports;
-    restored.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot);
+    restored.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot, mission.createStartingUnits ? 1 : 0);
     restored.openbw_mission_begin();
     let turn = 0;
     for (let tick = 0; tick < saved.ticks; tick++) {
@@ -751,6 +754,12 @@ function testCampaign() {
     for (const [type, count] of [['Probe', 5], ['Dark Templar', 2], ['Nexus', 1], ['Gateway', 1], ['Templar Archives', 1], ['Pylon', 3]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
     for (const owner of ['3', '4']) assert.equal(units.filter(unit => unit[1] === 'Cerebrate' && unit[2] === owner).length, 1);
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwprotoss04') {
+    assert.equal(mission.episode, 4); assert.equal(mission.order, 4); assert.equal(mission.race, 2); assert.equal(mission.humanSlot, 1);
+    for (const [type, count] of [['Probe', 4], ['Nexus', 1]]) assert.equal(human.filter(unit => unit[1] === type).length, count, 'Create only the original Protoss start at its authored start location');
+    assert.equal(units.filter(unit => unit[1] === 'Shuttle' && unit[2] === '2').length, 3, 'Retain the original rescue-owned Shuttles');
+    assert.equal(units.filter(unit => unit[1].includes('Uraj') && unit[2] === '6').length, 1, 'Retain the original Uraj crystal owner');
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else {
     assert.equal(units.length, 36, 'Expected 36 non-neutral actors, without melee starts');
     assert.equal(human.length, 12);
@@ -772,7 +781,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200}[missionId], 'Preserve original mission minerals');
   if (missionId === 'bwprotoss03') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 75, 'The original expansion base grants exactly seventy-five gas');
   if (missionId === 'protoss10') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 100, 'Original Eye of the Storm grants only 100 gas');
   if (missionId === 'protoss09') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 1000, 'Original Shadow Hunters grants 1000 gas');
@@ -917,18 +926,19 @@ function testCampaign() {
     assert.match(read(x.openbw_card()), /\tCancel\t/, 'Recovery is captured during actual paid Nexus construction');
     assert.equal(x.openbw_outcome(), 0);
   }
-  if (missionId === 'bwprotoss01') {
-    const hero = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Zeratul' && Number(unit[2]) === mission.humanSlot);
-    assert.ok(hero);
+  if (missionId === 'bwprotoss01' || missionId === 'bwprotoss04') {
+    const unitName = missionId === 'bwprotoss01' ? 'Zeratul' : 'Probe';
+    const actor = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === unitName && Number(unit[2]) === mission.humanSlot);
+    assert.ok(actor);
     const word = value => [value & 255, value >> 8 & 255];
-    const target = [Number(hero[3]) + 160, Number(hero[4]) + 64];
-    const selection = [9, 1, ...word(Number(hero[0]))], movement = [21, ...word(target[0]), ...word(target[1]), 0, 0, 228, 0, 6, 0];
+    const target = [Number(actor[3]) + 160, Number(actor[4]) + 64];
+    const selection = [9, 1, ...word(Number(actor[0]))], movement = [21, ...word(target[0]), ...word(target[1]), 0, 0, 228, 0, 6, 0];
     const bytes = Uint8Array.from([...word(selection.length), ...selection, ...word(movement.length), ...movement]);
     new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
     x.openbw_apply(mission.humanSlot, bytes.length);
     for (let tick = 0; tick < 24; tick++) x.openbw_step();
-    const moved = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === hero[0]);
-    assert.ok(moved && Math.hypot(Number(moved[3]) - Number(hero[3]), Number(moved[4]) - Number(hero[4])) > 16, 'Normal recorded movement retains and moves the original Zeratul');
+    const moved = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[0] === actor[0]);
+    assert.ok(moved && Math.hypot(Number(moved[3]) - Number(actor[3]), Number(moved[4]) - Number(actor[4])) > 16, `Normal recorded movement retains and moves the original ${unitName}`);
     assert.equal(x.openbw_outcome(), 0);
   }
   if (missionId === 'terran06' && !recoveryTest) {
