@@ -63,6 +63,7 @@ const missions = {
   bwzerg07: { title: 'Drawing of the Web', episode: 6, order: 7, scenarioHash: '2541f8af8528b0db42520ec3e1e138e1cb9f67b2be12a4e60d06edc3fa2ccfdb', units: 355, triggers: 14, sounds: 15 },
   bwzerg08: { title: 'To Slay the Beast', episode: 6, order: 8, scenarioHash: '22ac125001ebb5835a697f3186160d3bdfd2de8913e24ff9eb3adb25ba41423a', units: 542, triggers: 33, sounds: 26 },
   bwzerg09: { title: 'The Reckoning', episode: 6, order: 9, scenarioHash: 'f7987c26f0b990d5b13e3e5dbd0f3788d11cf8bbe67c73aa5904bdbfc591b9a9', units: 283, triggers: 31, sounds: 21 },
+  bwzerg10: { title: 'Omega', episode: 6, order: 10, scenarioHash: '856026e96c23b5080bfb11a185fb86bdb8accf4f46c4113bfd3588192d97fbc4', units: 675, triggers: 19, sounds: 20 },
   bwzergbonus: { title: 'Dark Origin', episode: 6, order: 9, source: 'bwbonus', scenarioHash: '6dd16b341f1dd2fabbbc28ed8a06d1b22df6e5f225e0b2baa9597da3c24a3c99', units: 173, triggers: 36, sounds: 39 },
 };
 const variantProfiles = {

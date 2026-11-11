@@ -19518,15 +19518,15 @@ struct state_functions {
 					int amount = read(1);
 					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
 				}
-				else if (opcode == 76) {
+				else if (opcode == 76 || opcode == 78) {
 					int amount = read(1);
 					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
-					ai.build_requests[type->id] = {amount, 80};
+					if (opcode == 76) ai.build_requests[type->id] = {amount, 80};
 					int count = 0;
 					for (unit_t* unit : ptr(st.player_units[script.owner])) {
 						if (unit_dying(unit) || ut_turret(unit) || us_hidden(unit) && !ut_worker(unit) && !ut_building(unit)) continue;
-						if (campaign_ai_type(unit->unit_type->id) == type->id) ++count;
-						for (const auto* queued : unit->build_queue) if (campaign_ai_type(queued->id) == type->id) count += ut_two_units_in_one_egg(queued) ? 2 : 1;
+						if (campaign_ai_type(unit->unit_type->id) == type->id && (opcode == 76 || u_completed(unit))) ++count;
+						if (opcode == 76) for (const auto* queued : unit->build_queue) if (campaign_ai_type(queued->id) == type->id) count += ut_two_units_in_one_egg(queued) ? 2 : 1;
 					}
 					if (count < amount) { script.position = position; script.wait = 15; break; }
 				}

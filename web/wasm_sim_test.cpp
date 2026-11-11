@@ -3926,6 +3926,162 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void omega_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	const std::array<int, 3> owners{{0, 1, 6}};
+	const std::array<std::array<UnitTypes, 4>, 3> production{{{{UnitTypes::Terran_Command_Center, UnitTypes::Terran_Barracks, UnitTypes::Terran_Factory, UnitTypes::Terran_Starport}}, {{UnitTypes::Protoss_Nexus, UnitTypes::Protoss_Robotics_Facility, UnitTypes::Protoss_Gateway, UnitTypes::Protoss_Stargate}}, {{UnitTypes::Terran_Command_Center, UnitTypes::Terran_Barracks, UnitTypes::Terran_Factory, UnitTypes::Terran_Starport}}}};
+	for (int scenario = 0; scenario != 17; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hive] == 1 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 2 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 5 && !st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan], "Omega retains the original Hive, two Hatcheries, five Drones and absence of a playable Kerrigan");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Omega outcome and observation actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::HoldPosition), {});
+		};
+		auto step = [&]() {
+			for (int owner : {0, 1, 3, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (owner == 3 || (scenario == 15 && functions.ut_building(unit)))) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[3] == 500 && st.current_gas[3] == 200 && !st.countdown_active && !st.players[3].victory_state, "the original finale grants 500/200 without inventing a timer or activating its Never-gated Kerrigan-loss prototype");
+		for (int owner : owners) require(st.campaign_ai[owner].town_active && st.campaign_ai[owner].area_towns.size() == 1, "each original opponent starts its own main and area-town programs");
+		if (scenario == 0) {
+			st.current_minerals[0] = 10001; st.current_gas[0] = 10001;
+			st.trigger_timer = 0; functions.process_triggers();
+			require(st.current_minerals[0] == 10001 && st.current_gas[0] == 10001, "the original recurring enemy funding does not fire above its ten-thousand threshold");
+			st.current_gas[0] = 10000;
+			st.trigger_timer = 0; functions.process_triggers();
+			require(st.current_minerals[0] == 10001 && st.current_gas[0] == 20000, "exactly ten thousand gas receives the source ten-thousand grant independently of minerals");
+			st.current_minerals[0] = 10000;
+			st.trigger_timer = 0; functions.process_triggers();
+			require(st.current_minerals[0] == 20000 && st.current_gas[0] == 20000, "exactly ten thousand minerals receives its own preserved source grant without fabricating a human income");
+		} else if (scenario == 1 || scenario == 2) {
+			unit_t* construction = nullptr;
+			if (scenario == 2) {
+				action_state commands;
+				action_functions actions(st, commands);
+				unit_t* worker = find(3, UnitTypes::Zerg_Drone);
+				const auto* type = functions.get_unit_type(UnitTypes::Zerg_Hatchery);
+				require(worker && actions.action_select(3, worker), "an original Drone supplies the incomplete-building defeat boundary");
+				bool placed = false;
+				xy home = worker->sprite->position / 32;
+				for (int radius = 3; radius != 24 && !placed; ++radius) for (int y = -radius; y <= radius && !placed; ++y) for (int x = -radius; x <= radius && !placed; ++x) {
+					if (std::abs(x) != radius && std::abs(y) != radius) continue;
+					xy tile = home + xy(x, y), position = tile * 32 + type->placement_size / 2;
+					if (tile.x < 0 || tile.y < 0 || !functions.is_in_map_bounds(position)) continue;
+					if (functions.can_place_building(worker, 3, type, position, false, false) && functions.is_reachable(worker->sprite->position, position)) placed = actions.action_build(3, functions.get_order_type(Orders::DroneStartBuild), type, {size_t(tile.x), size_t(tile.y)});
+				}
+				require(placed, "native paid Hatchery construction finds a legal original-map footprint");
+				for (int tick = 0; tick != 1200 && !construction; ++tick) {
+					step();
+					for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Hatchery) && !functions.u_completed(unit) && !functions.unit_dying(unit)) construction = unit;
+				}
+				require(construction && st.current_minerals[3] == 200 && st.current_gas[3] == 200, "the original Drone pays three hundred minerals for a genuinely unfinished Hatchery");
+			}
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit) && functions.u_completed(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2, "the exact source Command Exactly zero completed-buildings predicate loses even with a paid incomplete Hatchery");
+		} else if (scenario >= 3 && scenario <= 14) {
+			size_t group = size_t(scenario - 3) / 4, item = size_t(scenario - 3) % 4;
+			int owner = owners[group];
+			unit_t* last = find(owner, production[group][item]);
+			require(last && functions.u_completed(last), "every original required production class supplies its own completed last-building boundary");
+			unit_id id = functions.get_unit_id(last);
+			a_vector<unit_t*> victims;
+			for (size_t enemy = 0; enemy != owners.size(); ++enemy) for (unit_t* unit : ptr(st.player_units[owners[enemy]])) {
+				bool required = std::find(production[enemy].begin(), production[enemy].end(), unit->unit_type->id) != production[enemy].end();
+				if ((required && unit != last) || functions.ut_worker(unit)) victims.push_back(unit);
+			}
+			require(st.unit_counts[0][UnitTypes::Terran_Supply_Depot] > 0 && st.unit_counts[1][UnitTypes::Protoss_Photon_Cannon] > 0 && st.unit_counts[6][UnitTypes::Terran_Bunker] > 0, "source depots, cannon defenses and bunkers remain outside the actual production-building objective");
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(!st.trigger_switches[group] && !st.trigger_switches[group + 3] && !st.players[3].victory_state && functions.get_unit(id) == last, "each of the twelve independently surviving required production classes blocks its own faction and the final victory");
+			unit_t* attacker = find(3, UnitTypes::Zerg_Hydralisk);
+			require(attacker, "an original Hydralisk supplies the native last-production-building weapon kill");
+			relocate(attacker, last->sprite->position + xy(160, 0));
+			last->shield_points = {};
+			functions.set_unit_hp(last, fp8::integer(1));
+			functions.issue_order(attacker, false, attacker->unit_type->attack_unit, {last->sprite->position, last});
+			for (int tick = 0; tick != 6000 && !st.players[3].victory_state; ++tick) {
+				unit_t* unit = functions.get_unit(id);
+				if (unit && !functions.unit_dying(unit)) { unit->shield_points = {}; functions.set_unit_hp(unit, fp8::integer(1)); }
+				step();
+			}
+			if (st.players[3].victory_state < 3) error("Omega objective: owner=%d type=%d flags=%d/%d/%d/%d/%d/%d kills=%d outcome=%d", owner, int(production[group][item]), st.trigger_switches[0], st.trigger_switches[1], st.trigger_switches[2], st.trigger_switches[3], st.trigger_switches[4], st.trigger_switches[5], st.killed_unit_counts[3][production[group][item]], st.players[3].victory_state);
+			require(st.players[3].victory_state >= 3 && st.trigger_switches[3] && st.trigger_switches[4] && st.trigger_switches[5] && st.killed_unit_counts[3][production[group][item]] >= 1 && !st.next_scenario[3], "a real original Hydralisk weapon kill finishes each independent gate and all full faction dialogues before the original campaign-ending victory");
+		} else if (scenario == 15) {
+			a_vector<unit_id> targets, cohort;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && targets.size() != 3) targets.push_back(functions.get_unit_id(unit));
+			a_vector<unit_t*> victims;
+			for (int owner : owners) for (unit_t* unit : ptr(st.player_units[owner])) {
+				cohort.push_back(functions.get_unit_id(unit));
+				if (!functions.ut_worker(unit) && !functions.ut_building(unit) && !functions.ut_turret(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[3] = {}, fired[3] = {};
+			for (int tick = 0; tick != 48000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2]); ++tick) {
+				step();
+				for (size_t index = 0; index != owners.size(); ++index) {
+					int owner = owners[index];
+					if (tick % 128 == 0 && !fired[index]) {
+						unit_t* target = functions.get_unit(targets.at(index));
+						require(target && target->owner == 3 && functions.unit_is(target, UnitTypes::Zerg_Drone), "all three original combat-observation Drones retain their generation-safe identities");
+						unit_t* producer = find(owner, owner == 1 ? UnitTypes::Protoss_Gateway : UnitTypes::Terran_Barracks);
+						if (producer) relocate(target, producer->sprite->position + xy(128, 0));
+					}
+					auto& ai = st.campaign_ai[owner];
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						bool requested = ai.attack_requests[unit->unit_type->id] || ai.build_requests[unit->unit_type->id].first || std::any_of(ai.defenses.begin(), ai.defenses.end(), [&](const auto& defense) { return defense.category < 4 && defense.type == unit->unit_type->id; });
+						if (requested && !functions.ut_worker(unit) && !functions.ut_building(unit) && functions.u_completed(unit) && std::find(cohort.begin(), cohort.end(), functions.get_unit_id(unit)) == cohort.end()) produced[index] = true;
+						if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2] && !st.players[3].victory_state, "all three original faction mains produce source-requested paid replacement combatants and fire native weapons through their own main and area programs");
+		} else if (scenario == 16) {
+			unit_t* retained = nullptr;
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Zealot) && !functions.unit_dying(unit)) {
+				if (!retained) retained = unit;
+				else victims.push_back(unit);
+			}
+			require(retained && functions.u_completed(retained), "the source wait-train boundary retains one original completed Zealot");
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			int minerals = st.current_minerals[1];
+			require(functions.campaign_ai_produce(1, functions.get_unit_type(UnitTypes::Protoss_Zealot)) && st.current_minerals[1] == minerals - 100, "an original native Gateway pays for the second Zealot before the completed-troop wait");
+			auto source = std::find_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 1 && !script.town; });
+			require(source != st.campaign_ai_scripts.end(), "the original Protoss program supplies its actual wait-train instruction");
+			auto probe = *source;
+			probe.position = 23371; probe.wait = 0; probe.killable = true;
+			st.campaign_ai_scripts.push_back(probe);
+			functions.progress_campaign_ai_scripts();
+			auto pending = [&]() { return std::any_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 1 && script.killable && script.position == 23371; }); };
+			require(pending(), "one completed Zealot and one paid queued trainee cannot release the original wait-train two boundary");
+			for (int tick = 0; tick != 1600 && pending(); ++tick) step();
+			require(!pending() && st.completed_unit_counts[1][UnitTypes::Protoss_Zealot] >= 2 && !st.players[3].victory_state, "the native trainee completes before the actual wait-train instruction resumes without granting units or requests");
+		}
+		printf("Omega original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void dark_origin_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 9; ++scenario) {
 		game_player player(load_data_file);
@@ -7035,6 +7191,7 @@ int main(int argc, char** argv) {
 	bool slay_beast = campaign && argc > 4 && !strcmp(argv[4], "bwzerg08");
 	bool reckoning = campaign && argc > 4 && !strcmp(argv[4], "bwzerg09");
 	bool dark_origin = campaign && argc > 4 && !strcmp(argv[4], "bwzergbonus");
+	bool omega = campaign && argc > 4 && !strcmp(argv[4], "bwzerg10");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -7151,6 +7308,10 @@ int main(int argc, char** argv) {
 		}
 		if (dark_origin) {
 			dark_origin_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (omega) {
+			omega_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

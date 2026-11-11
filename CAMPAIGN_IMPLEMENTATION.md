@@ -391,6 +391,7 @@ Test occupied-area refusal after the parent programs become active. Then observe
 - Extend `start_campaign_ai_script`, `progress_campaign_ai_scripts` or the owning native helper, rather than scripting mission-specific waves.
 - Keep town/area-town production counts separate from player-wide military state.
 - Count pending construction, training and two-unit eggs. Apply defined caps before spending, including a zero cap.
+- Keep `wait_train` separate from queued production counts: it waits for completed available troops and creates no production request.
 - Match stable idle transitions such as Guard to PlayerGuard. Retry failed unstarted requests without charging twice; preserve active builders.
 - Keep native placement, paid production, research, attack acquisition, projectiles and terrain reachability authoritative.
 - Separate strategic destination selection from direct weapon eligibility. A remembered target is not necessarily a visible in-range engagement.
