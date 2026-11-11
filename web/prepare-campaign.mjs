@@ -60,6 +60,7 @@ const missions = {
   bwzerg04: { title: 'The Liberation of Korhal', episode: 6, order: 4, scenarioHash: '9fa70aa9def47962d6fe6a2e597a021a90bea81f2fefeae58297df285d2a66f6', units: 524, triggers: 9, sounds: 9 },
   bwzerg05: { title: 'True Colors', episode: 6, order: 5, scenarioHash: 'cd85a53ed3c9345dd4f8987421b5709d8bf87faa7d038fe149790151c70ac6b9', units: 512, triggers: 27, sounds: 41 },
   bwzerg06: { title: 'Fury of the Swarm', episode: 6, order: 6, scenarioHash: 'dc0529f66c56a650cf3c5d1eb5a9addaf00e6d97c9473d91ba9fc31422c9af14', units: 447, triggers: 73, sounds: 8 },
+  bwzerg07: { title: 'Drawing of the Web', episode: 6, order: 7, scenarioHash: '2541f8af8528b0db42520ec3e1e138e1cb9f67b2be12a4e60d06edc3fa2ccfdb', units: 355, triggers: 14, sounds: 15 },
 };
 const variantProfiles = {
   bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },

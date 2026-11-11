@@ -365,6 +365,7 @@ Classic Command uses all-unit counts for At Most and completed-unit counts for A
 - At verified Fastest timing, game seconds use sixteen world ticks, regular scans are thirty-one ticks apart, and the first UMS scan occurs at tick two.
 - Wait quantization uses 42 ms steps: 0/42 ms resume after two service ticks, 43/84 after three, and 85 after four.
 - Scripted Pause Game freezes world movement/combat while trigger waits continue. Action 30 mutes unit speech; action 5 pauses gameplay.
+- Pause Timer/Unpause Timer suspend only countdown progression. Setting the countdown preserves its paused state; repeated pause/resume actions are idempotent.
 - Transmission `time` is the stored base; `group2` supplies Set/Add/Subtract adjustment. Briefing and gameplay share the native formula.
 - Browser audio completion and render frequency must not control authoritative trigger progression.
 - Preserve Set Next Scenario as per-player state. Record its filename on victory; defeats and debug-mode wins must not write new branches.

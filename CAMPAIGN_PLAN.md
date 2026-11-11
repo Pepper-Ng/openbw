@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first twenty-two Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches Fury of the Swarm. Fork variants occupy one story position each, giving 52 logical missions and 58 scenarios.
+- All thirty original numbered StarCraft missions and the first twenty-three Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches Drawing of the Web. Fork variants occupy one story position each, giving 53 logical missions and 59 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current 122-mode expansion gate is recorded below.
@@ -326,11 +326,23 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - The broader regression exposed a crowded Torrasque observation after native Zerg building morphs became available. Its fixture now places both original actors in reachable nearby space after proving the unchanged fifteen-minute spawn and Junkyard Dog movement. All nine To Chain the Beast cases pass; gameplay is unchanged.
 - Isolated loopback handlers verify Next from Liberation F through True Colors to Fury. The navigation probe uses forced engine outcomes; the native suites establish the source predicates. Fury's manual save and autosave restore the original workerless/scientist setup; the resumed frame-32 checksum and 800/300 resources match. Defeat hides Next, Retry reloads Fury, and briefing return retains Brood War with 21 of 22 completed and twenty-two rows. Test-origin storage and caches are cleared afterward. The integrated page was hidden; these checks establish handler behavior, not physical-device or visible-canvas acceptance.
 
+### Brood War 23: Drawing of the Web
+
+- Public `bwzerg07` preserves `campaign\expzerg\zerg07\staredit\scenario.chk`, SHA-256 `2541f8af8528b0db42520ec3e1e138e1cb9f67b2be12a4e60d06edc3fa2ccfdb`: format 205, 355 UNIT records, fourteen triggers, one briefing and fifteen audio dependencies.
+- Its sixteen-file pack is 4862512 bytes, decoded 4861712 bytes, SHA-256 `ef649b84d38476298bb5aee466ce53a443ab0cadb04c96798ed13e349ca8bd82`. Human Zerg slot 3 retains two Hatcheries, four Drones, four Hydralisks, six Zerglings, two Overlords and 300/100 resources. Nearby troops naturally rescue the same original Infested Duran.
+- The source requires Duran at five independent beacon locations. Other troops cannot claim them. Losing the human buildings or Duran independently causes defeat. Enemy-base elimination does not replace the beacon objectives.
+- All five completed conversations protect Duran and arm the original five-second diversion clock. Shared Pause Timer/Unpause Timer actions now suspend only countdown progression. Setting a paused clock retains its pause state; repeated pause/resume actions are idempotent. Ordinary world frames continue while the timer is paused.
+- The complete ending creates the original map revealers and destroys twenty-eight original Pylons in five distinct stages of eight/five/five/five/five. Each stage precedes the final Talematros-wide destruction. The original waits and surviving brown base remain intact.
+- Eleven fresh-map cases pass: initial setup and timer-action boundaries; both independent defeats; wrong-actor rejection at every beacon; all five independently omitted-beacon boundaries followed by complete endings; enemy-base elimination without victory; and paid production/native weapons from both original Protoss mains.
+- The production fixture depletes capped Zealots, protects generation-safe original Drone targets and retains the blue program's 11250-frame opening wait. Outcome fixtures relocate and hold Duran at source beacons while protecting the human force. These checks do not establish normal-control victories or exact classic strategy.
+- Source availability forbids Mutalisks, Guardians, Devourers, Scourge and both Spires, but retains Queens and Overlords. The broader briefing warning does not justify adding a Queen restriction.
+- Browser-engine checks preserve the unchanged opening, naturally rescued Duran and original resources. A normal paid Drone morph leaves 250/100 and reconstructs 1228 service ticks plus one command batch. Existing Desperate Alliance and True Colors countdown suites also pass.
+- Isolated loopback handlers show the correct five-beacon/Duran-survival briefing, Begin, manual Save, menu return and Resume. The frame-zero save reconstructs the same checksum. The integrated page is hidden; this is handler/recovery evidence, not visible-canvas or physical-device acceptance.
+
 ### Remaining Mission Implementations
 
 The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-7. Drawing of the Web.
 8. To Slay the Beast.
 9. The Reckoning.
 10. Omega.

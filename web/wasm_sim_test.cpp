@@ -3926,6 +3926,159 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void drawing_web_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 11; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 2 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 4 && st.unit_counts[2][UnitTypes::Hero_Infested_Duran] + st.unit_counts[3][UnitTypes::Hero_Infested_Duran] == 1, "Drawing preserves the original two-Hatchery base, four Drones, four Hydralisks and rescue-owned Infested Duran");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Drawing fixtures use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::Stop), {});
+		};
+		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		unit_t* duran = find(3, UnitTypes::Hero_Infested_Duran);
+		require(duran && !st.unit_counts[2][UnitTypes::Hero_Infested_Duran] && st.current_minerals[3] == 300 && st.current_gas[3] == 100 && st.campaign_ai[1].town_active && st.campaign_ai[5].town_active && !st.players[3].victory_state && !st.countdown_active, "original nearby troops rescue the same Duran while both Protoss mains start and the source grants 300/100");
+		for (UnitTypes type : {UnitTypes::Zerg_Mutalisk, UnitTypes::Zerg_Guardian, UnitTypes::Zerg_Devourer, UnitTypes::Zerg_Scourge, UnitTypes::Zerg_Spire, UnitTypes::Zerg_Greater_Spire}) require(!st.game->unit_type_allowed[3][type], "the original pylon-field unit settings exclude the attacking Zerg air units and Spires");
+		require(st.game->unit_type_allowed[3][UnitTypes::Zerg_Queen] && st.game->unit_type_allowed[3][UnitTypes::Zerg_Overlord], "the original unit settings retain Queens and Overlords despite the briefing's general air-support warning");
+		for (int index = 0; index != 5; ++index) require(!st.trigger_switches[index], "all five original beacon gates start unclaimed");
+		if (scenario == 0) {
+			state_functions::execute_trigger_struct effects;
+			running_trigger running;
+			trigger::action action{};
+			action.type = 54;
+			functions.execute_trigger_action(effects, 3, running, running.actions[0], action);
+			functions.execute_trigger_action(effects, 3, running, running.actions[0], action);
+			action.type = 14; action.time_n = 3; action.num_n = 7;
+			functions.execute_trigger_action(effects, 3, running, running.actions[0], action);
+			int frame = st.current_frame;
+			for (int tick = 0; tick != 32; ++tick) step();
+			require(st.countdown_paused && st.countdown_active && st.countdown_timer == 3 && st.current_frame == frame + 32, "repeated Pause Timer and setting a paused clock preserve its value while the game world continues");
+			action.type = 55;
+			functions.execute_trigger_action(effects, 3, running, running.actions[0], action);
+			functions.execute_trigger_action(effects, 3, running, running.actions[0], action);
+			for (int tick = 0; tick != 16; ++tick) step();
+			require(!st.countdown_paused && st.countdown_timer == 2, "repeated Unpause Timer resumes the native one-second decrement without stacking pause counters");
+		} else if (scenario == 1 || scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (scenario == 1 ? functions.ut_building(unit) : functions.unit_is(unit, UnitTypes::Hero_Infested_Duran)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && !st.trigger_switches[7], "base loss and Infested Duran death independently cause the original defeat before the diversion");
+		} else if (scenario == 3) {
+			unit_t* wrong = find(3, UnitTypes::Zerg_Hydralisk);
+			for (int location = 1; location != 6; ++location) {
+				relocate(wrong, center(location));
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.trigger_switches[location - 1] && !st.players[3].victory_state, "ordinary Zerg troops cannot activate any Duran-only beacon gate");
+			}
+		} else if (scenario >= 4 && scenario <= 8) {
+			int missing = scenario - 3;
+			std::array<a_vector<unit_id>, 5> pylons;
+			const std::array<std::array<int, 5>, 5> locations{{{{10, 11, 12, 9, 8}}, {{13, 17, 32, 24, 34}}, {{14, 18, 23, 25, 28}}, {{15, 19, 22, 26, 29}}, {{16, 20, 21, 27, 30}}}};
+			for (size_t group = 0; group != locations.size(); ++group) {
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Pylon) && std::any_of(locations[group].begin(), locations[group].end(), [&](int location) { return functions.is_in_bounds(unit->sprite->position, st.locations.at(location - 1).area); })) pylons[group].push_back(functions.get_unit_id(unit));
+				require(pylons[group].size() == (group ? 5 : 8), "the five source explosion stages retain their original eight/five/five/five/five Pylons");
+			}
+			auto capture = [&](int location) {
+				relocate(duran, center(location));
+				functions.issue_order(duran, false, functions.get_order_type(Orders::HoldPosition), {});
+				require(functions.is_in_bounds(duran->sprite->position, st.locations.at(location - 1).area), "the original Duran enters the actual authored beacon rectangle");
+				for (int tick = 0; tick != 1600 && !st.trigger_switches[location - 1] && !st.players[3].victory_state; ++tick) step();
+				if (!st.trigger_switches[location - 1]) error("Drawing beacon %d: frame=%d owner=%d position=%d/%d order=%d outcome=%d", location, st.current_frame, duran->owner, duran->sprite->position.x, duran->sprite->position.y, int(duran->order_type->id), st.players[3].victory_state);
+				require(st.trigger_switches[location - 1] && !st.players[3].victory_state, "each original beacon transfer and full source conversation completes its own independent switch");
+			};
+			for (int location = 1; location != 6; ++location) if (location != missing) capture(location);
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.trigger_switches[missing - 1] && !st.trigger_switches[7] && !st.countdown_active && !st.players[3].victory_state, "each independently omitted beacon blocks the five-gate diversion and its ending clock");
+			capture(missing);
+			for (int tick = 0; tick != 2400 && !st.countdown_active && !st.players[3].victory_state; ++tick) step();
+			require(st.trigger_switches[7] && functions.u_invincible(duran) && st.countdown_active && st.countdown_timer == 5 && !st.players[3].victory_state, "all five original gates protect Duran and start the full five-second diversion countdown after the complete source dialogue");
+			int frame = st.current_frame;
+			for (int tick = 0; tick != 16; ++tick) step();
+			require(st.countdown_paused && st.countdown_timer == 5 && st.current_frame == frame + 16, "the original Pause Timer holds the five-second clock during the final setup wait while world frames continue");
+			for (int tick = 0; tick != 64 && st.countdown_paused; ++tick) step();
+			require(!st.countdown_paused && st.countdown_timer == 5 && st.trigger_switches[5], "the source explicitly resumes its full diversion clock after arming the map-reveal sequence");
+			for (int tick = 0; tick != 1600 && st.countdown_timer > 1; ++tick) step();
+			require(st.countdown_timer == 1 && !st.players[3].victory_state, "the one-second countdown boundary cannot prematurely finish the original explosion sequence");
+			size_t stage = 0;
+			for (int tick = 0; tick != 3000 && !st.players[3].victory_state; ++tick) {
+				step();
+				size_t completed = 0;
+				for (const auto& group : pylons) {
+					bool dead = std::all_of(group.begin(), group.end(), [&](unit_id id) { unit_t* unit = functions.get_unit(id); return !unit || functions.unit_dying(unit); });
+					if (!dead) break;
+					++completed;
+				}
+				if (completed != stage) {
+					require(completed == stage + 1 && find(1, UnitTypes::Protoss_Nexus), "each original Pylon cohort explodes in a distinct source-timed stage before the final base-wide destruction");
+					stage = completed;
+				}
+			}
+			require(stage == 5 && st.players[3].victory_state >= 3 && st.trigger_switches[5] && st.trigger_switches[6] && st.dead_unit_counts[1][UnitTypes::Protoss_Pylon] >= 28 && !st.unit_counts[1][UnitTypes::Protoss_Nexus] && st.unit_counts[5][UnitTypes::Protoss_Nexus] > 0 && find(3, UnitTypes::Hero_Infested_Duran) == duran, "all twenty-eight original Pylons, source waits, map reveals and Talematros destruction win with the same Duran while brown's original base survives");
+		} else if (scenario == 9) {
+			a_vector<unit_t*> victims;
+			for (int owner : {1, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.ut_building(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256; ++tick) step();
+			require(!st.trigger_switches[7] && !st.players[3].victory_state, "eliminating enemy bases cannot substitute for Duran's five original beacon objectives");
+		} else if (scenario == 10) {
+			a_vector<unit_id> targets, cohort;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && targets.size() != 2) targets.push_back(functions.get_unit_id(unit));
+			a_vector<unit_t*> victims;
+			for (int owner : {1, 5}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				cohort.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Protoss_Zealot)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[2] = {}, fired[2] = {};
+			for (int tick = 0; tick != 48000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+				step();
+				for (int index = 0; index != 2; ++index) {
+					int owner = index ? 5 : 1;
+					if (tick % 128 == 0 && !fired[index]) {
+						unit_t* target = functions.get_unit(targets.at(index));
+						require(target && functions.unit_is(target, UnitTypes::Zerg_Drone), "generation-safe original Drone targets survive the long original attack waits");
+						unit_t* attacker = nullptr;
+						for (const auto* party : {&st.campaign_ai[owner].attack_party, &st.campaign_ai[owner].attacking}) {
+							for (unit_id id : *party) { unit_t* unit = functions.get_unit(id); if (unit && !functions.unit_dying(unit) && functions.unit_or_subunit_ground_weapon(unit)) { attacker = unit; break; } }
+							if (attacker) break;
+						}
+						if (attacker) relocate(target, attacker->sprite->position + xy(64, 0));
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, UnitTypes::Protoss_Zealot) && functions.u_completed(unit) && std::find(cohort.begin(), cohort.end(), functions.get_unit_id(unit)) == cohort.end()) produced[index] = true;
+						if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && fired[0] && fired[1] && !st.players[3].victory_state, "both original Protoss mains pay for replacement Zealots and fire native weapons without bypassing the blue program's long opening wait");
+		}
+		printf("Drawing of the Web original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void fury_swarm_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 8; ++scenario) {
 		game_player player(load_data_file);
@@ -6474,6 +6627,7 @@ int main(int argc, char** argv) {
 	bool liberation_korhal = campaign && argc > 4 && strlen(argv[4]) == 9 && !strncmp(argv[4], "bwzerg04", 8) && argv[4][8] >= 'a' && argv[4][8] <= 'f';
 	bool true_colors = campaign && argc > 4 && !strcmp(argv[4], "bwzerg05");
 	bool fury_swarm = campaign && argc > 4 && !strcmp(argv[4], "bwzerg06");
+	bool drawing_web = campaign && argc > 4 && !strcmp(argv[4], "bwzerg07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6574,6 +6728,10 @@ int main(int argc, char** argv) {
 		}
 		if (fury_swarm) {
 			fury_swarm_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (drawing_web) {
+			drawing_web_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
