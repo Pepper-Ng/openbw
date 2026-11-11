@@ -12,6 +12,7 @@ This document records coverage, decisions, mission evidence, publication history
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
 - Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are pushed to `campaign`. Countdown (`63f3826`), UED First Strike (`9c2a933`) and The Dylarian Shipyards (`99513b4`) are also pushed as separate sentence-only mission commits without co-author trailers. Ruins of Tarsonis (`6e6e010`) and Assault on Korhal (`9ea1e39`) are pushed separately with the same message format. The remote branch was verified against local HEAD.
 - Emperor's Fall, including both variants (`0335d11`), Emperor's Flight (`e3a5217`) and Patriot's Blood (`ba26d4f`) are pushed as three separate sentence-only mission commits without co-author trailers. The remote `campaign` implementation tip was verified as `ba26d4f271e6e72e97c9fbe27b74354665c2f49c`. The 98-mode gate, original-source identities and isolated GUI checks passed before publication.
+- To Chain the Beast is pushed as `92aab90495b45c99351e5205b4e73c7ef3db7b93`, completing the Episode V catalogue. The remote implementation tip matched local HEAD after publication. The 100-mode gate, 47 original-source pack identities and browser handler checks passed before the push.
 
 ### Historical Milestone Context
 
