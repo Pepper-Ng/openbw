@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first twenty-five Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Reckoning. Fork variants occupy one story position each, giving 55 logical missions and 61 scenarios.
+- All thirty original numbered StarCraft missions, the first twenty-five Brood War numbered missions and the conditional Dark Origin mission are implemented. Episodes IV and V are complete; Episode VI reaches The Reckoning and its secret detour. The catalogue contains 56 logical missions and 62 scenarios; the optional mission does not shift numbered story positions.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current 126-mode expansion gate is recorded below.
@@ -366,13 +366,22 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Progress accepts the original `Bonus.scx` filename and latches its earned unlock. Optional missions are separate from numbered ordering, campaign totals and portable codes. Later slower replays retain an earned unlock; forward resume codes cannot invent it. Next follows the source branch, while the normal route continues directly to Omega.
 - Restoring authored placed-unit properties passed all sixty existing native suites after correcting Vile Disruption's outcome fixture. Its protected Hunter Killer now holds legal ground inside each actual rescue region instead of assuming the Hive's right side remains open. HP refresh preserves the test actor against spell damage. All sixty-one recorded-input recoveries pass with the restored properties.
 
+### Brood War Secret Mission: Dark Origin
+
+- Public `bwzergbonus` preserves `campaign\expzerg\bonus\staredit\scenario.chk`, SHA-256 `6dd16b341f1dd2fabbbc28ed8a06d1b22df6e5f225e0b2baa9597da3c24a3c99`: format 205, 173 UNIT records, thirty-six triggers, one briefing and thirty-nine audio dependencies. Its original internal name remains `Untitled Scenario`; catalogue metadata supplies the canonical title.
+- Its forty-file pack is 15600554 bytes, decoded 15597834 bytes, SHA-256 `206198dc466e3e5073f4d6287c0db21970ec38ed1c941b49788ef5ee63ed9713`. Human Protoss slot 1 begins with one Map Revealer, no base and no resources.
+- The unprotected original Arbiter follows all authored waypoints. The source Recall sequence creates two Dragoons, four Dark Archons and NPC Zeratul. Native rescue transfers that same Zeratul to the human and only then arms his death defeat. The opening Arbiters and revealer are removed by their original actions.
+- Nine fresh-map cases pass: complete opening; hero-loss defeat and `Bonus.scx` retry; companion loss without invented defeat; wrong-actor rejection at every beacon; all four investigations and the complete final revelation; source-permitted direct final discovery; all three optional reinforcement prisons; native Mind Control of the original SCV and its 100/100 funding grant; and loaded original bunker Marines firing native weapons.
+- Optional prison weapon kills release the source High Templar, Archon and second High Templar. Mind Control spends original energy and shields and transfers the same worker. Enemy patrols and garrisons use the original Order/Enter Bunker scripts; no production town is substituted.
+- The final investigation alone is the actual victory gate. Earlier visits remain optional in the source. Full dialogue and the final wait lead to `Zerg10.scx`. Active-marker checks exclude hidden/dying markers because the authored final Pause Game persists through victory.
+- The hidden menu row appears only after a source-earned Reckoning unlock. Its victory neither shifts resume codes nor becomes an extra Omega prerequisite. Normal and secret Next routes, reload persistence, slower-replay retention, debug isolation and forward-code rejection of fabricated unlocks pass.
+- Browser-engine recovery runs the original two-transmission opening, retains the exact squad and records ordinary Zeratul movement. A fresh instance reconstructs 1228 service ticks plus one command batch with zero resources. Outcome fixtures protect and relocate original actors and weaken optional prisons; full human victories remain separate acceptance work.
+
 ### Remaining Mission Implementations
 
-The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
+The thirty numbered original missions, Episodes IV/V and the conditional Dark Origin mission are implemented. Episode VI still needs:
 
 10. Omega.
-
-The secret mission **Dark Origin** also remains. Preserve its original conditional route from The Reckoning rather than exposing it as an unconditional numbered step.
 
 The optional original Terran tutorial **Boot Camp** is also outside the implemented catalogue. It is separate from the numbered story campaign.
 

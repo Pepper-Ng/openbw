@@ -2336,7 +2336,7 @@ const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
 const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06', 'bwprotoss07', 'bwprotoss08', 'bwterran01', 'bwterran02', 'bwterran03', 'bwterran04', 'bwterran05', 'bwterran06', 'bwterran07', 'bwterran08', 'bwzerg01', 'bwzerg02', 'bwzerg03', 'bwzerg04', 'bwzerg05', 'bwzerg06', 'bwzerg07', 'bwzerg08', 'bwzerg09'];
-const campaignOptionalMissionIds = [];
+const campaignOptionalMissionIds = ['bwzergbonus'];
 const campaignSupportedMissionIds = [...campaignMissionIds, ...campaignOptionalMissionIds];
 let campaignManifest = null;
 let campaignDownload = null;

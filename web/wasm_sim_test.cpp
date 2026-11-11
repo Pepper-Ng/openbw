@@ -3926,6 +3926,133 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void dark_origin_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 9; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::protoss && !st.building_counts[1] && !st.unit_counts[1][UnitTypes::Hero_Zeratul] && st.unit_counts[2][UnitTypes::Protoss_Arbiter] == 1, "Dark Origin retains the original baseless slot-1 Protoss start and lone arrival Arbiter");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto next = [&]() -> const a_string& { require(st.next_scenario[1] > 0, "the original Dark Origin continuation exists"); return st.game->map_strings.at(st.next_scenario[1] - 1); };
+		auto markers = [&]() {
+			int count = 0;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Special_Protoss_Beacon) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) ++count;
+			return count;
+		};
+		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Dark Origin outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::HoldPosition), {});
+		};
+		bool protect = false, recall = false, moved = false;
+		unit_id original{};
+		unit_t* arrival = find(2, UnitTypes::Protoss_Arbiter);
+		xy start = arrival->sprite->position;
+		auto step = [&]() {
+			if (protect) for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_dying(unit)) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+			if (unit_t* unit = find(2, UnitTypes::Hero_Zeratul)) original = functions.get_unit_id(unit);
+			if (unit_t* unit = find(2, UnitTypes::Protoss_Arbiter)) moved = moved || functions.xy_length(unit->sprite->position - start) > 64;
+			for (unit_t* unit : ptr(st.player_units[5])) if (unit->order_type->id == Orders::CastRecall) recall = true;
+		};
+		for (int tick = 0; tick != 4000 && !(st.unit_counts[1][UnitTypes::Hero_Zeratul] && st.trigger_switches[3]); ++tick) step();
+		unit_t* hero = find(1, UnitTypes::Hero_Zeratul);
+		require(hero && functions.get_unit(original) == hero && moved && recall && st.trigger_switches[1] && st.trigger_switches[2] && st.trigger_switches[3] && st.unit_counts[1][UnitTypes::Protoss_Dragoon] == 2 && st.unit_counts[1][UnitTypes::Protoss_Dark_Archon] == 4 && !st.unit_counts[2][UnitTypes::Protoss_Arbiter] && !st.unit_counts[5][UnitTypes::Protoss_Arbiter] && !st.current_minerals[1] && !st.current_gas[1] && !st.countdown_active && !st.players[1].victory_state && next() == "Zerg10.scx", "the unprotected source Arbiter path, Recall arrivals and native rescue retain the same Zeratul, two Dragoons and four Dark Archons without a base or resources");
+		protect = true;
+		if (scenario == 1) {
+			functions.kill_unit(hero);
+			for (int tick = 0; tick != 1600 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state == 2 && next() == "Bonus.scx", "the source arms Zeratul's independent death defeat only after the actual opening rescue");
+		} else if (scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_is(unit, UnitTypes::Hero_Zeratul)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256; ++tick) step();
+			require(find(1, UnitTypes::Hero_Zeratul) == hero && !st.players[1].victory_state, "losing all companions does not invent a defeat while the original Zeratul survives");
+		} else if (scenario == 3) {
+			unit_t* wrong = find(1, UnitTypes::Protoss_Dragoon);
+			for (int location = 1; location != 5; ++location) {
+				relocate(wrong, center(location));
+				for (int tick = 0; tick != 512; ++tick) step();
+				require(!st.trigger_switches[0] && st.unit_counts[6][UnitTypes::Special_Protoss_Beacon] == 4 && !st.players[1].victory_state, "ordinary companions cannot claim any of Zeratul's four original investigation beacons");
+			}
+		} else if (scenario == 4 || scenario == 5) {
+			int begin = scenario == 4 ? 1 : 4;
+			for (int location = begin; location != 5; ++location) {
+				int before = markers();
+				relocate(hero, center(location));
+				for (int tick = 0; tick != 5000 && markers() == before && !st.players[1].victory_state; ++tick) step();
+				require(markers() == before - 1, "the same original Zeratul removes each actual investigation marker through its source trigger");
+				for (int tick = 0; tick != 1200 && st.scripted_pause && !st.players[1].victory_state; ++tick) step();
+				if (location != 4) require(!st.players[1].victory_state, "each earlier investigation retains its own dialogue and cannot substitute for the final discovery");
+			}
+			for (int tick = 0; tick != 8000 && !st.players[1].victory_state; ++tick) step();
+			require(st.players[1].victory_state >= 3 && next() == "Zerg10.scx" && markers() == (scenario == 4 ? 0 : 3) && st.trigger_switches[0] == (scenario == 4), "the full original final revelation wins and leads to Omega; the source also permits direct final discovery without requiring earlier optional visits");
+		} else if (scenario == 6) {
+			const std::array<int, 3> locations{{20, 21, 22}};
+			for (int index = 0; index != 3; ++index) {
+				unit_t* prison = nullptr;
+				for (unit_t* unit : functions.find_units(st.locations.at(locations[index] - 1).area)) if (functions.unit_is(unit, UnitTypes::Special_Stasis_Cell_Prison) && !functions.unit_dying(unit)) prison = unit;
+				require(prison && !functions.u_invincible(prison), "each optional original reinforcement prison can be attacked normally");
+				UnitTypes reward = index == 1 ? UnitTypes::Protoss_Archon : UnitTypes::Protoss_High_Templar;
+				int before = st.unit_counts[1][reward];
+				unit_id id = functions.get_unit_id(prison);
+				relocate(hero, prison->sprite->position + xy(-96, 0));
+				functions.set_unit_hp(prison, fp8::integer(1));
+				prison->shield_points = {};
+				functions.issue_order(hero, false, hero->unit_type->attack_unit, {prison->sprite->position, prison});
+				for (int tick = 0; tick != 2000 && st.unit_counts[1][reward] == before; ++tick) {
+					unit_t* unit = functions.get_unit(id);
+					if (unit && !functions.unit_dying(unit)) { functions.set_unit_hp(unit, fp8::integer(1)); unit->shield_points = {}; }
+					step();
+				}
+				require(st.unit_counts[1][reward] == before + 1 && !st.players[1].victory_state, "a real original Zeratul weapon kill releases exactly the original optional High Templar or Archon");
+			}
+		} else if (scenario == 7) {
+			action_state commands;
+			action_functions actions(st, commands);
+			unit_t* caster = find(1, UnitTypes::Protoss_Dark_Archon);
+			unit_t* worker = find(0, UnitTypes::Terran_SCV);
+			require(caster && worker && functions.unit_can_use_tech(caster, functions.get_tech_type(TechTypes::Mind_Control)), "the original squad can use its source-researched Mind Control on the original enemy SCV");
+			unit_id id = functions.get_unit_id(worker);
+			relocate(caster, worker->sprite->position + xy(64, 0));
+			for (int tick = 0; tick != 16; ++tick) step();
+			fp8 energy = caster->energy;
+			require(actions.action_select(1, caster) && actions.action_order(1, functions.get_order_type(Orders::CastMindControl), worker->sprite->position, worker, worker->unit_type, false), "normal native targeted input accepts the original Dark Archon's Mind Control");
+			for (int tick = 0; tick != 1600 && (worker->owner != 1 || st.current_minerals[1] != 100); ++tick) step();
+			require(functions.get_unit(id) == worker && worker->owner == 1 && caster->energy < energy - fp8::integer(140) && caster->shield_points < fp8::integer(10) && st.current_minerals[1] == 100 && st.current_gas[1] == 100 && !st.players[1].victory_state, "Mind Control spends native energy and shields, transfers the same SCV, and activates the source 100/100 funding grant");
+		} else if (scenario == 8) {
+			unit_t* bunker = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Bunker) && !functions.loaded_units(unit).empty()) { bunker = unit; break; }
+			require(bunker && !st.campaign_ai[0].town_active, "original Enter Bunker programs load real Marines without substituting a production AI");
+			unit_t* target = find(1, UnitTypes::Protoss_Dragoon);
+			relocate(target, bunker->sprite->position + xy(128, 0));
+			bool fired = false;
+			for (int tick = 0; tick != 1600 && !fired; ++tick) {
+				step();
+				for (unit_t* unit : functions.loaded_units(bunker)) fired = fired || unit->ground_weapon_cooldown;
+			}
+			require(fired && !st.players[1].victory_state, "the original garrison fires actual native Marine weapons during the baseless investigation");
+		}
+		printf("Dark Origin original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void reckoning_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 7; ++scenario) {
 		game_player player(load_data_file);
@@ -6907,6 +7034,7 @@ int main(int argc, char** argv) {
 	bool drawing_web = campaign && argc > 4 && !strcmp(argv[4], "bwzerg07");
 	bool slay_beast = campaign && argc > 4 && !strcmp(argv[4], "bwzerg08");
 	bool reckoning = campaign && argc > 4 && !strcmp(argv[4], "bwzerg09");
+	bool dark_origin = campaign && argc > 4 && !strcmp(argv[4], "bwzergbonus");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -7019,6 +7147,10 @@ int main(int argc, char** argv) {
 		}
 		if (reckoning) {
 			reckoning_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (dark_origin) {
+			dark_origin_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
