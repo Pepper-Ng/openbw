@@ -347,6 +347,8 @@ For fixture relocation, call `unit_finder_remove` before `move_unit` followed by
 
 Scripted placement and ordinary worker construction have different constraints. Reuse the appropriate helper for each. For teleporting between disconnected regions, search legal placement from the destination region and reset movement state; retain failed actors at their source.
 
+Powerup pickup retains the item's source owner. Carrier-aware Bring counting and unit lookup are separate from item ownership. Reign of Fire's original owner-6 Psi Emitter location anchor depends on this distinction.
+
 Scripted grounded-building moves retain destination centers on legal terrain, including packed layouts with overlapping collision-box margins. Ordinary construction keeps its existing placement checks.
 
 Distinguish a delivered airborne base from a landed base. Ground-only Bring regions exclude flying buildings. Emperor's Flight activates enemy main programs after a human building lands or starts construction; its original over-supply also prevents immediate Marine training.

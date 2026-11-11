@@ -3926,6 +3926,140 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void reign_fire_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Special_Map_Revealer] == 1 && !st.building_counts[3] && st.unit_counts[5][UnitTypes::Zerg_Drone] == 2 && st.unit_counts[7][UnitTypes::Special_Psi_Disrupter] == 1, "Reign of Fire retains its original no-army human opening, two feral Drones and the owner-7 Psi Disrupter");
+		a_vector<unit_id> originals;
+		for (unit_t* unit : ptr(st.player_units[5])) originals.push_back(functions.get_unit_id(unit));
+		auto step = [&]() {
+			for (int owner : {3, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			functions.next_frame();
+		};
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Reign of Fire outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		for (int tick = 0; tick != 10000 && !st.unit_counts[3][UnitTypes::Terran_SCV] && !st.players[3].victory_state; ++tick) step();
+		unit_t* scv = find(3, UnitTypes::Terran_SCV);
+		printf("Reign of Fire opening: SCV=%d flags=%d/%d/%d base=%d funds=%d/%d\n", scv != nullptr, st.trigger_switches[5], st.trigger_switches[7], st.trigger_switches[12], st.building_counts[3], st.current_minerals[3], st.current_gas[3]); fflush(stdout);
+		require(scv && st.trigger_switches[5] && st.trigger_switches[12] && !st.current_minerals[3] && !st.current_gas[3] && !st.campaign_ai[7].town_active && !st.players[3].victory_state, "the complete original Terran landing, generator battle and departure delivers the single original SCV before human funding or enemy macro activation");
+		for (int tick = 0; tick != 128 && !scv->worker.powerup; ++tick) step();
+		require(scv->worker.powerup && functions.unit_is(scv->worker.powerup, UnitTypes::Powerup_Psi_Emitter), "the delivered SCV naturally picks up the original source-created Psi Emitter");
+		unit_id emitter = functions.get_unit_id(scv->worker.powerup);
+		unit_t* drone = find(5, UnitTypes::Zerg_Drone);
+		require(drone, "an original feral Drone remains available");
+		functions.issue_order(scv, false, functions.get_order_type(Orders::Move), {drone->sprite->position, nullptr});
+		for (int tick = 0; tick != 1600 && !(st.completed_unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.trigger_switches[20]); ++tick) step();
+		require(st.completed_unit_counts[3][UnitTypes::Zerg_Drone] == 2 && st.current_minerals[3] == 850 && st.current_gas[3] == 200 && st.trigger_switches[20] && !st.campaign_ai[7].town_active && !st.players[3].victory_state, "normal SCV movement with the real carried Psi Emitter captures both original Drones and runs the source 850/200 grant while enemy macro remains gated");
+		auto build_hatchery = [&](unit_t* worker, xy desired) {
+			action_state commands;
+			action_functions actions(st, commands);
+			require(actions.action_select(3, worker), "the original rescued Drone accepts native construction selection");
+			const auto* type = functions.get_unit_type(UnitTypes::Zerg_Hatchery);
+			bool placed = false;
+			xy start = desired / 32 * 32;
+			for (int y = -320; y <= 320 && !placed; y += 32) for (int x = -320; x <= 320 && !placed; x += 32) {
+				xy tile = (start + xy(x, y)) / 32, position = tile * 32 + type->placement_size / 2;
+				if (functions.can_place_building(worker, 3, type, position, false, false) && functions.is_reachable(worker->sprite->position, position)) placed = actions.action_build(3, functions.get_order_type(Orders::DroneStartBuild), type, {size_t(tile.x), size_t(tile.y)});
+			}
+			require(placed, "native placement supplies a legal paid Hatchery site for a rescued original Drone");
+		};
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2, "losing both Drones with no Zerg building after their rescue causes the original defeat");
+		} else if (scenario == 3) {
+			functions.kill_unit(scv);
+			for (int tick = 0; tick != 512 && functions.get_unit(emitter); ++tick) step();
+			require(!functions.get_unit(emitter) && !st.completed_non_building_counts[5] && st.unit_counts[3][UnitTypes::Zerg_Drone] == 2 && !st.players[3].victory_state, "SCV death destroys the original Psi Emitter and remaining feral troops while preserving the already rescued Drones");
+		} else if (scenario == 4 || scenario == 7) {
+			for (unit_id id : originals) {
+				unit_t* unit = functions.get_unit(id);
+				if (!unit || unit->owner != 5 || functions.unit_dying(unit) || functions.ut_building(unit)) continue;
+				relocate(scv, unit->sprite->position);
+				for (int tick = 0; tick != 256 && unit->owner != 3; ++tick) step();
+				require(unit->owner == 3, "the real carried Psi Emitter and native rescue retain each original feral actor's identity");
+			}
+			for (int tick = 0; tick != 1024 && st.unit_counts[3][UnitTypes::Terran_SCV]; ++tick) step();
+			require(st.trigger_switches[16] && !st.unit_counts[3][UnitTypes::Terran_SCV] && !functions.get_unit(emitter) && st.unit_counts[3][UnitTypes::Hero_Torrasque] == 1 && st.unit_counts[3][UnitTypes::Hero_Hunter_Killer] == 6 && st.unit_counts[3][UnitTypes::Hero_Devouring_One] == 3 && !st.players[3].victory_state, "capturing every original feral actor runs the authored SCV/Psi Emitter removal and departure without a worker death");
+			if (scenario == 4) {
+				unit_t* target = find(7, UnitTypes::Special_Psi_Disrupter);
+				unit_t* wrong = find(7, UnitTypes::Terran_Command_Center);
+				unit_t* hunter = find(3, UnitTypes::Hero_Hunter_Killer);
+				require(target && wrong && hunter, "the original target, wrong base and rescued Hunter Killer remain available");
+				functions.kill_unit(wrong);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.players[3].victory_state, "an unrelated enemy Command Center cannot substitute for the Psi Disrupter");
+				relocate(hunter, target->sprite->position + xy(128, 0));
+				functions.set_unit_hp(target, fp8::integer(1));
+				functions.issue_order(hunter, false, hunter->unit_type->attack_unit, {target->sprite->position, target});
+				for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+				require(st.killed_unit_counts[3][UnitTypes::Special_Psi_Disrupter] == 1 && st.players[3].victory_state >= 3, "an original rescued Hunter Killer weapon kill of the Psi Disrupter runs the original victory");
+			}
+		} else if (scenario == 2 || scenario == 5 || scenario == 6) {
+			unit_t* first = find(3, UnitTypes::Zerg_Drone);
+			build_hatchery(first, first->sprite->position);
+			for (int tick = 0; tick != 1200 && !st.building_counts[3]; ++tick) step();
+			require(st.building_counts[3] == 1 && st.completed_building_counts[3] == 0 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 1 && !st.players[3].victory_state, "the first original Drone starts paid Hatchery morphing while the other remains alive");
+			if (scenario == 5) {
+				unit_t* second = find(3, UnitTypes::Zerg_Drone);
+				build_hatchery(second, second->sprite->position + xy(320, 0));
+				for (int tick = 0; tick != 1200 && st.building_counts[3] < 2 && !st.players[3].victory_state; ++tick) step();
+				for (int tick = 0; tick != 128 && !st.players[3].victory_state; ++tick) step();
+				require(st.players[3].victory_state == 2 && st.current_minerals[3] == 250 && !st.completed_building_counts[3], "the original exact-zero completed-building rule causes defeat if both paid Drones morph before any Hatchery completes");
+			} else {
+				for (int tick = 0; tick != 2400 && !(st.completed_unit_counts[3][UnitTypes::Zerg_Hatchery] && st.campaign_ai[7].town_active); ++tick) step();
+				require(st.completed_unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.campaign_ai[7].town_active && st.campaign_ai[7].area_towns.size() == 1 && !st.players[3].victory_state, "completion of the real paid Hatchery activates both original enemy main/area programs");
+				if (scenario == 2) {
+					functions.kill_unit(find(3, UnitTypes::Zerg_Drone));
+					for (int tick = 0; tick != 128; ++tick) step();
+					require(!st.players[3].victory_state && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1, "a surviving native building prevents defeat after the remaining Drone is lost");
+					functions.kill_unit(find(3, UnitTypes::Zerg_Hatchery));
+					for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+					require(st.players[3].victory_state == 2, "loss of the final Zerg building and both workers causes the source defeat");
+				} else {
+					a_vector<unit_id> previous;
+					a_vector<unit_t*> victims;
+					for (unit_t* unit : ptr(st.player_units[7])) { previous.push_back(functions.get_unit_id(unit)); if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) victims.push_back(unit); }
+					for (unit_t* unit : victims) functions.kill_unit(unit);
+					unit_t* bait = find(3, UnitTypes::Zerg_Drone);
+					bool produced = false, positioned = false, fired = false;
+					for (int tick = 0; tick != 25000 && !(produced && fired); ++tick) {
+						step();
+						if (!positioned && !st.campaign_ai[7].attack_party.empty()) {
+							unit_t* attacker = functions.get_unit(st.campaign_ai[7].attack_party.front());
+							if (attacker) { relocate(bait, attacker->sprite->position); positioned = true; }
+						}
+						for (unit_t* unit : ptr(st.player_units[7])) if (!functions.unit_dying(unit)) {
+							if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(previous.begin(), previous.end(), functions.get_unit_id(unit)) == previous.end()) produced = true;
+							if (positioned && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired = true;
+						}
+					}
+					require(produced && fired, "the original gated Terran program replaces fighters and fires native weapons within its authored waits");
+				}
+			}
+		}
+		printf("Reign of Fire original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void vile_disruption_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -5538,7 +5672,7 @@ static void quest_for_uraj_mission_cases(data_loading::data_files_loader<>& load
 					step();
 				}
 				probe = functions.get_unit(probe_id);
-				require(probe && probe->worker.powerup == uraj && uraj->owner == 1, "an original Probe naturally carries the original Uraj crystal");
+				require(probe && probe->worker.powerup == uraj && uraj->owner == 6, "an original Probe naturally carries the original Uraj crystal while preserving its source owner");
 				kerrigan = functions.get_unit(kerrigan_id);
 				functions.move_unit(probe, kerrigan->sprite->position);
 				functions.refresh_unit_position(probe);
@@ -5803,6 +5937,7 @@ int main(int argc, char** argv) {
 	bool patriots_blood = campaign && argc > 4 && !strcmp(argv[4], "bwterran07");
 	bool chain_beast = campaign && argc > 4 && !strcmp(argv[4], "bwterran08");
 	bool vile_disruption = campaign && argc > 4 && !strcmp(argv[4], "bwzerg01");
+	bool reign_fire = campaign && argc > 4 && !strcmp(argv[4], "bwzerg02");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5883,6 +6018,10 @@ int main(int argc, char** argv) {
 		}
 		if (vile_disruption) {
 			vile_disruption_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (reign_fire) {
+			reign_fire_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
@@ -6449,7 +6588,7 @@ int main(int argc, char** argv) {
 			functions.set_unit_order(worker, functions.get_order_type(Orders::HoldPosition));
 			for (int tick = 0; tick != 64 && !worker->worker.powerup; ++tick) functions.next_frame();
 			require(worker->worker.powerup && functions.unit_is(worker->worker.powerup, UnitTypes::Powerup_Young_Chrysalis), "a Drone entering the original Chrysalis picks up its native portable form");
-			require(!functions.unit_dying(chrysalis) && functions.us_hidden(worker->worker.powerup) && worker->worker.powerup->owner == worker->owner, "pickup carries the original Chrysalis with native worker ownership while preserving the source beacon");
+			require(!functions.unit_dying(chrysalis) && functions.us_hidden(worker->worker.powerup) && worker->worker.powerup->owner == 11, "pickup preserves the original Chrysalis owner while the carrier supplies its native Bring ownership");
 			printf("Egression native Chrysalis pickup passed.\n");
 			bool ground_fire = false, air_fire = false;
 			int combat_budget = 17002 + 4 * 180 * 15 + 2 * functions.get_unit_type(UnitTypes::Protoss_Scout)->build_time + 2000;

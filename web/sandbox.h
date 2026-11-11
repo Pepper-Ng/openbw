@@ -1926,6 +1926,7 @@ struct play_ui : ui_functions {
 		debug_text += format("pos=%d,%d hp=%d\n", u->sprite->position.x, u->sprite->position.y, u->hp.integer_part());
 		debug_text += format("move_target=%d,%d order_target=%d,%d\n",
 			u->move_target.pos.x, u->move_target.pos.y, u->order_target.pos.x, u->order_target.pos.y);
+		if (ut_worker(u)) debug_text += format("carrying=%d powerup_type=%d powerup_owner=%d\n", u->carrying_flags, u->worker.powerup ? int(u->worker.powerup->unit_type->id) : -1, u->worker.powerup ? u->worker.powerup->owner : -1);
 		return debug_text.c_str();
 	}
 

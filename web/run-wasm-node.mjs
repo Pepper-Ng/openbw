@@ -324,6 +324,9 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwzerg01'), false);
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 16).map(id => [id, true])) }));
   assert.equal(expansion.unlocked('bwzerg01'), true, 'Episode VI follows completion of Episode V within Brood War');
+  assert.equal(expansion.unlocked('bwzerg02'), false);
+  stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 17).map(id => [id, true])) }));
+  assert.equal(expansion.unlocked('bwzerg02'), true);
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -887,6 +890,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Physics Lab' && unit[2] === '0').length, 4);
     assert.equal(units.filter(unit => unit[1] === 'Nuclear Silo' && unit[2] === '1').length, 6);
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwzerg02') {
+    assert.equal(mission.episode, 6); assert.equal(mission.order, 2); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    assert.deepEqual(human.map(unit => unit[1]), ['Map Revealer']);
+    assert.equal(units.filter(unit => unit[1] === 'Drone' && unit[2] === '5').length, 2);
+    assert.equal(units.filter(unit => unit[1].includes('Disrupter') && unit[2] === '7').length, 1);
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else if (missionId === 'bwzerg01') {
     assert.equal(mission.episode, 6); assert.equal(mission.order, 1); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
     assert.equal(human.filter(unit => unit[1] === 'Zergling').length, 2);
@@ -941,7 +950,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0}[missionId], 'Preserve original mission minerals');
   if (missionId === 'bwterran05a' || missionId === 'bwterran05b') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), missionId.endsWith('a') ? 100 : 150, 'Preserve original variant gas');
   if (missionId === 'bwterran04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Korhal grants its original 150 gas');
@@ -1029,6 +1038,11 @@ function testCampaign() {
     const ready = () => read(x.openbw_debug_units()).split('\n').filter(Boolean).some(line => { const unit = line.split('\t'); return unit[1].includes('Duran') && Number(unit[2]) === mission.humanSlot; });
     for (let tick = 0; tick < 4000 && !ready(); tick++) { x.openbw_step(); if (tick % 16 === 0) { x.openbw_render(tick * 42); consume(); } }
     assert.ok(ready(), 'The original allied entrance fight creates Duran before recording a normal command');
+  }
+  if (missionId === 'bwzerg02') {
+    const ready = () => read(x.openbw_debug_units()).split('\n').filter(Boolean).some(line => { const unit = line.split('\t'); return unit[1] === 'SCV' && Number(unit[2]) === mission.humanSlot; });
+    for (let tick = 0; tick < 10000 && !ready(); tick++) { x.openbw_step(); if (tick % 16 === 0) { x.openbw_render(tick * 42); consume(); } }
+    assert.ok(ready(), 'The original Terran battle and SCV delivery complete before recording normal commands');
   }
   consume();
   if (missionId === 'terran03') {
@@ -1126,8 +1140,29 @@ function testCampaign() {
     if (missionId === 'bwprotoss06') for (const [type, count] of [['Hatchery', 1], ['Drone', 3], ['Zergling', 6], ['Overlord', 2]]) assert.equal(owned().filter(unit => unit[1] === type).length, count, 'The original opening transfers the Zerg base to the Protoss human owner');
     assert.equal(x.openbw_outcome(), 0);
   }
-  if (missionId === 'bwprotoss02' || missionId === 'bwterran06') {
-    const flight = missionId === 'bwterran06', workerType = flight ? 'SCV' : 'Probe', buildingType = flight ? 109 : 154, buildingName = flight ? 'Supply Depot' : 'Nexus';
+  if (missionId === 'bwzerg02') {
+    const current = () => read(x.openbw_debug_units()).trim().split('\n').filter(Boolean).map(line => line.split('\t'));
+    const scv = current().find(unit => unit[1] === 'SCV' && Number(unit[2]) === mission.humanSlot);
+    const drone = current().find(unit => unit[1] === 'Drone' && unit[2] === '5');
+    assert.ok(scv && drone);
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    const cameraX = Math.max(0, Math.min(Number(scv[3]) - 640, x.openbw_map_w() * 32 - 1280)), cameraY = Math.max(0, Math.min(Number(scv[4]) - 400, x.openbw_map_h() * 32 - 800));
+    x.openbw_pan(cameraX - Number(camera[1]), cameraY - Number(camera[2]));
+    x.openbw_debug_select(Number(scv[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    for (let tick = 0; tick < 32 && !/powerup_type=217 powerup_owner=6/.test(read(x.openbw_debug_dump())); tick++) x.openbw_step();
+    assert.match(read(x.openbw_debug_dump()), /carrying=4 powerup_type=217 powerup_owner=6/, 'The original carried Psi Emitter retains source owner 6');
+    x.openbw_mouse_button(1, 3, Number(drone[3]) - cameraX, Number(drone[4]) - cameraY, 1);
+    x.openbw_mouse_button(0, 3, Number(drone[3]) - cameraX, Number(drone[4]) - cameraY, 1); x.openbw_render(0);
+    const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(bytes.length > 0, 'Normal synchronized SCV movement carries the original Psi Emitter to the Drones');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(mission.humanSlot, bytes.length); x.openbw_out_clear();
+    const rescued = () => current().filter(unit => unit[1] === 'Drone' && Number(unit[2]) === mission.humanSlot).length === 2 && Number(read(x.openbw_resources()).split('\t')[0]) === 850;
+    for (let tick = 0; tick < 1600 && !rescued(); tick++) x.openbw_step();
+    assert.ok(rescued(), 'The original capture triggers grant both Drones and 850/200 resources through normal SCV movement');
+  }
+  if (missionId === 'bwprotoss02' || missionId === 'bwterran06' || missionId === 'bwzerg02') {
+    const flight = missionId === 'bwterran06', zerg = missionId === 'bwzerg02', workerType = flight ? 'SCV' : zerg ? 'Drone' : 'Probe', buildingType = flight ? 109 : zerg ? 131 : 154, buildingName = flight ? 'Supply Depot' : zerg ? 'Hatchery' : 'Nexus';
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
     const worker = owned().find(unit => unit[1] === workerType);
     assert.ok(worker);
@@ -1142,7 +1177,7 @@ function testCampaign() {
       if ((x.openbw_debug_build_check(buildingType, mapX, mapY) & 3) === 3) site = [mapX - cameraX, mapY - cameraY];
     }
     assert.ok(site, `Native placement supplies a legal ${buildingName} site near the original force`);
-    for (const key of ['b', flight ? 's' : 'n']) { x.openbw_key(1, key.charCodeAt(0), 0); x.openbw_key(0, key.charCodeAt(0), 0); x.openbw_render(0); }
+    for (const key of ['b', flight ? 's' : zerg ? 'h' : 'n']) { x.openbw_key(1, key.charCodeAt(0), 0); x.openbw_key(0, key.charCodeAt(0), 0); x.openbw_render(0); }
     x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1); x.openbw_render(0);
     const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
     assert.ok(output.length > 0, `${buildingName} construction uses normal synchronized input`);
@@ -1151,8 +1186,9 @@ function testCampaign() {
     for (let tick = 0; tick < 600 && !owned().some(unit => unit[1] === buildingName); tick++) x.openbw_step();
     const nexus = owned().find(unit => unit[1] === buildingName);
     assert.ok(nexus, `An original ${workerType} starts native ${buildingName} construction`);
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), flight ? 900 : 200, 'Native construction pays its original mineral cost');
-    assert.equal(owned().filter(unit => unit[1] === workerType).length, flight ? 6 : 4);
+    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), flight ? 900 : zerg ? 550 : 200, 'Native construction pays its original mineral cost');
+    assert.equal(owned().filter(unit => unit[1] === workerType).length, flight ? 6 : zerg ? 1 : 4);
+    if (zerg) assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200);
     if (flight) {
       assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 200);
       for (const [type, count] of [['Marine', 6], ['Science Vessel', 2]]) assert.equal(owned().filter(unit => unit[1] === type).length, count, 'Paid Depot construction retains the original delivered force');
@@ -1404,10 +1440,9 @@ function testCampaign() {
       x.openbw_step();
       if (tick % 16) continue;
       consume();
-      const current = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Young Chrysalis' && unit[2] === String(mission.humanSlot));
-      carried = !!current;
+      carried = /carrying=4 powerup_type=216 powerup_owner=11/.test(read(x.openbw_debug_dump()));
     }
-    assert.ok(carried, 'Native Drone movement collects the original neutral Chrysalis and transfers its ownership');
+    assert.ok(carried, 'Native Drone movement carries the original neutral Chrysalis while preserving its source owner');
     for (let tick = 0; tick < 64; tick++) x.openbw_step();
     consume();
     const rescueDialogue = events.find(event => event[3] === 7);

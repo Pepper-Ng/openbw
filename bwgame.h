@@ -2312,7 +2312,6 @@ struct state_functions {
 		if (!worker) return;
 		destroy_carrying_images(worker);
 		worker->worker.resources_carried = 0;
-		if (!unit_is(powerup, UnitTypes::Powerup_Flag) && powerup->owner != worker->owner) set_unit_owner(powerup, worker->owner, false);
 		hide_unit(powerup);
 		set_unit_order(powerup, get_order_type(Orders::Nothing));
 		powerup->user_action_flags |= 1;
