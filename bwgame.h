@@ -20242,7 +20242,11 @@ struct state_functions {
 	}
 
 	void apply_creation_properties(unit_t* unit, const unit_creation_properties& properties) {
-		if (properties.state_flags & properties.valid_state_flags & 4) error("unsupported in-transit creation properties");
+		if (properties.state_flags & properties.valid_state_flags & 4) {
+			if (!ut_flying_building(unit)) error("in-transit creation requires a flying building");
+			set_building_airborne(unit);
+			if (unit->sprite->images.back().modifier == 10) unit->sprite->images.back().offset.y = 42;
+		}
 		if (properties.state_flags & properties.valid_state_flags & 2) {
 			if (!ut_can_burrow(unit)) error("burrowed creation requires a burrow-capable unit");
 			set_unit_order(unit, get_order_type(Orders::Burrowing));

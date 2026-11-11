@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first thirteen Brood War story missions are implemented in the catalogue. Episode IV is complete; the UED episode includes both Emperor's Fall variants.
+- All thirty original numbered StarCraft missions and the first fourteen Brood War story missions are implemented in the catalogue. Episode IV is complete; the UED episode reaches Emperor's Flight.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current ninety-mode expansion gate is recorded below.
@@ -201,6 +201,18 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Both browser-engine paths preserve original starts and narration, pay fifty minerals for a normal Marine command, and reconstruct 1228 service ticks plus one command batch in a fresh instance. B's original opening uses Play WAV rather than invented transmissions.
 - Logical progress, manifest validation, branch/default selection and save compatibility checks pass. Variant saves retain the logical mission ID and explicit scenario identity; Resume and Retry retain their loaded variant. Preparation and deployment enumerate both asset IDs.
 - Isolated loopback GUI checks pass for both labelled briefings, default-A selection, one story row, nonblank gameplay and objectives. Saving B, changing Korhal's route to A, and resuming still loads B; defeat-fixture Retry retains B. Menu widths fit 1280, 360 and 740 pixels. Test-origin storage was cleared afterward.
+
+### Brood War 14: Emperor's Flight
+
+- Public `bwterran06` preserves the original `campaign\expterran\terran06\staredit\scenario.chk`. CHK SHA-256 is `54d0997fa091fc6ffb6e16491fda29281ed89d2e5b3d0e0be3f2b2d7c14c4e17`: format 205, 496 UNIT records, 74 triggers, one briefing and 18 audio dependencies.
+- Its 19-file pack is 8485965 bytes, decoded 8484605 bytes, SHA-256 `e4103f49dac3ae68f9464be3d730acf5f0642c9d80b7610de3b5479c1b9f9b4e`. Scenario and media bytes remain unchanged.
+- Human Terran slot 6 begins with only an original Map Revealer and zero resources. Seven allied Valkyries fight the original Mutalisks. Original triggers deliver five airborne buildings, six Marines, six SCVs, two Science Vessels and 1000/200 resources.
+- Source UPRP properties require shared in-transit building creation. The implementation uses the same native airborne state, terrain release, spatial indexing and shadow offset as initial flying-building placement.
+- Ground-only location 44 excludes the delivered airborne base. Native landing of the original Command Center activates `TB6A`, `TB6B` and `TB6D`. Their original waits, build requests and 60000-resource grants remain intact. `ZARx`, `TB7F` and the authored vision programs are also audited and supported.
+- Five fresh-map cases pass: complete Valkyrie fight and delivery followed by normal landing/activation; pre-base defeat guard; post-arrival base-loss defeat; unrelated-base rejection followed by a Marine weapon kill of the owner-7 Command Center and the complete paused escape/Warp Gate destruction; and replacement fighters plus native fire from all three main programs.
+- The recorded browser-engine fixture builds a normal paid Supply Depot with an original SCV. This respects the source over-supply instead of granting capacity for a Marine. It retains 900/200 resources and reconstructs 1305 service ticks plus one command batch in a fresh instance.
+- Initial actors/resources, thirteen original opening transmissions, audio delivery and single-position progression after either Emperor's Fall variant pass. The existing Shakuras paid-construction recovery also passes after sharing its placement fixture.
+- Isolated loopback GUI handlers load the correct briefing, Begin, save the opening, return to the menu and Resume the same mission. Fresh-instance command recovery covers the complete delivery and paid construction separately. Test-origin storage was cleared afterward.
 
 ### Brood War UI And Release Verification
 

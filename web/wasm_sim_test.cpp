@@ -3926,6 +3926,123 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void emperors_flight_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].controller == player_t::controller_occupied && st.players[6].race == race_t::terran && st.unit_counts[6][UnitTypes::Special_Map_Revealer] == 1 && !st.completed_building_counts[6] && st.unit_counts[2][UnitTypes::Terran_Valkyrie] == 7 && st.unit_counts[7][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[1][UnitTypes::Special_Warp_Gate] == 1, "Emperor's Flight retains its original map-revealer-only start, seven allied Valkyries, the enemy Command Center and Warp Gate");
+		bool valkyrie_fire = false;
+		bool flying_base[5] = {};
+		auto step = [&]() {
+			for (int owner : {2, 3, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+				if (functions.unit_is(unit, UnitTypes::Terran_Valkyrie) && unit->air_weapon_cooldown) valkyrie_fire = true;
+				int index = 0;
+				for (UnitTypes type : {UnitTypes::Terran_Command_Center, UnitTypes::Terran_Barracks, UnitTypes::Terran_Factory, UnitTypes::Terran_Starport, UnitTypes::Terran_Engineering_Bay}) {
+					if (functions.unit_is(unit, type) && functions.u_flying(unit) && !functions.u_grounded_building(unit) && unit->sprite->elevation_level == 12) flying_base[index] = true;
+					++index;
+				}
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(!st.current_minerals[6] && !st.current_gas[6] && !st.players[6].victory_state && !st.campaign_ai[1].town_active && !st.campaign_ai[4].town_active && !st.campaign_ai[5].town_active, "the opening injects neither a base nor resources and preserves the three enemy activation gates");
+		if (scenario == 1) {
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Special_Map_Revealer)) { functions.kill_unit(unit); break; }
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.trigger_switches[3] && !st.players[6].victory_state, "the source base-loss rule remains disabled before the first human building arrives");
+		} else {
+			auto ready = [&]() { return st.trigger_switches[3] && st.trigger_switches[6] && st.trigger_switches[10] && st.completed_building_counts[6] == 5 && st.unit_counts[6][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[6][UnitTypes::Terran_Marine] >= 6 && st.unit_counts[6][UnitTypes::Terran_SCV] >= 6 && st.unit_counts[6][UnitTypes::Terran_Science_Vessel] == 2; };
+			for (int tick = 0; tick != 8000 && !ready() && !st.players[6].victory_state; ++tick) step();
+			printf("Emperor's Flight opening: ready=%d flags=%d/%d/%d base=%d Marines=%d SCVs=%d vessels=%d Valkyries=%d funds=%d/%d fire=%d\n", ready(), st.trigger_switches[3], st.trigger_switches[6], st.trigger_switches[10], st.unit_counts[6][UnitTypes::Terran_Command_Center], st.unit_counts[6][UnitTypes::Terran_Marine], st.unit_counts[6][UnitTypes::Terran_SCV], st.unit_counts[6][UnitTypes::Terran_Science_Vessel], st.unit_counts[6][UnitTypes::Terran_Valkyrie], st.current_minerals[6], st.current_gas[6], valkyrie_fire);
+			fflush(stdout);
+			require(ready() && valkyrie_fire && std::all_of(std::begin(flying_base), std::end(flying_base), [](bool value) { return value; }) && st.current_minerals[6] == 1000 && st.current_gas[6] == 200 && !st.players[6].victory_state && !st.campaign_ai[1].town_active && !st.campaign_ai[4].town_active && !st.campaign_ai[5].town_active, "the complete original Valkyrie fight delivers five airborne buildings and the original troops while enemy main programs still await a grounded human building");
+			unit_t* base = nullptr;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) base = unit;
+			require(base && functions.u_flying(base), "the delivered Command Center still requires the player's normal landing order");
+			bool landing_site = false;
+			xy center = (base->sprite->position - base->unit_type->placement_size / 2) / 32 * 32 + base->unit_type->placement_size / 2;
+			for (int y = -256; y <= 256 && !landing_site; y += 32) for (int x = -256; x <= 256 && !landing_site; x += 32) {
+				xy position = center + xy(x, y);
+				if (functions.can_place_building(base, 6, base->unit_type, position, true, false)) {
+					functions.issue_order(base, false, functions.get_order_type(Orders::BuildingLand), {position, nullptr});
+					landing_site = true;
+				}
+			}
+			require(landing_site, "native placement supplies a legal landing site for the original Command Center");
+			for (int tick = 0; tick != 2048 && !(functions.u_grounded_building(base) && st.campaign_ai[1].town_active && st.campaign_ai[4].town_active && st.campaign_ai[5].town_active); ++tick) step();
+			require(functions.u_grounded_building(base) && st.campaign_ai[1].town_active && st.campaign_ai[4].town_active && st.campaign_ai[5].town_active, "landing the original Command Center activates all three source main programs through their ground-only Bring region");
+			if (scenario == 2) {
+				a_vector<unit_t*> victims;
+				require(st.completed_non_building_counts[6] > 0, "the base-loss fixture retains the original human troops before defeat cleanup");
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 512 && !st.players[6].victory_state; ++tick) step();
+				require(st.players[6].victory_state == 2, "losing all human buildings after their arrival causes source defeat independently of the surviving troops");
+			} else if (scenario == 3) {
+				unit_t* target = nullptr;
+				unit_t* wrong = nullptr;
+				unit_t* marine = nullptr;
+				for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) target = unit;
+				for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Protoss_Nexus)) wrong = unit;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) { marine = unit; break; }
+				require(target && wrong && marine, "the ending uses original actors and distinguishes the correct Command Center");
+				functions.kill_unit(wrong);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.trigger_switches[7] && !st.players[6].victory_state, "an unrelated enemy base cannot trigger the escape");
+				functions.unit_finder_remove(marine); functions.move_unit(marine, target->sprite->position + xy(128, 0));
+				auto placement = functions.find_unit_placement(marine, marine->sprite->position, true);
+				require(placement.first, "the Command Center weapon fixture uses legal native placement");
+				functions.move_unit(marine, placement.second); functions.refresh_unit_position(marine);
+				functions.set_unit_hp(target, fp8::integer(1));
+				functions.issue_order(marine, false, marine->unit_type->attack_unit, {target->sprite->position, target});
+				bool escape_ship = false;
+				for (int tick = 0; tick != 12000 && !st.players[6].victory_state; ++tick) { step(); escape_ship = escape_ship || st.unit_counts[7][UnitTypes::Terran_Dropship] > 0; }
+				require(st.dead_unit_counts[7][UnitTypes::Terran_Command_Center] == 1 && st.trigger_switches[7] && st.trigger_switches[8] && escape_ship && st.players[6].victory_state >= 3 && st.dead_unit_counts[1][UnitTypes::Special_Warp_Gate] == 1, "a real Command Center weapon kill runs the original paused conversation, escape Dropship and Warp Gate destruction to victory");
+			} else if (scenario == 4) {
+				a_vector<unit_id> original;
+				a_vector<unit_t*> victims, targets;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) targets.push_back(unit);
+				for (int owner : {1, 4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) {
+					original.push_back(functions.get_unit_id(unit));
+					if (functions.unit_is(unit, owner == 1 ? UnitTypes::Protoss_Zealot : UnitTypes::Zerg_Zergling) && !functions.unit_dying(unit)) victims.push_back(unit);
+				}
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				bool positioned[3] = {}, produced[3] = {}, fired[3] = {};
+				for (int tick = 0; tick != 30000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2]); ++tick) {
+					step();
+					for (int index = 0; index != 3; ++index) {
+						int owner = index == 0 ? 1 : index + 3;
+						if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+							unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+							if (attacker) {
+								unit_t* target = targets.at(index);
+								functions.unit_finder_remove(target); functions.move_unit(target, attacker->sprite->position + xy(64, 0));
+								auto placement = functions.find_unit_placement(target, target->sprite->position, true);
+								require(placement.first, "each original Emperor's Flight main program has a legal protected original Marine target");
+								functions.move_unit(target, placement.second); functions.refresh_unit_position(target); positioned[index] = true;
+							}
+						}
+						for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+							if (functions.unit_is(unit, owner == 1 ? UnitTypes::Protoss_Zealot : UnitTypes::Zerg_Zergling) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[index] = true;
+							if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+						}
+					}
+				}
+				require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2], "all three original main programs replace fighters and fire native weapons within their source waits");
+			}
+		}
+		printf("Emperor's Flight original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void emperors_fall_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file, bool ground_zero) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -5296,6 +5413,7 @@ int main(int argc, char** argv) {
 	bool assault_korhal = campaign && argc > 4 && !strcmp(argv[4], "bwterran04");
 	bool emperors_fall_a = campaign && argc > 4 && !strcmp(argv[4], "bwterran05a");
 	bool emperors_fall_b = campaign && argc > 4 && !strcmp(argv[4], "bwterran05b");
+	bool emperors_flight = campaign && argc > 4 && !strcmp(argv[4], "bwterran06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5360,6 +5478,10 @@ int main(int argc, char** argv) {
 		}
 		if (emperors_fall_a || emperors_fall_b) {
 			emperors_fall_mission_cases(load_data_file, map_file, emperors_fall_a);
+			return 0;
+		}
+		if (emperors_flight) {
+			emperors_flight_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

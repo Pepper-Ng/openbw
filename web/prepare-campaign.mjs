@@ -51,6 +51,7 @@ const missions = {
   bwterran03: { title: 'Ruins of Tarsonis', episode: 5, order: 3, scenarioHash: '76516a763fe806b2a4e2c6814c4fcd3e05f51a21c8aa8817837a74b4fcf9ff38', units: 360, triggers: 37, sounds: 22 },
   bwterran04: { title: 'Assault on Korhal', episode: 5, order: 4, scenarioHash: '988d5c2c1692a63038a3e7a895dd0d35fe9cf3696523e37858f4b5f69f9a8401', units: 456, triggers: 31, sounds: 8 },
   bwterran05: { title: "Emperor's Fall", episode: 5, order: 5, scenarioHash: 'c957cb9946b7e756be3fbbbcee27438891695522612bc3f9e7ced880ae7e07ef', units: 673, triggers: 53, sounds: 31 },
+  bwterran06: { title: "Emperor's Flight", episode: 5, order: 6, scenarioHash: '54d0997fa091fc6ffb6e16491fda29281ed89d2e5b3d0e0be3f2b2d7c14c4e17', units: 496, triggers: 74, sounds: 18 },
 };
 const variantProfiles = {
   bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },

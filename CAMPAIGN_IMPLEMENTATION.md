@@ -338,6 +338,7 @@ If execution traps, inspect the first required unsupported operation. Fix that o
 - Honor explicit creation/score owner indices even for unused slots. Do not activate their controller or town AI as a side effect.
 - Preserve format-59 expansion-production restrictions. Expansion availability must follow the actual format and source settings.
 - Read availability and research separately. Hero command cards use native family/ability eligibility, not copied ordinary-caster IDs.
+- Apply valid in-transit creation flags through `set_building_airborne`, as initial placement does. Require a lift-capable building and retain its native flight shadow offset.
 
 Collect actors before kill, hide, remove or teleport operations that mutate spatial indexes. Use generation-safe unit IDs for retained references. Death is staged; counters can change after the Die order.
 
@@ -346,6 +347,8 @@ For fixture relocation, call `unit_finder_remove` before `move_unit` followed by
 Scripted placement and ordinary worker construction have different constraints. Reuse the appropriate helper for each. For teleporting between disconnected regions, search legal placement from the destination region and reset movement state; retain failed actors at their source.
 
 Scripted grounded-building moves retain destination centers on legal terrain, including packed layouts with overlapping collision-box margins. Ordinary construction keeps its existing placement checks.
+
+Distinguish a delivered airborne base from a landed base. Ground-only Bring regions exclude flying buildings. Emperor's Flight activates enemy main programs after a human building lands or starts construction; its original over-supply also prevents immediate Marine training.
 
 ### Trigger Semantics And Clocks
 
