@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
-import { campaignPackMissions } from './prepare-campaign.mjs';
+import { campaignPackMissions, readPlainMissionPack, auditScenario } from './prepare-campaign.mjs';
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 
 if (process.argv[2] === '--test-network') {
@@ -330,10 +330,12 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(expansion.unlocked('bwzerg03'), false);
   stored.set('v2', JSON.stringify({ version: 2, victories: Object.fromEntries(expansionMissions.slice(0, 18).map(id => [id, true])) }));
   assert.equal(expansion.unlocked('bwzerg03'), true);
+  assert.equal(expansion.unlocked('bwzerg04'), false);
   for (const suffix of 'abcdef') {
     normal.win('bwzerg03', `Zerg04${suffix}.scx`);
     assert.equal(functions(false).progress().nextScenarios.bwzerg03, `Zerg04${suffix}.scx`, 'Each original optional-infestation route survives a progress reload');
   }
+  assert.equal(expansion.unlocked('bwzerg04'), true, 'Any original Kel-Morian route unlocks the one Liberation story position');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -354,7 +356,7 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.ok(ids.includes('bwterran05') && !ids.includes('bwterran05a') && !ids.includes('bwterran05b'), "Both Emperor's Fall variants occupy one ordered story position");
   const assetFunction = source.match(/function campaignSelectedAsset\([^]*?\n\}/)?.[0];
   assert.ok(assetFunction);
-  const asset = (search, nextScenarios = {}, savedVariant) => new Function('location', 'campaignVariants', 'resolveCampaignMission', 'campaignProgress', `${assetFunction}\nreturn campaignSelectedAsset('bwterran05', ${JSON.stringify(savedVariant)});`)({ search }, campaignVariants, resolveCampaignMission, () => ({ nextScenarios }));
+  const asset = (search, nextScenarios = {}, savedVariant, mission = 'bwterran05') => new Function('location', 'campaignVariants', 'resolveCampaignMission', 'campaignProgress', `${assetFunction}\nreturn campaignSelectedAsset(${JSON.stringify(mission)}, ${JSON.stringify(savedVariant)});`)({ search }, campaignVariants, resolveCampaignMission, () => ({ nextScenarios }));
   assert.equal(asset('').assetId, 'bwterran05a', 'Missing imported branch data uses the original default route');
   assert.equal(asset('', { bwterran04: 'Terran05a.scx' }).assetId, 'bwterran05a');
   assert.equal(asset('', { bwterran04: 'Terran05b.scx' }).assetId, 'bwterran05b');
@@ -373,6 +375,24 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.throws(() => validateCampaignSave(variantSave, { ...variantSave, variant: 'Terran05a.scx' }), /requires the engine/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, variant: undefined })), /variant/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, mission: 'bwterran05b' })), /Invalid saved game/);
+  assert.deepEqual(ids.filter(id => id.startsWith('bwzerg04')), ['bwzerg04'], 'Six Liberation assets occupy one story position');
+  assert.equal(asset('', {}, undefined, 'bwzerg04').assetId, 'bwzerg04a', 'Missing imported infestation history uses the zero-infested-base source default');
+  const liberationManifests = [...'abcdef'].map((suffix, index) => ({ ...manifests[0], id: 'bwzerg04', humanSlot: 3, race: 0, variant: `Zerg04${suffix}.scx`, pack: { url: `data/campaign/bwzerg04${suffix}.mpq`, bytes: 128, sha256: String(index + 1).repeat(64) } }));
+  for (const manifest of liberationManifests) {
+    const suffix = manifest.variant.at(-5);
+    assert.equal(asset('', { bwzerg03: manifest.variant }, undefined, 'bwzerg04').assetId, `bwzerg04${suffix}`);
+    assert.equal(asset(`?mission=bwzerg04&variant=${manifest.variant}`, {}, undefined, 'bwzerg04').assetId, `bwzerg04${suffix}`, 'Retry pins every Liberation variant');
+    validateManifest(manifest, 'bwzerg04', manifest.variant);
+    const save = sealCampaignSave({ ...variantSave, mission: 'bwzerg04', variant: manifest.variant, packHash: manifest.pack.sha256 });
+    assert.equal(validateCampaignSave(save).variant, manifest.variant);
+    assert.equal(asset('?mission=bwzerg04&variant=Zerg04a.scx', { bwzerg03: 'Zerg04a.scx' }, save.variant, 'bwzerg04').scenario, save.variant, 'Resume preserves the saved original variant after predecessor replay');
+    for (const other of liberationManifests.filter(other => other !== manifest)) {
+      assert.throws(() => validateManifest(manifest, 'bwzerg04', other.variant), /variant/);
+      assert.throws(() => validateCampaignSave(save, { ...save, variant: other.variant }), /requires the engine/);
+    }
+    assert.throws(() => validateCampaignSave(sealCampaignSave({ ...save, variant: undefined })), /variant/);
+  }
+  assert.throws(() => asset('', { bwzerg03: 'Zerg04g.scx' }, undefined, 'bwzerg04'), /variant/);
   const codes = Array.from({ length: 71 }, (_, completed) => normal.code(completed));
   assert.deepEqual([0, 1, 10, 30, 56, 70].map(completed => [completed, codes[completed]]), [[0, 'b6c3c1'], [1, 'e62c8f'], [10, 'c1fe99'], [30, '9a5127'], [56, '860700'], [70, 'b2d0c9']], 'Published progress codes retain their format');
   assert.equal(new Set(codes).size, 71, 'Every sequential state through seventy missions has a unique code');
@@ -897,6 +917,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Physics Lab' && unit[2] === '0').length, 4);
     assert.equal(units.filter(unit => unit[1] === 'Nuclear Silo' && unit[2] === '1').length, 6);
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId.startsWith('bwzerg04')) {
+    const infested = missionId.charCodeAt(8) - 'a'.charCodeAt(0);
+    assert.equal(mission.id, 'bwzerg04'); assert.equal(mission.episode, 6); assert.equal(mission.order, 4); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    assert.equal(mission.variant, `Zerg04${missionId.at(-1)}.scx`);
+    for (const [type, count] of [['Hatchery', 4], ['Drone', 6], ['Hydralisk', 4], ['Ultralisk', 2], ['Overlord', 5], ['Infested Command Center', infested], ['Infested Terran', infested]]) assert.equal(human.filter(unit => unit[1] === type).length, count, `Preserve original Liberation ${type} count`);
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else if (missionId === 'bwzerg03') {
     assert.equal(mission.episode, 6); assert.equal(mission.order, 3); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
     for (const [type, count] of [['Drone', 8], ['Zergling', 7], ['Hydralisk', 5], ['Ultralisk', 2], ['Overlord', 4], ['Queen', 1], ['Hatchery', 0]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
@@ -962,7 +988,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750}[missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750, bwzerg04: 10000}[missionId.startsWith('bwzerg04') ? 'bwzerg04' : missionId], 'Preserve original mission minerals');
   if (missionId === 'bwterran05a' || missionId === 'bwterran05b') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), missionId.endsWith('a') ? 100 : 150, 'Preserve original variant gas');
   if (missionId === 'bwterran04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Korhal grants its original 150 gas');
@@ -1064,13 +1090,19 @@ function testCampaign() {
   assert.ok(events.some(event => event[3] === 12), 'Original objectives must be emitted');
   assert.ok(read(x.openbw_mission_objectives()).length > 0, 'Objectives persist after event acknowledgement');
   const dialogue = events.filter(event => event[3] === 7);
+  const conditionalOpening = missionId.startsWith('bwzerg04');
   const noOpeningDialogue = ['terran04', 'terran05', 'terran06', 'terran08', 'zerg02', 'zerg03', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss08', 'protoss09', 'bwprotoss01', 'bwprotoss02', 'bwprotoss05', 'bwterran04', 'bwterran05b', 'bwzerg01'].includes(missionId);
-  if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
+  if (conditionalOpening) {
+    const audit = auditScenario(readPlainMissionPack(readFileSync(`web/data/campaign/${missionId}.mpq`))('staredit/scenario.chk'));
+    const killTrigger = audit.gameplay.records.find(record => record.conditions.some(condition => condition.type === 5 && condition.unit === 39));
+    const transmission = killTrigger.actions.find(action => action.type === 7);
+    assert.ok(dialogue.length <= 1 && dialogue.every(event => event[5] === transmission.text), 'Liberation dialogue remains conditional on its original Ultralisk-kill trigger, including variant-specific early combat');
+  } else if (noOpeningDialogue) assert.equal(dialogue.length, 0, 'Original mission supplies no idle-start transmission; none is invented');
   else assert.ok(dialogue.length > 0, 'Original elapsed-time trigger must emit a transmission');
   for (const event of dialogue) {
     assert.equal(x.openbw_mission_transmission_time(event[7], event[10], event[8]), transmissionTime(event[7], event[10], event[8]), 'Original gameplay transmission uses its stored duration and modifier');
   }
-  const soundIndices = noOpeningDialogue ? briefing.filter(action => action[0] === 8).map(action => action[2]) : dialogue.map(event => event[6]);
+  const soundIndices = noOpeningDialogue || conditionalOpening && !dialogue.length ? briefing.filter(action => action[0] === 8).map(action => action[2]) : dialogue.map(event => event[6]);
   if (missionId === 'bwterran05b') {
     const openingSounds = events.filter(event => event[3] === 8);
     assert.ok(openingSounds.length >= 4, 'Birds of War preserves its original elapsed-time Play WAV opening');
@@ -1089,6 +1121,21 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId.startsWith('bwzerg04')) {
+    const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Larva' && Number(unit[2]) === mission.humanSlot);
+    assert.ok(larva);
+    x.openbw_debug_select(Number(larva[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    x.openbw_key(1, 100, 0); x.openbw_key(0, 100, 0); x.openbw_render(0);
+    const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(bytes.length > 0, 'A Liberation Larva accepts normal synchronized paid Drone production');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(mission.humanSlot, bytes.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 24; tick++) x.openbw_step();
+    assert.deepEqual(read(x.openbw_resources()).split('\t').slice(0, 2).map(Number), [9950, 500]);
+    const [progress, queued] = read(x.openbw_status()).split('\t');
+    assert.equal(queued, 'Drone'); assert.ok(Number(progress) > 0 && Number(progress) < 100);
+    assert.equal(read(x.openbw_mission_string(x.openbw_mission_next_scenario())), 'Zerg05.scx');
+  }
   if (missionId === 'bwzerg01') {
     const [header, ...scores] = read(x.openbw_mission_leaderboard()).trim().split('\n').map(line => line.split('\t').map(Number));
     assert.deepEqual(header.slice(1), [-1, 7], 'The original goal-score leaderboard retains its seven-Hive goal');

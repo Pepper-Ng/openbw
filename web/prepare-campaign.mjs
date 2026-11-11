@@ -57,9 +57,15 @@ const missions = {
   bwzerg01: { title: 'Vile Disruption', episode: 6, order: 1, scenarioHash: '9f308010673e284524a98138aef2a21a96fa135cd2a5360b5a4d04914985fe55', units: 247, triggers: 73, sounds: 27 },
   bwzerg02: { title: 'Reign of Fire', episode: 6, order: 2, scenarioHash: '32985e8804ca7e667c26a95b44f8c0f171586a899cd1acf0b6abb06a666309c3', units: 282, triggers: 78, sounds: 36 },
   bwzerg03: { title: 'The Kel-Morian Combine', episode: 6, order: 3, scenarioHash: '3d4db669c12a60a60ee7edcebcaf77ebc79fd2e30e2418dc37dcb2701efa8eb2', units: 553, triggers: 23, sounds: 24 },
+  bwzerg04: { title: 'The Liberation of Korhal', episode: 6, order: 4, scenarioHash: '9fa70aa9def47962d6fe6a2e597a021a90bea81f2fefeae58297df285d2a66f6', units: 524, triggers: 9, sounds: 9 },
 };
 const variantProfiles = {
   bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },
+  bwzerg04b: { scenarioHash: '57ed718ac4cf2f60460411f91b2a6e7c29d865f956a740fd3e9a4cb1d76693b8', units: 526, triggers: 9, sounds: 9 },
+  bwzerg04c: { scenarioHash: 'e18eb7d59029b5f62895a13da98f592252f1512eb9913bf63acf04c7b43b3f94', units: 528, triggers: 9, sounds: 9 },
+  bwzerg04d: { scenarioHash: '70f52da6ec0ca0dc48d6d60f829f0099c85ce12e55187ff318846eb70e44fd94', units: 530, triggers: 9, sounds: 9 },
+  bwzerg04e: { scenarioHash: 'c27d7cd80d28cf6b9d8151a765001e7883827809675a37d8005c775fc9eed1dd', units: 532, triggers: 9, sounds: 9 },
+  bwzerg04f: { scenarioHash: '50f61e57b89027c7c72bef0d6ccb6a15b9886f119cf77587cf4715f4e7e9dc93', units: 534, triggers: 9, sounds: 9 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
 export const campaignPackMissions = Object.freeze(campaignMissions.flatMap(id => campaignVariants[id]?.variants.map(variant => variant.assetId) ?? [id]));

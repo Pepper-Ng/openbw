@@ -6,6 +6,17 @@ export const campaignVariants = Object.freeze({
       Object.freeze({ assetId: 'bwterran05b', scenario: 'Terran05b.scx', label: 'Birds of War' }),
     ]),
   }),
+  bwzerg04: Object.freeze({
+    previous: 'bwzerg03',
+    variants: Object.freeze([
+      Object.freeze({ assetId: 'bwzerg04a', scenario: 'Zerg04a.scx', label: '0 infested Command Centers' }),
+      Object.freeze({ assetId: 'bwzerg04b', scenario: 'Zerg04b.scx', label: '1 infested Command Center' }),
+      Object.freeze({ assetId: 'bwzerg04c', scenario: 'Zerg04c.scx', label: '2 infested Command Centers' }),
+      Object.freeze({ assetId: 'bwzerg04d', scenario: 'Zerg04d.scx', label: '3 infested Command Centers' }),
+      Object.freeze({ assetId: 'bwzerg04e', scenario: 'Zerg04e.scx', label: '4 infested Command Centers' }),
+      Object.freeze({ assetId: 'bwzerg04f', scenario: 'Zerg04f.scx', label: '5 infested Command Centers' }),
+    ]),
+  }),
 });
 
 export function resolveCampaignMission(id, scenario = '') {

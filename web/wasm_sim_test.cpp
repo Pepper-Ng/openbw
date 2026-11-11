@@ -3926,6 +3926,108 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void liberation_korhal_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file, int infested) {
+	for (int scenario = 0; scenario != (infested ? 4 : 5); ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 4 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 6 && st.unit_counts[3][UnitTypes::Zerg_Hydralisk] == 4 && st.unit_counts[3][UnitTypes::Zerg_Ultralisk] == 2 && st.unit_counts[3][UnitTypes::Zerg_Overlord] == 5 && st.unit_counts[3][UnitTypes::Zerg_Infested_Command_Center] == infested && st.unit_counts[3][UnitTypes::Zerg_Infested_Terran] == infested, "each Liberation variant retains the original Zerg base/army and exactly its authored zero-through-five Infested Command Centers and Terrans");
+		a_vector<unit_id> originals;
+		for (int owner : {1, 4, 6}) for (unit_t* unit : ptr(st.player_units[owner])) originals.push_back(functions.get_unit_id(unit));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) {
+				if (scenario == 4) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Liberation outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		auto next = [&]() -> const a_string& { require(st.next_scenario[3] > 0, "the source next-scenario record exists"); return st.game->map_strings.at(st.next_scenario[3] - 1); };
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[3] == 10000 && st.current_gas[3] == 500 && st.campaign_ai[1].town_active && st.campaign_ai[1].area_towns.size() == 1 && st.campaign_ai[4].town_active && st.campaign_ai[6].town_active && !st.players[3].victory_state && next() == "Zerg05.scx", "all six original openings retain 10000/500 funding, three enemy main programs, the Terran area program and True Colors as continuation");
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+			a_string expected = "Zerg04"; expected += char('a' + infested); expected += ".scx";
+			require(st.players[3].victory_state == 2 && next() == expected, "base loss selects each original variant's own retry filename and causes defeat");
+		} else if (scenario == 2 || scenario == 3) {
+			unit_t* last = find(scenario == 2 ? 6 : 4, scenario == 2 ? UnitTypes::Terran_Command_Center : UnitTypes::Zerg_Hive);
+			unit_t* hunter = find(3, UnitTypes::Zerg_Hydralisk);
+			require(last && hunter, "both Terran and Zerg enemy-base gates have original actors");
+			UnitTypes target_type = last->unit_type->id;
+			a_vector<unit_t*> victims;
+			for (int owner : {1, 4, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (unit != last && !functions.unit_dying(unit) && (functions.ut_building(unit) || functions.ut_worker(unit))) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.trigger_switches[0] && !st.players[3].victory_state && !functions.unit_dying(last), "one remaining enemy base of either race blocks the original all-enemy-bases objective");
+			relocate(hunter, last->sprite->position + xy(128, 0));
+			functions.set_unit_hp(last, fp8::integer(1));
+			functions.issue_order(hunter, false, hunter->unit_type->attack_unit, {last->sprite->position, last});
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			require(st.killed_unit_counts[3][target_type] >= 1 && st.trigger_switches[0] && st.players[3].victory_state >= 3 && next() == "Zerg05.scx", "an original Hydralisk weapon kill of the final enemy base runs the complete original ending and continuation");
+		} else if (scenario == 4) {
+			a_vector<unit_t*> victims;
+			a_vector<unit_id> workers;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) workers.push_back(functions.get_unit_id(unit));
+			// Owner 1's placed bunker garrisons exceed its authored twenty-Marine production cap.
+			for (int owner : {1, 4, 6}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				if (functions.unit_is(unit, owner == 4 ? UnitTypes::Zerg_Hydralisk : UnitTypes::Terran_Marine) && (owner == 1 || !functions.us_hidden(unit))) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[3] = {}, positioned[3] = {}, fired[3] = {};
+			for (int tick = 0; tick != 56000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2]); ++tick) {
+				step();
+				for (int index = 0; index != 3; ++index) {
+					int owner = index == 0 ? 1 : index == 1 ? 4 : 6;
+					if (!fired[index] && (!positioned[index] || tick % 128 == 0)) {
+						unit_t* attacker = nullptr;
+						for (const auto* party : {&st.campaign_ai[owner].attack_party, &st.campaign_ai[owner].attacking}) {
+							for (unit_id id : *party) {
+								unit_t* unit = functions.get_unit(id);
+								if (unit && !functions.unit_dying(unit) && !functions.u_flying(unit) && functions.unit_or_subunit_ground_weapon(unit)) { attacker = unit; break; }
+							}
+							if (attacker) break;
+						}
+						if (attacker) {
+							unit_t* target = functions.get_unit(workers.at(index));
+							require(target && target->owner == 3 && !functions.unit_dying(target), "the protected original Liberation target retains its generation-safe identity");
+							relocate(target, attacker->sprite->position); positioned[index] = true;
+						}
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, owner == 4 ? UnitTypes::Zerg_Hydralisk : UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(originals.begin(), originals.end(), functions.get_unit_id(unit)) == originals.end()) produced[index] = true;
+						if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown || unit->subunit && (unit->subunit->ground_weapon_cooldown || unit->subunit->air_weapon_cooldown))) fired[index] = true;
+					}
+				}
+			}
+			for (int index = 0; index != 3; ++index) {
+				int owner = index == 0 ? 1 : index == 1 ? 4 : 6;
+				printf("Liberation AI owner %d: produced=%d positioned=%d fired=%d party=%d minerals=%d gas=%d\n", owner, produced[index], positioned[index], fired[index], int(st.campaign_ai[owner].attack_party.size()), st.current_minerals[owner], st.current_gas[owner]);
+			}
+			fflush(stdout);
+			require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2], "all three original Liberation main programs replace fighters and fire native weapons within their unchanged long waits");
+		}
+		printf("The Liberation of Korhal variant %c original mission case %d passed.\n", 'a' + infested, scenario);
+		fflush(stdout);
+	}
+}
+
 static void kel_morian_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 9; ++scenario) {
 		game_player player(load_data_file);
@@ -6060,6 +6162,7 @@ int main(int argc, char** argv) {
 	bool vile_disruption = campaign && argc > 4 && !strcmp(argv[4], "bwzerg01");
 	bool reign_fire = campaign && argc > 4 && !strcmp(argv[4], "bwzerg02");
 	bool kel_morian = campaign && argc > 4 && !strcmp(argv[4], "bwzerg03");
+	bool liberation_korhal = campaign && argc > 4 && strlen(argv[4]) == 9 && !strncmp(argv[4], "bwzerg04", 8) && argv[4][8] >= 'a' && argv[4][8] <= 'f';
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6148,6 +6251,10 @@ int main(int argc, char** argv) {
 		}
 		if (kel_morian) {
 			kel_morian_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (liberation_korhal) {
+			liberation_korhal_mission_cases(load_data_file, map_file, argv[4][8] - 'a');
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

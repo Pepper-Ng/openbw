@@ -439,6 +439,8 @@ Local victory progress can include an authored bare filename at `nextScenarios[m
 
 For a fork, keep one public story ID in `campaignMissions` and define its assets in [web/campaign-variants.js](web/campaign-variants.js). Use `campaignPackMissions` for preparation, deployment and scenario regression loops. Emperor's Fall is public `bwterran05`; its assets are `bwterran05a` and `bwterran05b`.
 
+The Liberation of Korhal is public `bwzerg04`, with six original assets `bwzerg04a` through `bwzerg04f`. Select its canonical filename from `nextScenarios.bwzerg03`. Preserve both the Infested Command Centers and Infested Terrans placed by each variant.
+
 Variant manifests and saves retain the public ID and require the canonical source filename in `variant`. Validate the variant, pack URL and pack hash together. A saved variant takes precedence over changed predecessor progress and URL pins during Resume. Retry pins the loaded variant. Missing branch information selects the original A route; unknown variants fail explicitly.
 
 Korhal's original victory triggers select Ground Zero after the Physics Labs objective and Birds of War after the Nuclear Silos objective. Preserve their simultaneous-completion ordering. These are one mission's alternative routes, not two sequential unlocks.

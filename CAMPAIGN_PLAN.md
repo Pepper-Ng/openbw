@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first nineteen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Kel-Morian Combine. Both Emperor's Fall variants occupy one story position, giving 49 logical missions and 50 scenarios.
+- All thirty original numbered StarCraft missions and the first twenty Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Liberation of Korhal. Fork variants occupy one story position each, giving 50 logical missions and 56 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current 106-mode expansion gate is recorded below.
@@ -278,11 +278,30 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Fresh-instance recovery reconstructs 3169 service ticks and two command batches. The scoreboard reports the current 400-mineral bank rather than custom score or total harvested. All six authored continuation filenames survive local victory-progress reloads; Liberation assets remain outside the implemented catalogue.
 - Isolated loopback handlers load the correct briefing, Begin, save the original opening, return and Resume. The menu shows 18 of 19 completed expansion missions. Menu layouts fit 1280-, 390- and 844-pixel widths. Test-origin storage is cleared afterward.
 
+### Brood War 20: The Liberation of Korhal
+
+- One public story entry, `bwzerg04`, selects the unchanged `Zerg04a.scx` through `Zerg04f.scx` scenario recorded by Kel-Morian. The six assets add exactly zero through five original Infested Command Centers and the same number of original Infested Terrans. Missing imported branch history uses A; invalid variants fail explicitly.
+- Each original scenario is format 205, with nine triggers, one briefing and nine audio dependencies. UNIT records increase from 524 to 534 by two per variant. Each pack contains ten files. Human Zerg slot 3 retains four Hatcheries, six Drones, four Hydralisks, two Ultralisks, five Overlords and 10000/500 resources.
+
+| Variant | Original CHK SHA-256 | Pack bytes | Pack SHA-256 |
+| --- | --- | ---: | --- |
+| A, zero infested bases | `9fa70aa9def47962d6fe6a2e597a021a90bea81f2fefeae58297df285d2a66f6` | 4858661 | `3791c90936a9101c3452fa2d5ea6afbde4708c572b83c75fb943ead631e3db50` |
+| B, one | `57ed718ac4cf2f60460411f91b2a6e7c29d865f956a740fd3e9a4cb1d76693b8` | 4858733 | `562009f825edf35f916ad16b44a9c7799ab928346ab3ce87d1563c007bfde625` |
+| C, two | `e18eb7d59029b5f62895a13da98f592252f1512eb9913bf63acf04c7b43b3f94` | 4858805 | `11aac6976a05a34113804497e9234cc935944fd004ead2e602a860df167fa74e` |
+| D, three | `70f52da6ec0ca0dc48d6d60f829f0099c85ce12e55187ff318846eb70e44fd94` | 4858877 | `0d7577ae620233f476f25b0a4840e72dce3ceac5bfdb9af7bb58adf61e3da7bd` |
+| E, four | `c27d7cd80d28cf6b9d8151a765001e7883827809675a37d8005c775fc9eed1dd` | 4858949 | `c1234a8dbb77e5ae1373a47bd598cd4e128ad5cbfcbd0f83b171beee11c3f004` |
+| F, five | `50f61e57b89027c7c72bef0d6ccb6a15b9886f119cf77587cf4715f4e7e9dc93` | 4859021 | `ed906542aea1789e613774b5480710add351ad3e2a7b77a45410fb3a0b56c509` |
+
+- Four fresh-map cases per variant pass: original setup/program activation; base-loss defeat with that variant's retry filename; one surviving Terran base blocking victory followed by a Hydralisk weapon kill; and the equivalent surviving Zerg-base gate. Each complete original ending leads to `Zerg05.scx`.
+- A separate protected observation case verifies native paid replacement fighters and weapon fire from all three original main programs, including their unchanged long waits. Owner 1's placed bunker garrisons exceed its twenty-Marine cap; that fixture depletes them before requiring replacement production. Matrices and HP refresh preserve generation-safe original Drone targets against long-running weapon/spell damage. These fixture changes do not affect gameplay.
+- All six browser-engine paths preserve their original starts and resources, pay fifty minerals for a normal Larva-to-Drone command, and reconstruct 1228 service ticks plus one command batch in fresh instances. The original Ultralisk-kill transmission remains conditional; some carried-unit variants reach it during early unattended combat.
+- All six predecessor routes, one menu position, manifest matching, cross-variant save rejection, saved-variant precedence and Retry pins pass. The original Emperor's Fall routing and save checks remain passing. Existing shared engine behavior supports the scenarios; no gameplay compatibility change was needed.
+- Isolated loopback handlers show all six correct route labels and one mission row. Saving F, changing the recorded predecessor route to A, and resuming still restores F with five original infested bases. Defeat Retry pins F and reloads its labelled briefing. Test-origin storage is cleared afterward.
+
 ### Remaining Mission Implementations
 
 The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-4. The Liberation of Korhal, including all six source variants, `zerg04a` through `zerg04f`, selected by the preceding mission's zero-through-five-infested-Command-Center outcome.
 5. True Colors.
 6. Fury of the Swarm.
 7. Drawing of the Web.
