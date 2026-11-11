@@ -7,7 +7,7 @@ import { basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { campaignMissions, campaignSource, broodWarSource, prepare } from './prepare-campaign.mjs';
+import { campaignMissions, campaignPackMissions, campaignSource, broodWarSource, prepare } from './prepare-campaign.mjs';
 
 async function verifySource(file, source) {
   assert.equal(statSync(file).size, source.bytes, 'Campaign source size mismatch');
@@ -77,7 +77,7 @@ async function prepareAll() {
   }
   const output = resolve(process.env.OPENBW_CAMPAIGN_PUBLIC_DIR || '/usr/share/nginx/html/data/campaign');
   mkdirSync(output, { recursive: true });
-  for (const mission of campaignMissions) {
+  for (const mission of campaignPackMissions) {
     await prepare(mission);
     for (const extension of ['mpq', 'json']) {
       const name = `${mission}.${extension}`;
@@ -86,7 +86,7 @@ async function prepareAll() {
       renameSync(`${target}.tmp`, target);
     }
   }
-  console.log(`Campaign assets ready: ${campaignMissions.length} verified missions.`);
+  console.log(`Campaign assets ready: ${campaignMissions.length} missions, ${campaignPackMissions.length} verified scenarios.`);
 }
 
 async function testSource() {

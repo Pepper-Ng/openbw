@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-10.
-- All thirty original numbered StarCraft missions and the first twelve Brood War missions are implemented in the catalogue. Episode IV is complete; the UED Terran episode reaches Assault on Korhal.
+- All thirty original numbered StarCraft missions and the first thirteen Brood War story missions are implemented in the catalogue. Episode IV is complete; the UED episode includes both Emperor's Fall variants.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current ninety-mode expansion gate is recorded below.
@@ -187,6 +187,20 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Original `TB4A`/`TB4C`, `TB4B`/`TB4D` area programs and twenty-one `EnBk` activations remain intact. The AI fixture removes visible original Marines while retaining bunker garrisons, then observes completed replacement infantry and native weapon fire from both owners within 18,000 ticks.
 - Normal recorded input queues a Marine in the original Barracks, pays 50 minerals and reconstructs unfinished production at 1,228 service ticks with one command batch and 150/150 remaining. Recovery also verifies the native next-scenario choice. The original idle opening has no invented transmission.
 - Isolated browser checks verify Next Mission from a GUI-only forced Tarsonis victory, canonical briefing/Begin, paid Marine production, Save Game, menu return and resumed simulation with the same queue, resources and next-scenario choice. A GUI-only forced Korhal victory verifies local branch persistence through menu return and reload. The twelve-mission menu fits 390 x 640 and 844 x 390 viewports. Task-owned browser storage and the loopback server were cleaned up. Full human victory and classic comparison remain open.
+
+### Brood War 13: Emperor's Fall
+
+- One story entry, `bwterran05`, selects the unchanged Ground Zero (`Terran05a.scx`) or Birds of War (`Terran05b.scx`) scenario from Korhal's recorded result. Missing branch information selects A. Both variants lead to `Terran06.scx`.
+- Ground Zero: CHK SHA-256 `c957cb9946b7e756be3fbbbcee27438891695522612bc3f9e7ced880ae7e07ef`, format 205, 673 UNIT records, 53 triggers, one briefing and 31 audio dependencies. Its 32-file pack is 9865946 bytes, SHA-256 `17c29f9d4e70333e3a3a7b901c7c307d3c137ab67ec5c5efc919dfccd7e6f221`.
+- Birds of War: CHK SHA-256 `ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20`, format 205, 468 UNIT records, 29 triggers, one briefing and 26 audio dependencies. Its 27-file pack is 8808000 bytes, SHA-256 `70db6e532c8abf70359373d11072156497987c00b6b6f5abc859e95d324074b0`.
+- Both humans occupy Terran slot 6. A starts with two SCVs, one Marine and 150/100 resources; B has four SCVs, one Marine and 250/150. Original nuclear strikes, Battlecruiser attacks, delivery gates, resource grants, Palace destruction and the complete escape determine progression.
+- Shared AI support covers bounded child threads, nuclear timer reset, free source-command silo missiles, scripted creation, fixed-coordinate/location nuclear orders and eligible native Recall orders. Existing strategic nuclear targeting remains intact. Child scheduling preserves thread references while children are appended.
+- Five fresh-map cases per variant pass: original opening with actual weapon effects and reinforcements, base-loss defeat with variant-specific retry, wrong-Command-Center rejection followed by a Marine weapon kill of the Palace and complete escape victory, paid source-program replacement infantry and combat, and isolated Refinery cleanup/Recall boundaries.
+- Remove Unit now converts a hidden Refinery into the same live visible neutral geyser without destroying its replacement sprite. The original escape exposed this shared cleanup defect.
+- The isolated Recall check observes the native 150-energy payment before the original repeating energy-restoration trigger refills the caster. It verifies the same owned Marine reaches the Arbiter. Exact classic cinematic choreography remains unverified.
+- Both browser-engine paths preserve original starts and narration, pay fifty minerals for a normal Marine command, and reconstruct 1228 service ticks plus one command batch in a fresh instance. B's original opening uses Play WAV rather than invented transmissions.
+- Logical progress, manifest validation, branch/default selection and save compatibility checks pass. Variant saves retain the logical mission ID and explicit scenario identity; Resume and Retry retain their loaded variant. Preparation and deployment enumerate both asset IDs.
+- Isolated loopback GUI checks pass for both labelled briefings, default-A selection, one story row, nonblank gameplay and objectives. Saving B, changing Korhal's route to A, and resuming still loads B; defeat-fixture Retry retains B. Menu widths fit 1280, 360 and 740 pixels. Test-origin storage was cleared afterward.
 
 ### Brood War UI And Release Verification
 

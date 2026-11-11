@@ -15439,7 +15439,7 @@ struct state_functions {
 			if (old_anim != AirAttkInit) new_anim = AirAttkInit;
 		}
 		auto* script = image->iscript_state.current_script;
-		if (!script) error("attempt to start animation without a script");
+		if (!script) error("image %d unit %d owner %d cannot start animation %d without a script", int(image->image_type->id), iscript_unit ? int(iscript_unit->unit_type->id) : -1, iscript_unit ? iscript_unit->owner : -1, new_anim);
 		auto& anims_pc = script->animation_pc;
 		if ((size_t)new_anim >= anims_pc.size()) error("script %d does not have animation %d", script->id, new_anim);
 		image->iscript_state.animation = new_anim;
@@ -16438,6 +16438,7 @@ struct state_functions {
 		} else {
 			auto tid = u->unit_type->id;
 			if (tid == UnitTypes::Terran_Refinery || tid == UnitTypes::Zerg_Extractor || tid == UnitTypes::Protoss_Assimilator) {
+				bool was_hidden = us_hidden(u);
 				if (tid == UnitTypes::Zerg_Extractor) remove_extractor_creep(u, u->sprite->position, true);
 				if (u_completed(u)) add_completed_unit(u, -1, false);
 				u_unset_status_flag(u, unit_t::status_flag_completed);
@@ -16451,6 +16452,10 @@ struct state_functions {
 				set_sprite_owner(u, 11);
 				u_set_status_flag(u, unit_t::status_flag_completed);
 				add_completed_unit(u, 1, true);
+				if (was_hidden) {
+					st.hidden_units.remove(*u);
+					bw_insert_list(st.visible_units, *u);
+				}
 			} else {
 				stop_unit(u);
 				if (!us_hidden(u)) {
@@ -16512,12 +16517,14 @@ struct state_functions {
 	}
 
 	void destroy_unit(unit_t* u) {
+		bool refinery = unit_is_refinery(u);
 		unit_t* turret = unit_turret(u);
 		if (turret) {
 			destroy_unit(turret);
 			u->subunit = nullptr;
 		}
 		destroy_unit_impl(u);
+		if (refinery) return;
 		u->order_type = get_order_type(Orders::Die);
 		u->order_state = 1;
 		destroy_sprite(u->sprite);
@@ -19260,10 +19267,12 @@ struct state_functions {
 
 	void progress_campaign_ai_scripts() {
 		bool has_scripts = !st.campaign_ai_scripts.empty();
-		for (auto& script : st.campaign_ai_scripts) {
+		size_t script_count = st.campaign_ai_scripts.size();
+		for (size_t script_index = 0; script_index != script_count; ++script_index) {
+			auto script = st.campaign_ai_scripts[script_index];
 			const auto& bytes = script.broodwar ? st.global->bw_script : st.global->ai_script;
 			size_t table = data_loading::value_at<uint32_t, true>(bytes.data());
-			if (script.wait) { --script.wait; continue; }
+			if (script.wait) { --script.wait; st.campaign_ai_scripts[script_index] = script; continue; }
 			auto& ai = st.campaign_ai.at(script.owner);
 			auto read = [&](size_t width) {
 				if (script.position < 4 || script.position >= table || width > table - script.position) error("campaign AI operand out of bounds");
@@ -19433,6 +19442,15 @@ struct state_functions {
 					if (position || script.town) error("unsupported campaign guard position %d in town %d", position, int(script.town));
 					ai.guards.push_back({type->id, ai.home, {}});
 				}
+				else if (opcode == 72) {
+					size_t target = read(2);
+					if (target < 4 || target >= table) error("campaign AI child thread out of bounds");
+					if (st.campaign_ai_scripts.size() >= 64) error("campaign AI script limit exceeded");
+					auto child = script;
+					child.position = target;
+					child.wait = 0;
+					st.campaign_ai_scripts.push_back(child);
+				}
 				else if (opcode == 75) {
 					int amount = read(1);
 					ai.unit_limits[get_unit_type(campaign_ai_type((UnitTypes)read(2)))->id] = {true, amount};
@@ -19462,11 +19480,51 @@ struct state_functions {
 					if (opcode == 87) st.shared_vision[player] |= 1 << script.owner;
 					else st.shared_vision[player] &= ~(1 << script.owner);
 				}
+				else if (opcode == 89) {
+					xy position = (script.area.from + script.area.to) / 2;
+					try_campaign_ai_nuke(script.owner, &position);
+				}
 				else if (opcode == 90) continue; // Original Harass Here is unused.
+				else if (opcode == 102) ai.next_nuke_frame = st.current_frame + ai.nuke_interval;
 				else if (opcode == 103) disruption_web((script.area.from + script.area.to) / 2, script.owner);
+				else if (opcode == 104) {
+					xy position = (script.area.from + script.area.to) / 2;
+					unit_t* arbiter = find_nearest_unit(position, map_bounds(), [&](const unit_t* unit) {
+						return unit->owner == script.owner && unit_is(unit, UnitTypes::Protoss_Arbiter) && !unit_dying(unit) && !us_hidden(unit) && u_completed(unit) && !unit_is_disabled(unit) && !u_hallucination(unit) && unit->order_type->id != Orders::CastRecall && unit->energy >= fp8::integer(get_tech_type(TechTypes::Recall)->energy_cost) && unit_can_use_tech(unit, get_tech_type(TechTypes::Recall));
+					});
+					if (arbiter) issue_order(arbiter, false, get_order_type(Orders::CastRecall), {position, nullptr});
+				}
 				else if (opcode == 105) st.lcg_rand_state = read(4);
+				else if (opcode == 107) {
+					for (unit_t* silo : ptr(st.player_units[script.owner])) {
+						if (!unit_is(silo, UnitTypes::Terran_Nuclear_Silo) || unit_dying(silo) || !u_completed(silo) || silo->building.silo.nuke || silo->current_build_unit || !silo->build_queue.empty()) continue;
+						unit_t* missile = create_unit(UnitTypes::Terran_Nuclear_Missile, silo->sprite->position, script.owner);
+						if (!missile) { display_last_error_for_player(script.owner); break; }
+						finish_building_unit(missile);
+						complete_unit(missile);
+						hide_unit(missile);
+						missile->connected_unit = silo;
+						silo->building.silo.nuke = missile;
+						silo->building.silo.ready = true;
+						break;
+					}
+				}
+				else if (opcode == 108) {
+					const auto* type = get_unit_type((UnitTypes)read(2));
+					int x = read(2), y = read(2);
+					xy position(x, y);
+					if (!is_in_bounds(position, map_bounds()) || !(type->staredit_availability_flags & 2)) error("unsupported campaign AI unit creation");
+					trigger_create_unit(type, position, script.owner);
+				}
+				else if (opcode == 109) {
+					int x = read(2), y = read(2);
+					xy position(x, y);
+					if (!is_in_bounds(position, map_bounds())) error("campaign AI nuclear target out of bounds");
+					try_campaign_ai_nuke(script.owner, &position);
+				}
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
 			}
+			st.campaign_ai_scripts[script_index] = script;
 		}
 		st.campaign_ai_scripts.erase(std::remove_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return !script.position; }), st.campaign_ai_scripts.end());
 		for (int owner = 0; owner != 8; ++owner) {
@@ -19638,7 +19696,7 @@ struct state_functions {
 		return 0;
 	}
 
-	bool try_campaign_ai_nuke(int owner) {
+	bool try_campaign_ai_nuke(int owner, const xy* position = nullptr) {
 		bool ready = false;
 		for (unit_t* unit : ptr(st.player_units[owner])) {
 			if (unit_is(unit, UnitTypes::Terran_Nuclear_Silo) && !unit_dying(unit) && u_completed(unit) && unit->building.silo.ready && unit->building.silo.nuke) ready = true;
@@ -19648,16 +19706,21 @@ struct state_functions {
 			if (!unit_is(ghost, UnitTypes::Terran_Ghost) || unit_dying(ghost) || us_hidden(ghost) || !u_completed(ghost) || unit_is_disabled(ghost) || u_hallucination(ghost)) continue;
 			auto order = ghost->order_type->id;
 			if (order != Orders::Guard && order != Orders::PlayerGuard && order != Orders::ComputerAI && order != Orders::Nothing) continue;
-			unit_t* target = find_nearest_unit(ghost, map_bounds(), [&](const unit_t* unit) {
-				return unit->owner < 8 && unit_target_is_enemy(ghost, unit) && ut_building(unit) && !unit_dying(unit) && !us_hidden(unit) && !u_invincible(unit) && is_reachable(ghost, unit);
-			});
-			if (!target) continue;
+			xy destination;
+			if (position) destination = *position;
+			else {
+				unit_t* target = find_nearest_unit(ghost, map_bounds(), [&](const unit_t* unit) {
+					return unit->owner < 8 && unit_target_is_enemy(ghost, unit) && ut_building(unit) && !unit_dying(unit) && !us_hidden(unit) && !u_invincible(unit) && is_reachable(ghost, unit);
+				});
+				if (!target) continue;
+				destination = target->sprite->position;
+			}
 			unit_id id = get_unit_id(ghost);
 			auto& ai = st.campaign_ai[owner];
 			ai.attack_party.erase(std::remove(ai.attack_party.begin(), ai.attack_party.end(), id), ai.attack_party.end());
 			ai.attacking.erase(std::remove(ai.attacking.begin(), ai.attacking.end(), id), ai.attacking.end());
 			ai.defending.erase(std::remove_if(ai.defending.begin(), ai.defending.end(), [&](const auto& defender) { return defender.unit == id; }), ai.defending.end());
-			issue_order(ghost, false, get_order_type(Orders::NukePaint), {target->sprite->position, nullptr});
+			issue_order(ghost, false, get_order_type(Orders::NukePaint), {destination, nullptr});
 			return true;
 		}
 		return false;

@@ -3926,6 +3926,164 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void emperors_fall_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file, bool ground_zero) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].controller == player_t::controller_occupied && st.players[6].race == race_t::terran && st.unit_counts[6][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[6][UnitTypes::Terran_SCV] == (ground_zero ? 2 : 4) && st.unit_counts[6][UnitTypes::Terran_Marine] == 1 && st.unit_counts[7][UnitTypes::Terran_Command_Center] == 1, "both Emperor's Fall variants retain their distinct original human bases and the owner-7 Palace");
+		unit_t* exposed_depot = nullptr;
+		if (ground_zero) exposed_depot = functions.find_nearest_unit(xy(955, 3862), functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 6 && functions.unit_is(unit, UnitTypes::Terran_Supply_Depot); });
+		unit_id exposed_id = exposed_depot ? functions.get_unit_id(exposed_depot) : unit_id{};
+		fp8 depot_hp = exposed_depot ? exposed_depot->hp : 0_fp8;
+		bool launched = false, impact = false, battleship_fire = false, depot_damaged = false;
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[6])) if (!functions.unit_dying(unit)) {
+				bool exposed = ground_zero && unit == exposed_depot;
+				if (!ground_zero) for (size_t location : {size_t(8), size_t(19), size_t(26)}) {
+					const auto& area = st.locations.at(location - 1).area;
+					if (functions.is_in_bounds(unit->sprite->position, {area.from - xy(320, 320), area.to + xy(320, 320)})) exposed = true;
+				}
+				if (!exposed) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			}
+			if (ground_zero) for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Ghost) && !functions.unit_dying(unit)) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			functions.next_frame();
+			for (unit_t* unit : ptr(st.player_units[0])) {
+				launched = launched || functions.unit_is(unit, UnitTypes::Terran_Nuclear_Missile) && unit->order_type->id == Orders::NukeLaunch;
+				battleship_fire = battleship_fire || functions.unit_is(unit, UnitTypes::Terran_Battlecruiser) && unit->ground_weapon_cooldown;
+			}
+			for (const bullet_t* bullet : ptr(st.active_bullets)) impact = impact || bullet->weapon_type->hit_type == weapon_type_t::hit_type_nuclear_missile;
+			if (exposed_depot) {
+				unit_t* current = functions.get_unit(exposed_id);
+				depot_damaged = depot_damaged || !current || functions.unit_dying(current) || current->hp < depot_hp;
+			}
+		};
+		auto next_scenario = [&]() -> const a_string& { require(st.next_scenario[6] > 0, "the authored next-scenario record exists"); return st.game->map_strings.at(st.next_scenario[6] - 1); };
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[6] == (ground_zero ? 150 : 250) && st.current_gas[6] == (ground_zero ? 100 : 150) && !st.players[6].victory_state && next_scenario() == "Terran06.scx", "the original opening grants variant-specific funds and records Emperor's Flight as the continuation");
+		if (ground_zero) {
+			int children = 0, ready = 0;
+			for (const auto& script : st.campaign_ai_scripts) if (script.owner == 0 && script.wait <= 250) ++children;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Nuclear_Silo) && unit->building.silo.ready) ++ready;
+			require(children == 3 && ready == 3 && st.campaign_ai[0].nuke_interval == 8 * 60 * 15, "the original TB2A creates three child threads and three real silo missiles without inventing a town program");
+		}
+		if (scenario == 4) {
+			unit_t* refinery = nullptr;
+			for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Refinery)) { refinery = unit; break; }
+			require(refinery, "an original enemy Refinery supplies the hidden-removal cleanup boundary");
+			unit_id id = functions.get_unit_id(refinery);
+			state_functions::execute_trigger_struct effects;
+			running_trigger running;
+			trigger::action remove{};
+			remove.type = 24; remove.group_n = 0; remove.extra_n = int(UnitTypes::Terran_Refinery);
+			functions.execute_trigger_action(effects, 6, running, running.actions[0], remove);
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(functions.get_unit(id) == refinery && functions.unit_is(refinery, UnitTypes::Resource_Vespene_Geyser) && refinery->owner == 11 && refinery->sprite && !functions.us_hidden(refinery) && !st.dead_unit_counts[0][UnitTypes::Terran_Refinery], "Remove Unit converts a hidden Refinery into the same live visible neutral geyser without a death or dangling sprite");
+			unit_t* worker = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) { worker = unit; break; }
+			require(worker, "an original enemy worker supplies a legal Recall destination");
+			unit_t* target = nullptr;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit) && !functions.u_invincible(unit) && functions.xy_length(unit->sprite->position - worker->sprite->position) > 512) { target = unit; break; }
+			require(target, "an original same-owner Marine supplies a distant Recall target");
+			unit_t* caster = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Protoss_Arbiter), worker->sprite->position, 1);
+			require(caster, "the isolated Recall fixture creates one ordinary native Arbiter");
+			functions.set_unit_energy(caster, functions.unit_max_energy(caster));
+			fp8 energy = caster->energy;
+			xy origin = target->sprite->position;
+			unit_id target_id = functions.get_unit_id(target);
+			functions.start_campaign_ai_script(1, 0x65486552, {origin - xy(16, 16), origin + xy(16, 16)});
+			bool spent_energy = false;
+			for (int tick = 0; tick != 128 && functions.xy_length(target->sprite->position - origin) < 256; ++tick) {
+				step();
+				spent_energy = spent_energy || caster->energy <= energy - fp8::integer(149);
+			}
+			require(functions.get_tech_type(TechTypes::Recall)->energy_cost == 150 && spent_energy && functions.get_unit(target_id) == target && target->owner == 1 && functions.xy_length(target->sprite->position - caster->sprite->position) < 192, "Recall Here spends native energy before source replenishment and teleports the same eligible owned actor without changing ownership");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> buildings;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) buildings.push_back(unit);
+			for (unit_t* unit : buildings) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[6].victory_state; ++tick) step();
+			require(st.players[6].victory_state == 2 && next_scenario() == (ground_zero ? "Terran05a.scx" : "Terran05b.scx"), "each variant loses on base destruction and preserves its own retry filename");
+		} else {
+			auto opening_complete = [&]() {
+				return ground_zero ? st.trigger_switches[5] && st.current_minerals[6] >= 450 && st.unit_counts[6][UnitTypes::Terran_SCV] >= 8 : st.trigger_switches[7] && st.trigger_switches[8] && st.campaign_ai[0].town_active && st.unit_counts[6][UnitTypes::Terran_Goliath] >= 6;
+			};
+			for (int tick = 0; tick != 6000 && !opening_complete() && !st.players[6].victory_state; ++tick) step();
+			printf("Emperor's Fall %s opening: complete=%d launched=%d impact=%d depot=%d BCfire=%d funds=%d/%d reinforcements=%d/%d flags=%d/%d/%d\n", ground_zero ? "Ground Zero" : "Birds of War", opening_complete(), launched, impact, depot_damaged, battleship_fire, st.current_minerals[6], st.current_gas[6], st.unit_counts[6][UnitTypes::Terran_Goliath], st.unit_counts[6][UnitTypes::Terran_Ghost], st.trigger_switches[6], st.trigger_switches[7], st.trigger_switches[8]);
+			fflush(stdout);
+			require(opening_complete() && !st.players[6].victory_state, "the full original nuclear or Battlecruiser opening reaches its timed reinforcement and AI activation gates");
+			require(ground_zero ? launched && impact && depot_damaged : battleship_fire, "the original attackers launch real nuclear strikes with damage or fire real Battlecruiser weapons");
+			if (scenario == 3) {
+				a_vector<unit_t*> workers, victims;
+				a_vector<unit_id> original;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) workers.push_back(unit);
+				for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) {
+					original.push_back(functions.get_unit_id(unit));
+					if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) victims.push_back(unit);
+				}
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				bool positioned[2] = {}, produced[2] = {}, fired[2] = {};
+				for (int tick = 0; tick != 25000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+					step();
+					for (int owner : {0, 1}) {
+						if (!positioned[owner] && !st.campaign_ai[owner].attack_party.empty()) {
+							unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+							if (attacker) {
+								functions.unit_finder_remove(workers[owner]);
+								functions.move_unit(workers[owner], attacker->sprite->position + xy(64, 0));
+								auto placement = functions.find_unit_placement(workers[owner], workers[owner]->sprite->position, true);
+								require(placement.first, "each original Emperor's Fall main program has a legal protected original SCV target");
+								functions.move_unit(workers[owner], placement.second); functions.refresh_unit_position(workers[owner]);
+								positioned[owner] = true;
+							}
+						}
+						for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+							if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[owner] = true;
+							if (positioned[owner] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[owner] = true;
+						}
+					}
+				}
+				require(produced[0] && produced[1] && fired[0] && fired[1], "both original main programs replace fighters and fire native weapons within their authored waits");
+			} else if (scenario == 2) {
+				unit_t* palace = nullptr;
+				unit_t* wrong = nullptr;
+				unit_t* marine = nullptr;
+				for (unit_t* unit : ptr(st.player_units[7])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) palace = unit;
+				for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Terran_Command_Center)) { wrong = unit; break; }
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) { marine = unit; break; }
+				require(palace && wrong && marine, "the original Palace, a different enemy Command Center and an original Marine remain available");
+				functions.kill_unit(wrong);
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(!st.players[6].victory_state && !st.trigger_switches[ground_zero ? 49 : 9], "destroying another enemy Command Center cannot substitute for Mengsk's original Palace");
+				functions.unit_finder_remove(marine);
+				functions.move_unit(marine, palace->sprite->position + xy(128, 0));
+				auto placement = functions.find_unit_placement(marine, marine->sprite->position, true);
+				require(placement.first, "the Palace weapon fixture uses legal native placement");
+				functions.move_unit(marine, placement.second); functions.refresh_unit_position(marine);
+				functions.set_unit_hp(palace, fp8::integer(1));
+				functions.issue_order(marine, false, marine->unit_type->attack_unit, {palace->sprite->position, palace});
+				bool mengsk = false, raynor = false, protoss = false;
+				int peak_arbiters = 0;
+				for (int tick = 0; tick != 12000 && !st.players[6].victory_state; ++tick) {
+					step();
+					mengsk = mengsk || st.unit_counts[7][UnitTypes::Hero_Norad_II] > 0;
+					raynor = raynor || st.unit_counts[2][UnitTypes::Terran_Battlecruiser] > 0;
+					protoss = protoss || st.unit_counts[5][UnitTypes::Protoss_Scout] > 0;
+					peak_arbiters = std::max(peak_arbiters, st.unit_counts[1][UnitTypes::Protoss_Arbiter]);
+				}
+				require(st.trigger_switches[ground_zero ? 49 : 9] && st.trigger_switches[ground_zero ? 51 : 11] && mengsk && raynor && protoss && peak_arbiters == 10 && st.players[6].victory_state >= 3 && next_scenario() == "Terran06.scx", "a real Palace weapon kill runs the original Mengsk/Raynor/Protoss escape, scripted spell requests and variant cleanup to victory");
+			}
+		}
+		printf("Emperor's Fall %s original mission case %d passed.\n", ground_zero ? "Ground Zero" : "Birds of War", scenario);
+		fflush(stdout);
+	}
+}
+
 static void assault_korhal_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 7; ++scenario) {
 		game_player player(load_data_file);
@@ -5136,6 +5294,8 @@ int main(int argc, char** argv) {
 	bool dylarian = campaign && argc > 4 && !strcmp(argv[4], "bwterran02");
 	bool ruins_tarsonis = campaign && argc > 4 && !strcmp(argv[4], "bwterran03");
 	bool assault_korhal = campaign && argc > 4 && !strcmp(argv[4], "bwterran04");
+	bool emperors_fall_a = campaign && argc > 4 && !strcmp(argv[4], "bwterran05a");
+	bool emperors_fall_b = campaign && argc > 4 && !strcmp(argv[4], "bwterran05b");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5196,6 +5356,10 @@ int main(int argc, char** argv) {
 		}
 		if (assault_korhal) {
 			assault_korhal_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (emperors_fall_a || emperors_fall_b) {
+			emperors_fall_mission_cases(load_data_file, map_file, emperors_fall_a);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

@@ -16,6 +16,7 @@ const campaignSaves = () => campaignSaveModule ||= import('./campaign-saves.js?v
 // GLOBAL sed of the placeholder, which also rewrites comparisons that spell it out —
 // so test for the placeholder's underscores instead of matching it literally.
 const DEV = BUILD.startsWith('__') || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const { campaignVariants, resolveCampaignMission } = await import('./campaign-variants.js?v=' + (DEV ? Date.now() : BUILD));
 
 // Dev builds swap the favicon to the classic SC icon (prod keeps BW.ICO from the
 // index.html link) so dev tabs are recognizable at a glance. Fetched straight from
@@ -948,7 +949,7 @@ async function boot(session) {
   const { instance, engineHash } = await instantiateWasm(wasmName, imports, !!session.mission, session.prepared?.module);
   const x = instance.exports;
   memory = x.memory;
-  const saveCompatibility = session.mission ? { mission: session.mission.id, packHash: session.mission.pack.sha256, engineHash, assetHashes: assets.slice(0, 3).map(cyrb53) } : null;
+  const saveCompatibility = session.mission ? { mission: session.mission.id, ...(session.mission.variant ? { variant: session.mission.variant } : {}), packHash: session.mission.pack.sha256, engineHash, assetHashes: assets.slice(0, 3).map(cyrb53) } : null;
   if (session.resume) (await campaignSaves()).validateCampaignSave(session.resume, saveCompatibility);
 
   const canvas = $('screen');
@@ -1183,12 +1184,7 @@ async function boot(session) {
   $('go-replay').hidden = !!session.mission;
   $('go-retry').hidden = !session.mission;
   $('go-retry').onclick = () => {
-    const address = new URL(location.origin + location.pathname);
-    address.searchParams.set('mission', session.mission.id);
-    address.searchParams.set('autostart', '1');
-    address.searchParams.set('fresh', '1');
-    if (campaignDebug) address.searchParams.set('campaign-debug', '1');
-    location.replace(address);
+    location.replace(campaignAddress(session.mission.id, null, true, session.mission.variant || ''));
   };
 
   // Debug (?debug in the URL): force a win/lose to exercise the game-over screen without
@@ -2340,7 +2336,7 @@ const campaignLegacyProgressKey = 'openbw-campaign-progress-v1';
 const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
-const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06', 'bwprotoss07', 'bwprotoss08', 'bwterran01', 'bwterran02', 'bwterran03', 'bwterran04'];
+const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06', 'bwprotoss07', 'bwprotoss08', 'bwterran01', 'bwterran02', 'bwterran03', 'bwterran04', 'bwterran05'];
 let campaignManifest = null;
 let campaignDownload = null;
 function campaignEditionIds(edition = $('campaign-edition').value) {
@@ -2418,6 +2414,13 @@ function campaignUnlocked(missionId) {
   const first = missionId.startsWith('bw') ? campaignMissionIds.findIndex(id => id.startsWith('bw')) : 0;
   return index >= 0 && (campaignDebug || campaignMissionIds.slice(first, index).every(id => victories[id] === true));
 }
+function campaignSelectedAsset(missionId, savedVariant) {
+  const parameters = new URLSearchParams(location.search);
+  const pinned = parameters.get('mission') === missionId ? parameters.get('variant') : null;
+  const previous = campaignVariants[missionId]?.previous;
+  const variant = savedVariant ?? pinned ?? (previous ? campaignProgress().nextScenarios[previous] : '') ?? '';
+  return resolveCampaignMission(missionId, variant);
+}
 function selectGameMode(campaign) {
   if (!campaign) probeMeleeMaps();
   $('mode-sandbox').setAttribute('aria-selected', String(!campaign));
@@ -2448,12 +2451,16 @@ function loadSelectedMission() {
   campaignManifest = null;
   const complete = campaignProgress().completed.includes(missionId);
   $('mission-size').textContent = complete ? 'Completed' : '';
-  fetch(`data/campaign/${missionId}.json`).then(response => {
+  let selection;
+  try { selection = campaignSelectedAsset(missionId); }
+  catch (error) { $('mission-size').textContent = error.message; $('campaign-start').disabled = true; return; }
+  if (selection.label) $('campaign-selected-name').textContent += ` (${selection.label})`;
+  fetch(`data/campaign/${selection.assetId}.json`).then(response => {
     if (!response.ok) throw new Error('Mission download unavailable.');
     return response.json();
   }).then(manifest => {
-    validateMissionManifest(manifest, missionId);
-    if ($('mission-select').value !== missionId) return;
+    validateMissionManifest(manifest, missionId, selection.scenario);
+    if ($('mission-select').value !== missionId || campaignSelectedAsset(missionId).assetId !== selection.assetId) return;
     campaignManifest = manifest;
     $('mission-size').textContent = `${(manifest.pack.bytes / 1048576).toFixed(2)} MB${complete ? ' - completed' : ''}`;
   }).catch(error => { if ($('mission-select').value === missionId) $('mission-size').textContent = error.message; });
@@ -2501,12 +2508,13 @@ function renderCampaignSelection() {
   $('campaign-progress').querySelector('progress').max = Math.max(1, editionIds.length);
   $('campaign-progress').querySelector('progress').value = cleared;
 }
-function campaignAddress(mission, resume = null, fresh = false) {
+function campaignAddress(mission, resume = null, fresh = false, variant = '') {
   const address = new URL(location.origin + location.pathname);
   address.searchParams.set('mission', mission);
   address.searchParams.set('autostart', '1');
   if (resume) address.searchParams.set('resume', resume);
   if (fresh) address.searchParams.set('fresh', '1');
+  if (variant) address.searchParams.set('variant', resolveCampaignMission(mission, variant).scenario);
   if (campaignDebug) address.searchParams.set('campaign-debug', '1');
   return address;
 }
@@ -2518,6 +2526,7 @@ async function refreshCampaignSaves(mission) {
     if ($('mission-select').value !== mission) return;
     const autosave = summaries.find(save => save.key === `auto:${mission}`);
     $('campaign-resume').hidden = !autosave;
+    $('campaign-resume').title = autosave ? `Resume ${autosave.title}` : '';
     $('campaign-resume').onclick = () => location.replace(campaignAddress(mission, autosave.key));
     const container = $('campaign-saves');
     container.replaceChildren();
@@ -2546,11 +2555,14 @@ async function refreshCampaignSaves(mission) {
     window.lucide?.createIcons();
   } catch (error) { $('mission-size').textContent = `Saved games unavailable: ${error.message}`; }
 }
-function validateMissionManifest(manifest, missionId) {
+function validateMissionManifest(manifest, missionId, variant = '') {
+  if (manifest.variant !== undefined && typeof manifest.variant !== 'string') throw new Error('Invalid mission variant metadata.');
   if (!campaignMissionIds.includes(missionId) || manifest.schemaVersion !== 1 || manifest.id !== missionId || !Number.isInteger(manifest.humanSlot) || manifest.humanSlot < 0 || manifest.humanSlot >= 8 || ![0, 1, 2].includes(manifest.race) || !Number.isInteger(manifest.contentVersion) || !Array.isArray(manifest.requirements) || !Array.isArray(manifest.files) || manifest.createStartingUnits !== undefined && typeof manifest.createStartingUnits !== 'boolean') throw new Error('Unsupported mission manifest.');
   if (!Number.isInteger(manifest.pack?.bytes) || manifest.pack.bytes <= 32 || manifest.pack.bytes > 32 * 1048576 || !/^[a-f0-9]{64}$/.test(manifest.pack.sha256)) throw new Error('Invalid mission pack metadata.');
+  const selection = resolveCampaignMission(missionId, variant);
+  if ((manifest.variant || '') !== selection.scenario) throw new Error('Mission manifest variant mismatch.');
   const url = new URL(manifest.pack.url, location.href);
-  if (url.origin !== location.origin || url.pathname !== new URL(`data/campaign/${missionId}.mpq`, location.href).pathname) throw new Error('Invalid mission pack location.');
+  if (url.origin !== location.origin || url.pathname !== new URL(`data/campaign/${selection.assetId}.mpq`, location.href).pathname) throw new Error('Invalid mission pack location.');
   if (manifest.requirements.some(required => !/^(condition|action|briefing)\.\d+$/.test(required))) throw new Error('Invalid mission capability metadata.');
 }
 function campaignFailure(error) {
@@ -2597,15 +2609,18 @@ $('campaign-start').onclick = async () => {
       if (!resume && parameters.has('resume')) throw new Error('Saved game was not found.');
       if (resume && resume.mission !== missionId) throw new Error('Saved game belongs to a different mission.');
     }
-    if (campaignManifest?.id !== missionId) campaignManifest = null;
+    const selection = campaignSelectedAsset(missionId, resume?.variant);
+    if (campaignManifest?.id !== missionId || (campaignManifest?.variant || '') !== selection.scenario) campaignManifest = null;
     if (!campaignManifest) {
-      const response = await fetch(`data/campaign/${missionId}.json`, { signal: campaignDownload.signal });
+      const response = await fetch(`data/campaign/${selection.assetId}.json`, { signal: campaignDownload.signal });
       if (!response.ok) throw new Error(`Mission manifest HTTP ${response.status}`);
       campaignManifest = await response.json();
-      validateMissionManifest(campaignManifest, missionId);
+      validateMissionManifest(campaignManifest, missionId, selection.scenario);
     }
     const address = new URL(location.href);
     address.searchParams.set('mission', campaignManifest.id);
+    if (campaignManifest.variant) address.searchParams.set('variant', campaignManifest.variant);
+    else address.searchParams.delete('variant');
     address.searchParams.set('autostart', '1');
     history.replaceState(null, '', address);
     $('controls').style.display = 'none';

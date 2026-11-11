@@ -4,12 +4,13 @@
 import { WASI } from 'node:wasi';
 import { readFileSync } from 'node:fs';
 import { argv } from 'node:process';
-import { campaignMissions } from './prepare-campaign.mjs';
+import { campaignPackMissions } from './prepare-campaign.mjs';
+import { resolveCampaignMission } from './campaign-variants.js';
 
 const combatAI = argv[2] === '--test-ai-combat';
 const campaign = argv[2] === '--test-campaign' || combatAI;
-const missionId = campaign ? combatAI ? 'terran01' : argv[3] || 'terran01' : null;
-if (campaign && !campaignMissions.includes(missionId)) throw new Error('Unsupported test mission');
+const missionId = campaign ? resolveCampaignMission(combatAI ? 'terran01' : argv[3] || 'terran01').assetId : null;
+if (campaign && !campaignPackMissions.includes(missionId)) throw new Error('Unsupported test mission');
 const map = campaign ? `/data/campaign/${missionId}.mpq` : argv[2] || '/maps/Benzene.scx';
 
 const wasi = new WASI({

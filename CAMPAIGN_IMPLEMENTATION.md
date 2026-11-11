@@ -425,6 +425,10 @@ Keep portable progress-code meanings and canonical ordering stable. Expansion-on
 
 Local victory progress can include an authored bare filename at `nextScenarios[missionId]`. Preserve it through progress-code merges. Portable codes encode ordered clears, not story branches; validate and wire variant routing before exposing a following forked mission.
 
+For a fork, keep one public story ID in `campaignMissions` and define its assets in [web/campaign-variants.js](web/campaign-variants.js). Use `campaignPackMissions` for preparation, deployment and scenario regression loops. Emperor's Fall is public `bwterran05`; its assets are `bwterran05a` and `bwterran05b`.
+
+Variant manifests and saves retain the public ID and require the canonical source filename in `variant`. Validate the variant, pack URL and pack hash together. A saved variant takes precedence over changed predecessor progress and URL pins during Resume. Retry pins the loaded variant. Missing branch information selects the original A route; unknown variants fail explicitly.
+
 Verify the stage-4 manifest's schema/content version, source hash, pack URL/size/hash, human slot/race, capabilities and per-file metadata. Reprepare after an extractor/profile change. Do not edit generated manifests to disguise a profile mismatch.
 
 ## 8. Prove Native Mission Behavior
@@ -538,12 +542,12 @@ Do not invent opening dialogue for location-driven missions. Audio decoding, hum
 
 Run the smallest focused checks after each fix. Once the mission passes, cover affected earlier missions and shared behavior.
 
-For shared native/codec changes with broad impact, run every catalogue mission in both native and recorded-input modes, plus the six shared modes. Derive mission IDs from `campaignMissions`.
+For shared native/codec changes with broad impact, run every scenario in both native and recorded-input modes, plus the six shared modes. Derive asset IDs from `campaignPackMissions` to include both fork variants.
 
 The following PowerShell sequence fails on the first unsuccessful process:
 
 ```powershell
-$missions = node --input-type=module -e "import { campaignMissions } from './web/prepare-campaign.mjs'; process.stdout.write(JSON.stringify(campaignMissions));"
+$missions = node --input-type=module -e "import { campaignPackMissions } from './web/prepare-campaign.mjs'; process.stdout.write(JSON.stringify(campaignPackMissions));"
 if ($LASTEXITCODE -ne 0) { throw 'Catalogue read failed' }
 $missions = $missions | ConvertFrom-Json
 foreach ($mission in $missions) {

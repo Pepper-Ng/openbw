@@ -1,7 +1,9 @@
+import { resolveCampaignMission } from './campaign-variants.js';
+
 export const campaignSaveVersion = 1;
 export const campaignSaveKeys = ['slot:1', 'slot:2', 'slot:3'];
 
-const validMission = value => /^(?:(?:terran|zerg|protoss)(?:0[1-9]|10)|bwprotoss0[1-8]|bwterran0[1-4])$/.test(value);
+const validMission = value => /^(?:(?:terran|zerg|protoss)(?:0[1-9]|10)|bwprotoss0[1-8]|bwterran0[1-5])$/.test(value);
 const validKey = value => campaignSaveKeys.includes(value) || typeof value === 'string' && value.startsWith('auto:') && validMission(value.slice(5));
 const integer = (value, maximum) => Number.isInteger(value) && value >= 0 && value <= maximum;
 
@@ -20,6 +22,8 @@ export function sealCampaignSave(payload) {
 
 export function validateCampaignSave(value, expected = null) {
   if (!value || value.version !== campaignSaveVersion || !validMission(value.mission) || typeof value.title !== 'string' || value.title.length > 200 || !integer(value.ticks, 2000000) || !integer(value.frame, value.ticks + 8) || !integer(value.checksum, 0xffffffff) || !Number.isFinite(value.savedAt) || value.savedAt <= 0) throw new Error('Invalid saved game.');
+  const variant = value.variant === undefined ? '' : value.variant;
+  if (resolveCampaignMission(value.mission, variant).scenario !== variant) throw new Error('Invalid saved game variant.');
   if (!/^[a-f0-9]{64}$/.test(value.packHash) || !/^[a-f0-9]{64}$/.test(value.engineHash) || !Array.isArray(value.assetHashes) || value.assetHashes.length !== 3 || value.assetHashes.some(hash => !/^[a-f0-9]{14}$/.test(hash))) throw new Error('Invalid saved game compatibility data.');
   if (!Array.isArray(value.turns) || value.turns.length > 100000) throw new Error('Invalid saved game commands.');
   let previous = -1, total = 0;
@@ -34,7 +38,7 @@ export function validateCampaignSave(value, expected = null) {
   const payload = { ...value };
   delete payload.integrity;
   if (value.integrity !== fingerprint(payload)) throw new Error('Saved game integrity check failed.');
-  if (expected && (value.mission !== expected.mission || value.packHash !== expected.packHash || value.engineHash !== expected.engineHash || JSON.stringify(value.assetHashes) !== JSON.stringify(expected.assetHashes))) throw new Error('This saved game requires the engine and mission data that created it.');
+  if (expected && (value.mission !== expected.mission || (value.variant || '') !== (expected.variant || '') || value.packHash !== expected.packHash || value.engineHash !== expected.engineHash || JSON.stringify(value.assetHashes) !== JSON.stringify(expected.assetHashes))) throw new Error('This saved game requires the engine and mission data that created it.');
   return value;
 }
 
@@ -78,7 +82,7 @@ export async function writeCampaignSave(key, value) {
     try {
       if (existing.result?.savedAt > value.savedAt) return;
       transaction.objectStore('games').put(value, key);
-      summaries.put({ key, version: value.version, mission: value.mission, title: value.title, savedAt: value.savedAt, frame: value.frame, engineHash: value.engineHash }, key);
+      summaries.put({ key, version: value.version, mission: value.mission, ...(value.variant ? { variant: value.variant } : {}), title: value.title, savedAt: value.savedAt, frame: value.frame, engineHash: value.engineHash }, key);
     } catch (error) { writeError = error; transaction.abort(); }
   };
   try { await done; } catch (error) { throw writeError || error; }

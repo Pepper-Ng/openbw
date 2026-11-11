@@ -4,6 +4,7 @@ import { createReadStream, readFileSync, mkdirSync, writeFileSync, renameSync, r
 import { dirname, basename, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WASI } from 'node:wasi';
+import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const missions = {
@@ -49,8 +50,13 @@ const missions = {
   bwterran02: { title: 'The Dylarian Shipyards', episode: 5, order: 2, scenarioHash: 'dda5b662bd21a7335f076a56a65690b35e441a1a0fe6aebc84676f0951934108', units: 124, triggers: 89, sounds: 29 },
   bwterran03: { title: 'Ruins of Tarsonis', episode: 5, order: 3, scenarioHash: '76516a763fe806b2a4e2c6814c4fcd3e05f51a21c8aa8817837a74b4fcf9ff38', units: 360, triggers: 37, sounds: 22 },
   bwterran04: { title: 'Assault on Korhal', episode: 5, order: 4, scenarioHash: '988d5c2c1692a63038a3e7a895dd0d35fe9cf3696523e37858f4b5f69f9a8401', units: 456, triggers: 31, sounds: 8 },
+  bwterran05: { title: "Emperor's Fall", episode: 5, order: 5, scenarioHash: 'c957cb9946b7e756be3fbbbcee27438891695522612bc3f9e7ced880ae7e07ef', units: 673, triggers: 53, sounds: 31 },
+};
+const variantProfiles = {
+  bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },
 };
 export const campaignMissions = Object.freeze(Object.keys(missions));
+export const campaignPackMissions = Object.freeze(campaignMissions.flatMap(id => campaignVariants[id]?.variants.map(variant => variant.assetId) ?? [id]));
 export const campaignSource = Object.freeze({
   file: 'StarCraft.mpq',
   bytes: 601389682,
@@ -437,7 +443,9 @@ async function extractSource(source, request, directory, output) {
 }
 
 async function prepareAi(missionId = 'terran03') {
-  assert.ok(Object.hasOwn(missions, missionId), 'Unsupported AI audit mission');
+  const selection = resolveCampaignMission(missionId);
+  assert.ok(Object.hasOwn(missions, selection.missionId), 'Unsupported AI audit mission');
+  missionId = selection.assetId;
   const directory = resolve(root, 'web/data/campaign');
   mkdirSync(directory, { recursive: true });
   const temporary = resolve(directory, 'aiscript.bin.tmp');
@@ -479,8 +487,10 @@ async function prepareAi(missionId = 'terran03') {
 }
 
 export async function prepare(missionId = 'terran01') {
-  assert.ok(Object.hasOwn(missions, missionId), 'Unsupported mission ID');
-  const mission = missions[missionId];
+  const selection = resolveCampaignMission(missionId);
+  assert.ok(Object.hasOwn(missions, selection.missionId), 'Unsupported mission ID');
+  missionId = selection.assetId;
+  const mission = { ...missions[selection.missionId], ...variantProfiles[missionId] };
   const archive = mission.episode >= 4 ? broodWarSource : campaignSource;
   const source = resolve(root, 'web/data', archive.file);
   assert.equal(statSync(source).size, archive.bytes, 'Unexpected source archive size');
@@ -513,7 +523,7 @@ export async function prepare(missionId = 'terran01') {
       return { path, bytes: content.length, sha256: sha256(content), ...(path.endsWith('.wav') ? { audio: waveMetadata(content) } : {}) };
     });
     const requirements = [...audit.gameplay.conditions.map(type => `condition.${type}`), ...audit.gameplay.actions.map(type => `action.${type}`), ...audit.briefing.actions.map(type => `briefing.${type}`)];
-    const manifest = { schemaVersion: 1, contentVersion: 1, id: missionId, episode: mission.episode ?? 1, order: mission.order, title: mission.title, humanSlot, race, createStartingUnits: !!mission.createStartingUnits, sourceChkSha256: mission.scenarioHash, pack: { url: `data/campaign/${missionId}.mpq`, bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
+    const manifest = { schemaVersion: 1, contentVersion: 1, id: selection.missionId, ...(selection.scenario ? { variant: selection.scenario } : {}), episode: mission.episode ?? 1, order: mission.order, title: selection.label ? `${mission.title} (${selection.label})` : mission.title, humanSlot, race, createStartingUnits: !!mission.createStartingUnits, sourceChkSha256: mission.scenarioHash, pack: { url: `data/campaign/${missionId}.mpq`, bytes: bytes.length, sha256: sha256(bytes) }, requirements, files };
     writeFileSync(manifestTemporary, `${JSON.stringify(manifest, null, 2)}\n`);
     writeFileSync(resolve(directory, `${missionId}.audit.json`), `${JSON.stringify(audit, null, 2)}\n`);
     renameSync(temporary, resolve(directory, `${missionId}.mpq`));
