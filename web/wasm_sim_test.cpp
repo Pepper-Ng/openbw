@@ -3926,6 +3926,145 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void slay_beast_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 11; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[3][UnitTypes::Zerg_Lair] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 4 && st.unit_counts[4][UnitTypes::Special_Overmind] == 1, "To Slay preserves the original Zerg base, four Drones and enemy Overmind");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "To Slay outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::HoldPosition), {});
+		};
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 64; ++tick) step();
+		require(!st.trigger_switches[0] && !st.campaign_ai[4].town_active && !st.campaign_ai[6].town_active && st.current_minerals[3] == 150 && st.current_gas[3] == 100, "the source five-second false boundary precedes enemy macro activation and retains 150/100");
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.trigger_switches[0] && st.campaign_ai[4].town_active && st.campaign_ai[4].area_towns.size() == 1 && st.campaign_ai[6].town_active && st.campaign_ai[6].area_towns.size() == 2 && st.unit_counts[4][UnitTypes::Terran_Command_Center] > 0 && st.unit_counts[6][UnitTypes::Zerg_Hive] > 0 && st.current_minerals[4] > 60000 && st.current_minerals[6] > 60000 && !st.players[3].victory_state, "original transfers merge both enemy armies before the two main and three area programs start with their source funding");
+		require(st.unit_counts[3][UnitTypes::Protoss_Dark_Templar] == 2 && st.unit_counts[3][UnitTypes::Protoss_Gateway] == 2 && st.unit_counts[3][UnitTypes::Protoss_Pylon] == 2 && st.unit_counts[3][UnitTypes::Protoss_Templar_Archives] == 1 && !st.unit_counts[1][UnitTypes::Protoss_Dark_Templar], "the original nearby Overlords naturally rescue both Dark Templars and their complete replacement infrastructure");
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && !st.trigger_switches[1], "losing all human buildings independently causes the original pre-ending defeat");
+		} else if (scenario >= 2 && scenario <= 5) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Protoss_Dark_Templar)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(!st.players[3].victory_state, "losing both initial Dark Templars is recoverable while their original infrastructure survives");
+			if (scenario == 2) {
+				action_state commands;
+				action_functions actions(st, commands);
+				require(actions.action_select(3, find(3, UnitTypes::Protoss_Gateway)) && actions.action_train(3, functions.get_unit_type(UnitTypes::Protoss_Dark_Templar)), "the rescued native Gateway accepts paid replacement Dark Templar production for its Zerg owner");
+				require(st.current_minerals[3] == 25 && st.current_gas[3] == 0, "a replacement Dark Templar costs exactly 125/100 of the original funds");
+				for (int tick = 0; tick != 1600 && !st.completed_unit_counts[3][UnitTypes::Protoss_Dark_Templar]; ++tick) step();
+				require(st.completed_unit_counts[3][UnitTypes::Protoss_Dark_Templar] == 1 && !st.players[3].victory_state, "the paid replacement completes through native Protoss supply and training without an invented last-Templar defeat");
+			} else {
+				UnitTypes type = scenario == 3 ? UnitTypes::Protoss_Pylon : scenario == 4 ? UnitTypes::Protoss_Gateway : UnitTypes::Protoss_Templar_Archives;
+				victims.clear();
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, type)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+				require(st.players[3].victory_state == 2 && !st.trigger_switches[1], "zero Dark Templars plus each independently missing Pylon/Gateway/Archives class causes the exact source defeat");
+			}
+		} else if (scenario >= 6 && scenario <= 9) {
+			unit_t* boss = find(4, UnitTypes::Special_Overmind);
+			unit_id original = functions.get_unit_id(boss);
+			unit_t* templar = find(3, UnitTypes::Protoss_Dark_Templar);
+			unit_t* attacker = find(3, UnitTypes::Zerg_Hydralisk);
+			if (scenario != 6) {
+				relocate(templar, center(24) + xy(-128, -96));
+				require(functions.is_in_bounds(templar->sprite->position, st.locations.at(23).area), "an original Dark Templar occupies the authored ground-only Overmind gate");
+				if (scenario == 9) functions.set_unit_owner(templar, 2, true);
+			}
+			if (scenario == 7) {
+				attacker = templar;
+				relocate(attacker, boss->sprite->position + xy(-96, 0));
+			} else relocate(attacker, boss->sprite->position + xy(160, 0));
+			if (scenario == 8) require(functions.units_distance(templar, boss) > functions.weapon_max_range(templar, templar->unit_type->ground_weapon), "the separate nearby Dark Templar cannot supply the isolated Hydralisk final hit");
+			functions.set_unit_hp(boss, fp8::integer(1));
+			functions.issue_order(attacker, false, attacker->unit_type->attack_unit, {boss->sprite->position, boss});
+			for (int tick = 0; tick != 1600 && !st.killed_unit_counts[3][UnitTypes::Special_Overmind]; ++tick) {
+				unit_t* current = functions.get_unit(original);
+				if (current && !functions.unit_dying(current)) functions.set_unit_hp(current, fp8::integer(1));
+				step();
+			}
+			require(st.killed_unit_counts[3][UnitTypes::Special_Overmind] == 1, "an original human actor destroys the original Overmind with a real native weapon");
+			if (scenario == 6 || scenario == 9) {
+				for (int tick = 0; tick != 1600 && !find(4, UnitTypes::Special_Overmind); ++tick) step();
+				unit_t* replacement = find(4, UnitTypes::Special_Overmind);
+				require(replacement && !(functions.get_unit_id(replacement) == original) && !st.trigger_switches[1] && !st.trigger_switches[2] && !st.players[3].victory_state, "without a nearby human-owned Dark Templar, the source regenerates a new Overmind instead of starting the ending");
+			} else {
+				for (int tick = 0; tick != 256 && !st.trigger_switches[2]; ++tick) step();
+				require(st.trigger_switches[1] && st.trigger_switches[2] && !st.players[3].victory_state, "a human Dark Templar's presence, rather than a last-attacker test, arms the original cinematic and defeat suppression");
+				bool shuttle = false, zeratul = false, cocoon = false, overlords = false, raszagal = false, recall = false;
+				unit_id zera{}, rasz{};
+				for (int tick = 0; tick != 18000 && !st.players[3].victory_state; ++tick) {
+					step();
+					shuttle = shuttle || find(2, UnitTypes::Protoss_Shuttle);
+					if (unit_t* unit = find(2, UnitTypes::Hero_Zeratul)) { zeratul = true; zera = functions.get_unit_id(unit); }
+					cocoon = cocoon || find(4, UnitTypes::Special_Overmind_Cocoon);
+					overlords = overlords || st.unit_counts[0][UnitTypes::Zerg_Overlord] >= 2;
+					if (unit_t* unit = find(0, UnitTypes::Hero_Dark_Templar)) { raszagal = true; rasz = functions.get_unit_id(unit); }
+					for (unit_t* unit : ptr(st.player_units[4])) if (unit->order_type->id == Orders::CastRecall) recall = true;
+				}
+				if (!st.players[3].victory_state) error("To Slay ending stalled: frame=%d flags=%d/%d/%d/%d/%d/%d shuttle=%d zera=%d cocoon=%d overlords=%d raszagal=%d recall=%d", st.current_frame, st.trigger_switches[3], st.trigger_switches[4], st.trigger_switches[51], st.trigger_switches[52], st.trigger_switches[55], st.unit_counts[4][UnitTypes::Special_Overmind_Cocoon], shuttle, zeratul, cocoon, overlords, raszagal, recall);
+				require(st.players[3].victory_state >= 3 && shuttle && zeratul && cocoon && overlords && raszagal && recall && st.killed_unit_counts[2][UnitTypes::Special_Overmind_Cocoon] == 1 && st.trigger_switches[51] && st.trigger_switches[52] && st.trigger_switches[55] && !st.unit_counts[0][UnitTypes::Hero_Dark_Templar] && !functions.get_unit(zera) && !functions.get_unit(rasz), "the complete original Shuttle, Zeratul weapon kill, Overlord arrivals, Raszagal dialogue, native Recall and source removals finish without injected cinematic actors or shortened waits");
+			}
+		} else if (scenario == 10) {
+			a_vector<unit_id> targets, cohort;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && targets.size() != 2) targets.push_back(functions.get_unit_id(unit));
+			a_vector<unit_t*> victims;
+			for (int owner : {4, 6}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				cohort.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, UnitTypes::Terran_Marine)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[2] = {}, fired[2] = {};
+			for (int tick = 0; tick != 36000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+				step();
+				for (int index = 0; index != 2; ++index) {
+					int owner = index ? 6 : 4;
+					if (tick % 128 == 0 && !fired[index]) {
+						unit_t* target = functions.get_unit(targets.at(index));
+						require(target && functions.unit_is(target, UnitTypes::Zerg_Drone), "the two source Drone targets retain generation-safe identities during mixed-army observations");
+						unit_t* attacker = find(owner, UnitTypes::Terran_Barracks);
+						if (attacker) relocate(target, attacker->sprite->position + xy(128, 0));
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(cohort.begin(), cohort.end(), functions.get_unit_id(unit)) == cohort.end()) produced[index] = true;
+						if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && fired[0] && fired[1] && !st.players[3].victory_state, "both original mixed-army mains produce paid replacement Marines and fire native weapons through their source programs");
+		}
+		printf("To Slay the Beast original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void drawing_web_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 11; ++scenario) {
 		game_player player(load_data_file);
@@ -6628,6 +6767,7 @@ int main(int argc, char** argv) {
 	bool true_colors = campaign && argc > 4 && !strcmp(argv[4], "bwzerg05");
 	bool fury_swarm = campaign && argc > 4 && !strcmp(argv[4], "bwzerg06");
 	bool drawing_web = campaign && argc > 4 && !strcmp(argv[4], "bwzerg07");
+	bool slay_beast = campaign && argc > 4 && !strcmp(argv[4], "bwzerg08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6732,6 +6872,10 @@ int main(int argc, char** argv) {
 		}
 		if (drawing_web) {
 			drawing_web_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (slay_beast) {
+			slay_beast_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());
