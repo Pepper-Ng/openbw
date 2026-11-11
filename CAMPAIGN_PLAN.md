@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first twenty-four Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches To Slay the Beast. Fork variants occupy one story position each, giving 54 logical missions and 60 scenarios.
+- All thirty original numbered StarCraft missions and the first twenty-five Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Reckoning. Fork variants occupy one story position each, giving 55 logical missions and 61 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current 126-mode expansion gate is recorded below.
@@ -353,11 +353,23 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - The browser-engine recovery uses normal paid Dark Templar production from an original rescued Gateway. Funds fall to 25/0; the two original Templars remain beside the unfinished trainee. A fresh instance reconstructs 1228 service ticks and one command batch. Menu unlocking requires Drawing of the Web, and save validation includes the new mission.
 - Isolated loopback handlers verify Next from Drawing into the correct To Slay briefing. Ordinary native Gateway input records one paid Dark Templar command batch. Save/menu/Resume reconstruct frame 1547 with a matching checksum after that production. Defeat hides Next, Retry reloads the same mission, and briefing return preserves Brood War with 23 of 24 completed and twenty-four rows. Test-origin storage and caches are cleared afterward. Forced outcomes test navigation only; the native suites establish the source predicates. The integrated page is hidden, so visible-canvas and physical-device acceptance remain open.
 
+### Brood War 25: The Reckoning
+
+- Public `bwzerg09` preserves `campaign\expzerg\zerg09\staredit\scenario.chk`, SHA-256 `f7987c26f0b990d5b13e3e5dbd0f3788d11cf8bbe67c73aa5904bdbfc591b9a9`: format 205, 283 UNIT records, thirty-one triggers, one briefing and twenty-one audio dependencies.
+- Its twenty-two-file pack is 7871021 bytes, decoded 7869613 bytes, SHA-256 `a8c05fd11b30b76c3db3191a658242614eaf3a196f741d3168243790c5f88193`. Human Zerg slot 3 retains a Hive, Hatchery, eight Drones, five Hydralisks, eight Zerglings, five Overlords, two Lurkers, one Ultralisk, two Guardians and 300/200 resources.
+- The source starts an actual 1800-second clock. Base loss independently retries `Zerg09.scx`. Full timer expiry runs the original defeat dialogue and mass-Recall sequence. Eliminating the Protoss buildings arms the ending, pauses the countdown and triggers the original Terran defeat; destroying the Terran bases is not a prerequisite.
+- The original prison UNIT record explicitly enables invincibility. The loader now passes placed-unit properties through the existing creation-property helper, preserving validity masks, invincibility, burrowing, hangar contents and existing HP/shield/energy/resource settings. The original source action releases the prison after Kerrigan and the three Ultralisks arrive.
+- Seven fresh-map cases pass: setup; base-loss defeat; the full unshortened timeout; complete endings at exactly 300 and 299 seconds remaining; a real Hydralisk final-Nexus kill followed by the complete ending; and source-requested Protoss defensive/Terran replacement production with native weapons.
+- The complete original Shuttle, Zeratul, four Overlord arrivals, Kerrigan/Ultralisk deployment, NPC prison weapon kill, Raszagal dialogue, Arbiter Recall and cleanup run without injected cinematic actors or shortened waits. NPC Zeratul or Kerrigan's brood can deliver the prison's final hit; the source checks its destruction, not a particular killer.
+- `Bonus.scx` is selected at 300 or more remaining seconds; 299 selects `Zerg10.scx`. Boundary fixtures let the full clock elapse, flush deferred deaths and perform an isolated scan at the unchanged boundary. A separate early-ending fixture uses an original Hydralisk weapon. Protected bases and combat targets isolate these checks from a full human playthrough.
+- Browser-engine recovery preserves the live original countdown, pays fifty minerals for a normal Drone morph and reconstructs 1228 service ticks plus one command batch with 250/200 remaining.
+- Progress accepts the original `Bonus.scx` filename and latches its earned unlock. Optional missions are separate from numbered ordering, campaign totals and portable codes. Later slower replays retain an earned unlock; forward resume codes cannot invent it. Next follows the source branch, while the normal route continues directly to Omega.
+- Restoring authored placed-unit properties passed all sixty existing native suites after correcting Vile Disruption's outcome fixture. Its protected Hunter Killer now holds legal ground inside each actual rescue region instead of assuming the Hive's right side remains open. HP refresh preserves the test actor against spell damage. All sixty-one recorded-input recoveries pass with the restored properties.
+
 ### Remaining Mission Implementations
 
 The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-9. The Reckoning.
 10. Omega.
 
 The secret mission **Dark Origin** also remains. Preserve its original conditional route from The Reckoning rather than exposing it as an unconditional numbered step.

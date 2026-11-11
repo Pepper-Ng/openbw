@@ -353,6 +353,8 @@ Scripted grounded-building moves retain destination centers on legal terrain, in
 
 Distinguish a delivered airborne base from a landed base. Ground-only Bring regions exclude flying buildings. Emperor's Flight activates enemy main programs after a human building lands or starts construction; its original over-supply also prevents immediate Marine training.
 
+Pass placed UNIT properties through the shared `apply_creation_properties` helper, as for UPRP-created actors. Preserve validity masks, authored invincibility and its source release action. Recheck earlier maps with burrowed or invincible units and explicit hangar contents.
+
 ### Trigger Semantics And Clocks
 
 Classic Command uses all-unit counts for At Most and completed-unit counts for At Least/Exactly. Reign of Fire consequently loses if both starting Drones morph before any building completes. Preserve this verified original quirk; it is not an incomplete-building compatibility defect.

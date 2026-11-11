@@ -3926,6 +3926,137 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void reckoning_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hive] == 1 && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 8 && st.unit_counts[3][UnitTypes::Zerg_Lurker] == 2, "The Reckoning preserves the original Hive, Hatchery, eight Drones and two Lurkers");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto next = [&]() -> const a_string& { require(st.next_scenario[3] > 0, "the original Reckoning route exists"); return st.game->map_strings.at(st.next_scenario[3] - 1); };
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Reckoning actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::HoldPosition), {});
+		};
+		bool protect_bases = (scenario >= 2 && scenario <= 4) || scenario == 6;
+		auto step = [&]() {
+			for (int owner : {1, 3, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (owner == 3 || (protect_bases && functions.ut_building(unit)))) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->shield_points = fp8::integer(unit->unit_type->shield_points);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		unit_t* cell = find(7, UnitTypes::Special_Stasis_Cell_Prison);
+		require(cell && functions.u_invincible(cell) && st.countdown_active && !st.countdown_paused && st.countdown_timer > 1790 && st.current_minerals[3] == 300 && st.current_gas[3] == 200 && st.campaign_ai[1].town_active && st.campaign_ai[6].town_active && st.campaign_ai[6].area_towns.size() == 1 && next() == "Zerg10.scx" && !st.players[3].victory_state, "the full thirty-minute clock, original 300/200 funding, both enemy main programs and authored invincible prison begin without an invented opening");
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && st.trigger_switches[3] && next() == "Zerg09.scx", "base destruction independently loses and records the authored Reckoning retry");
+		} else if (scenario == 2) {
+			int start = st.current_frame, remaining = st.countdown_timer;
+			for (int tick = 0; tick != 34000 && !st.players[3].victory_state; ++tick) step();
+			require(st.current_frame - start >= remaining * 16 - 15 && st.countdown_timer == 0 && st.trigger_switches[3] && st.trigger_switches[5] && st.players[3].victory_state == 2 && next() == "Zerg09.scx", "unshortened timer expiry runs the original defeat dialogue and mass-Recall sequence before retry");
+		} else if (scenario >= 3 && scenario <= 5) {
+			if (scenario != 5) {
+				int boundary = scenario == 3 ? 300 : 299;
+				for (int tick = 0; tick != 30000 && st.countdown_timer > boundary; ++tick) step();
+				require(st.countdown_timer == boundary && !st.trigger_switches[2] && !st.players[3].victory_state, "the original clock reaches the exact five-minute branch boundary without shortening its elapsed time");
+			}
+			require(st.unit_counts[6][UnitTypes::Terran_Command_Center] > 0, "original Terran bases remain alive before the independent Protoss-elimination objective");
+			protect_bases = false;
+			unit_t* last = find(1, UnitTypes::Protoss_Nexus);
+			require(last, "the original Protoss Nexus supplies the last-building objective boundary");
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (functions.ut_building(unit) && (scenario != 5 || unit != last)) victims.push_back(unit);
+			if (scenario == 5) {
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(!st.trigger_switches[2] && !st.players[3].victory_state, "one surviving original Protoss building blocks victory while Terran bases remain irrelevant to that predicate");
+				unit_t* attacker = find(3, UnitTypes::Zerg_Hydralisk);
+				relocate(attacker, last->sprite->position + xy(160, 0));
+				last->shield_points = {};
+				functions.set_unit_hp(last, fp8::integer(1));
+				functions.issue_order(attacker, false, attacker->unit_type->attack_unit, {last->sprite->position, last});
+				for (int tick = 0; tick != 1600 && !st.trigger_switches[2]; ++tick) {
+					if (!functions.unit_dying(last)) { last->shield_points = {}; functions.set_unit_hp(last, fp8::integer(1)); }
+					step();
+				}
+				require(st.killed_unit_counts[3][UnitTypes::Protoss_Nexus] >= 1, "an original Hydralisk weapon destroys the original final Nexus");
+			} else {
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				// Flush deferred deaths before scanning at the unchanged clock boundary.
+				functions.process_frame();
+				st.trigger_timer = 0;
+				functions.process_triggers();
+			}
+			int frozen = st.countdown_timer;
+			require(st.trigger_switches[2] && st.countdown_paused && !st.players[3].victory_state && st.players[6].victory_state == 2, "Protoss building elimination pauses the actual source clock, arms its ending and executes the original Terran defeat action");
+			if (scenario != 5) require(frozen == (scenario == 3 ? 300 : 299), "the isolated boundary scan retains the actual unmodified 300/299-second value");
+			bool shuttle = false, zeratul = false, kerrigan = false, ultras = false, vulnerable = false, raszagal = false, recall = false;
+			for (int tick = 0; tick != 18000 && !st.players[3].victory_state; ++tick) {
+				step();
+				shuttle = shuttle || find(2, UnitTypes::Protoss_Shuttle);
+				zeratul = zeratul || find(2, UnitTypes::Hero_Zeratul);
+				kerrigan = kerrigan || find(0, UnitTypes::Hero_Infested_Kerrigan);
+				ultras = ultras || st.unit_counts[0][UnitTypes::Zerg_Ultralisk] >= 3;
+				raszagal = raszagal || find(0, UnitTypes::Hero_Dark_Templar);
+				if (unit_t* unit = find(7, UnitTypes::Special_Stasis_Cell_Prison)) vulnerable = vulnerable || !functions.u_invincible(unit);
+				for (unit_t* unit : ptr(st.player_units[2])) if (unit->order_type->id == Orders::CastRecall) recall = true;
+			}
+			if (!st.players[3].victory_state) error("Reckoning ending stalled: frame=%d clock=%d flags=%d/%d/%d/%d/%d/%d/%d cell=%d", st.current_frame, st.countdown_timer, st.trigger_switches[2], st.trigger_switches[4], st.trigger_switches[7], st.trigger_switches[50], st.trigger_switches[51], st.trigger_switches[52], st.trigger_switches[53], st.unit_counts[7][UnitTypes::Special_Stasis_Cell_Prison]);
+			require(st.players[3].victory_state >= 3 && shuttle && zeratul && kerrigan && ultras && vulnerable && raszagal && recall && st.killed_unit_counts[0][UnitTypes::Special_Stasis_Cell_Prison] + st.killed_unit_counts[2][UnitTypes::Special_Stasis_Cell_Prison] == 1 && st.trigger_switches[4] && st.trigger_switches[7] && st.trigger_switches[52] && st.countdown_timer == frozen && next() == (scenario == 4 ? "Zerg10.scx" : "Bonus.scx"), "the complete original arrivals, NPC prison weapon kill, Raszagal dialogue, Recall and cleanup preserve the inclusive five-minute secret route");
+		} else if (scenario == 6) {
+			a_vector<unit_id> targets, cohort;
+			targets.push_back(functions.get_unit_id(find(3, UnitTypes::Zerg_Hydralisk)));
+			targets.push_back(functions.get_unit_id(find(3, UnitTypes::Zerg_Drone)));
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.ut_worker(unit) && !functions.ut_building(unit) && !functions.us_hidden(unit) && functions.unit_or_subunit_ground_weapon(unit)) relocate(unit, st.campaign_ai[1].home + xy(-160, 0));
+			a_vector<unit_t*> victims;
+			for (int owner : {1, 6}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				cohort.push_back(functions.get_unit_id(unit));
+				if (owner == 1 ? !functions.ut_worker(unit) && !functions.ut_building(unit) : functions.unit_is(unit, UnitTypes::Terran_Marine)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[2] = {}, fired[2] = {};
+			for (int tick = 0; tick != 24000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+				step();
+				for (int index = 0; index != 2; ++index) {
+					int owner = index ? 6 : 1;
+					if (tick % 128 == 0 && !fired[index]) {
+						unit_t* target = functions.get_unit(targets.at(index));
+						require(target && target->owner == 3 && functions.unit_is(target, index ? UnitTypes::Zerg_Drone : UnitTypes::Zerg_Hydralisk), "the original defensive threat and production-observation target retain their generation-safe identities");
+						unit_t* producer = find(owner, owner == 1 ? UnitTypes::Protoss_Gateway : UnitTypes::Terran_Barracks);
+						if (producer) relocate(target, producer->sprite->position + xy(128, 0));
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						bool requested = owner == 1 ? std::any_of(st.campaign_ai[1].defenses.begin(), st.campaign_ai[1].defenses.end(), [&](const auto& defense) { return defense.category < 4 && defense.type == unit->unit_type->id; }) : functions.unit_is(unit, UnitTypes::Terran_Marine);
+						if (requested && functions.u_completed(unit) && std::find(cohort.begin(), cohort.end(), functions.get_unit_id(unit)) == cohort.end()) produced[index] = true;
+						if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) fired[index] = true;
+					}
+				}
+			}
+			if (!(produced[0] && produced[1] && fired[0] && fired[1])) error("Reckoning production: produced=%d/%d fired=%d/%d bases=%d/%d resources=%d/%d", produced[0], produced[1], fired[0], fired[1], st.building_counts[1], st.building_counts[6], st.current_minerals[1], st.current_minerals[6]);
+			require(produced[0] && produced[1] && fired[0] && fired[1] && !st.players[3].victory_state, "the original Protoss defense and Terran main pay for replacement fighters and fire native weapons within the authored thirty-minute deadline");
+		}
+		printf("The Reckoning original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void slay_beast_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 11; ++scenario) {
 		game_player player(load_data_file);
@@ -4896,7 +5027,7 @@ static void vile_disruption_mission_cases(data_loading::data_files_loader<>& loa
 		for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Hero_Hunter_Killer)) hunters.push_back(functions.get_unit_id(unit));
 		for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Zerg_Hive)) hives.push_back(functions.get_unit_id(unit));
 		auto step = [&]() {
-			for (int owner : {1, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (unit->unit_type->group_flags & GroupFlags::Men || functions.unit_is(unit, UnitTypes::Zerg_Hive))) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			for (int owner : {1, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (unit->unit_type->group_flags & GroupFlags::Men || functions.unit_is(unit, UnitTypes::Zerg_Hive))) { functions.set_unit_hp(unit, unit->unit_type->hitpoints); unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
 			functions.next_frame();
 		};
 		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
@@ -4905,6 +5036,7 @@ static void vile_disruption_mission_cases(data_loading::data_files_loader<>& loa
 			auto placement = functions.find_unit_placement(unit, position, true);
 			require(placement.first, "Vile Disruption outcome actors use legal native placement");
 			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			functions.issue_order(unit, false, functions.get_order_type(Orders::HoldPosition), {});
 		};
 		for (int tick = 0; tick != 128; ++tick) step();
 		require(!st.current_minerals[3] && !st.current_gas[3] && st.unit_counts[3][UnitTypes::Hero_Hunter_Killer] == 6 && !st.players[3].victory_state && st.campaign_ai_scripts.empty(), "natural proximity rescues all six original Hunter Killers without resources, replacement actors or a melee AI");
@@ -4931,8 +5063,14 @@ static void vile_disruption_mission_cases(data_loading::data_files_loader<>& loa
 				unit_t* hive = functions.find_nearest_unit(center(areas[stage]), st.locations.at(areas[stage] - 1).area, [&](const unit_t* unit) { return functions.unit_is(unit, UnitTypes::Zerg_Hive); });
 				require(hive && hive->owner == 1, "each rescue gate uses its own original neutral Hive");
 				unit_id id = functions.get_unit_id(hive);
-				relocate(actor, hive->sprite->position + xy(96, 0));
+				bool inside = false;
+				for (xy offset : {xy(96, 0), xy(-96, 0), xy(0, 80), xy(0, -80)}) {
+					relocate(actor, hive->sprite->position + offset);
+					if (functions.is_in_bounds(actor->sprite->position, st.locations.at(areas[stage] - 1).area)) { inside = true; break; }
+				}
+				require(inside, "the protected Hunter Killer occupies legal ground inside the authored rescue region rather than a blocked side of the Hive");
 				for (int tick = 0; tick != 1600 && (hive->owner != 3 || st.custom_score[3] < stage + 1); ++tick) step();
+				if (hive->owner != 3 || st.custom_score[3] != stage + 1) error("Vile rescue: stage=%d actor=%d owner=%d hp=%d position=%d/%d Hive-owner=%d score=%d outcome=%d", stage, int(actor->unit_type->id), actor->owner, actor->hp.integer_part(), actor->sprite->position.x, actor->sprite->position.y, hive->owner, st.custom_score[3], st.players[3].victory_state);
 				require(functions.get_unit(id) == hive && hive->owner == 3 && st.custom_score[3] == stage + 1 && !st.players[3].victory_state, "each authored rescue transfers the same Hive and advances the exact rescued-Hive custom score once");
 				for (int tick = 0; tick != 256; ++tick) {
 					step();
@@ -6768,6 +6906,7 @@ int main(int argc, char** argv) {
 	bool fury_swarm = campaign && argc > 4 && !strcmp(argv[4], "bwzerg06");
 	bool drawing_web = campaign && argc > 4 && !strcmp(argv[4], "bwzerg07");
 	bool slay_beast = campaign && argc > 4 && !strcmp(argv[4], "bwzerg08");
+	bool reckoning = campaign && argc > 4 && !strcmp(argv[4], "bwzerg09");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6876,6 +7015,10 @@ int main(int argc, char** argv) {
 		}
 		if (slay_beast) {
 			slay_beast_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (reckoning) {
+			reckoning_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

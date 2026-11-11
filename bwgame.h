@@ -23456,8 +23456,6 @@ struct game_load_functions : state_functions {
 					owner = 8;
 				}
 
-				(void)id; (void)link; (void)valid_flags; (void)units_in_hangar; (void)flags; (void)related_unit_id;
-
 				if ((size_t)unit_type_id >= 228) error("UNIT: invalid unit type %d", (int)unit_type_id);
 				if ((size_t)owner >= 12) error("UNIT: invalid owner %d", owner);
 
@@ -23502,26 +23500,16 @@ struct game_load_functions : state_functions {
 
 				if (!u) continue;
 				if ((link & 0x400) && unit_is_nydus(u)) nydus_links.push_back({id, related_unit_id, u});
-				if (valid_flags & flags & 4) {
-					if (!ut_flying_building(u)) error("in-transit placement requires a flying building");
-					set_building_airborne(u);
-					if (u->sprite->images.back().modifier == 10) u->sprite->images.back().offset.y = 42;
-				}
-
-				if (valid_properties & 0x2) {
-					using tmp_t = fixed_point<32, 8, true>;
-					tmp_t tmp = tmp_t::extend(u->unit_type->hitpoints);
-					tmp = std::max(tmp * hp_percent / 100, tmp_t::from_raw(1));
-					set_unit_hp(u, fp8::truncate(tmp));
-				}
-				if (valid_properties & 0x4) set_unit_shield_points(u, fp8::integer(u->unit_type->shield_points * shield_percent / 100));
-				if (valid_properties & 0x8) set_unit_energy(u, unit_max_energy(u) * energy_percent / 100);
-				if (valid_properties & 0x10) set_unit_resources(u, resources);
-				// todo: more stuff...
-
-				if (valid_flags & 8 && flags & 8) {
-					make_unit_hallucination(u);
-				}
+				unit_creation_properties properties{};
+				properties.valid_state_flags = valid_flags;
+				properties.valid_data_flags = valid_properties;
+				properties.hitpoints_percent = hp_percent;
+				properties.shields_percent = shield_percent;
+				properties.energy_percent = energy_percent;
+				properties.resources = resources;
+				properties.hangar_count = units_in_hangar;
+				properties.state_flags = flags;
+				apply_creation_properties(u, properties);
 
 				if (unit_is(u, UnitTypes::Zerg_Broodling)) {
 					set_remove_timer(u);

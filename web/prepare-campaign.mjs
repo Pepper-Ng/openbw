@@ -62,6 +62,7 @@ const missions = {
   bwzerg06: { title: 'Fury of the Swarm', episode: 6, order: 6, scenarioHash: 'dc0529f66c56a650cf3c5d1eb5a9addaf00e6d97c9473d91ba9fc31422c9af14', units: 447, triggers: 73, sounds: 8 },
   bwzerg07: { title: 'Drawing of the Web', episode: 6, order: 7, scenarioHash: '2541f8af8528b0db42520ec3e1e138e1cb9f67b2be12a4e60d06edc3fa2ccfdb', units: 355, triggers: 14, sounds: 15 },
   bwzerg08: { title: 'To Slay the Beast', episode: 6, order: 8, scenarioHash: '22ac125001ebb5835a697f3186160d3bdfd2de8913e24ff9eb3adb25ba41423a', units: 542, triggers: 33, sounds: 26 },
+  bwzerg09: { title: 'The Reckoning', episode: 6, order: 9, scenarioHash: 'f7987c26f0b990d5b13e3e5dbd0f3788d11cf8bbe67c73aa5904bdbfc591b9a9', units: 283, triggers: 31, sounds: 21 },
 };
 const variantProfiles = {
   bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },
