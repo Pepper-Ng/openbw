@@ -3926,6 +3926,104 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void patriots_blood_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 6; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[2].controller == player_t::controller_occupied && st.players[2].race == race_t::terran && st.player_units[2].empty() && st.unit_counts[6][UnitTypes::Terran_Marine] == 9 && st.unit_counts[7][UnitTypes::Hero_Alexei_Stukov] == 1, "Patriot's Blood retains the original empty human slot, nine allied Marines and Stukov");
+		a_vector<unit_id> original_marines;
+		for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Marine)) original_marines.push_back(functions.get_unit_id(unit));
+		bool opening_fire = false;
+		auto step = [&]() {
+			for (int owner : {2, 6}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+				if (functions.unit_is(unit, UnitTypes::Terran_Marine) && unit->ground_weapon_cooldown) opening_fire = true;
+			}
+			functions.next_frame();
+		};
+		for (int tick = 0; tick != 4000 && !(st.unit_counts[2][UnitTypes::Hero_Samir_Duran] && st.players[6].controller == player_t::controller_rescue_passive) && !st.players[2].victory_state; ++tick) step();
+		printf("Patriot's Blood opening: Duran=%d guards=%d flags=%d/%d/%d rescue=%d fire=%d\n", st.unit_counts[2][UnitTypes::Hero_Samir_Duran], st.dead_unit_counts[1][UnitTypes::Terran_Marine], st.trigger_switches[58], st.trigger_switches[44], st.trigger_switches[41], st.players[6].controller, opening_fire); fflush(stdout);
+		require(st.unit_counts[2][UnitTypes::Hero_Samir_Duran] == 1 && opening_fire && st.dead_unit_counts[1][UnitTypes::Terran_Marine] >= 7 && st.trigger_switches[44] && st.trigger_switches[41] && st.players[6].controller == player_t::controller_rescue_passive && !st.current_minerals[2] && !st.current_gas[2] && !st.countdown_active && !st.players[2].victory_state, "the original NPC firefight clears the entrance, changes the allied squad to rescue and creates Duran without injected forces or resources");
+		require(!st.alliances[6][1] && !st.alliances[1][6] && st.alliances[6][2] && st.alliances[2][6], "the source location-only Enemy script makes the two NPC forces mutual enemies and preserves the human alliance");
+		unit_t* duran = nullptr;
+		for (unit_t* unit : ptr(st.player_units[2])) if (functions.unit_is(unit, UnitTypes::Hero_Samir_Duran)) duran = unit;
+		require(duran, "the original opening supplies Duran");
+		if (scenario == 1) {
+			functions.kill_unit(duran);
+			for (int tick = 0; tick != 4000 && !st.players[2].victory_state; ++tick) step();
+			require(st.players[2].victory_state == 2, "Duran's death before the assassination runs the original paused defeat");
+		} else {
+			unit_t* marine = functions.get_unit(original_marines.front());
+			require(marine, "an original surviving rescue Marine remains available");
+			unit_id marine_id = functions.get_unit_id(marine);
+			auto relocate = [&](unit_t* unit, xy position) {
+				functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+				auto placement = functions.find_unit_placement(unit, position, true);
+				if (!placement.first) error("Patriot's Blood cannot place actor %d at %d,%d", int(unit->unit_type->id), position.x, position.y);
+				functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+			};
+			if (marine->owner != 2) {
+				require(marine->owner == 6, "the original squad Marine remains with the source rescue owner");
+				functions.issue_order(duran, false, functions.get_order_type(Orders::Move), {marine->sprite->position, nullptr});
+				for (int tick = 0; tick != 1024 && marine->owner != 2; ++tick) step();
+			}
+			require(functions.get_unit(marine_id) == marine && marine->owner == 2 && !st.players[2].victory_state, "native proximity rescue transfers the same original Marine to the human");
+			auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+			if (scenario == 0) {
+				relocate(marine, center(6));
+				for (int tick = 0; tick != 512 && !st.trigger_switches[60]; ++tick) step();
+				require(st.trigger_switches[99] && st.trigger_switches[60] && !st.countdown_active && !st.players[2].victory_state, "an original Marine activates the authored side console and trap-disabling sequence without starting the reactor timer");
+				st.alliances[6][2] = 0; st.alliances[2][6] = 0;
+				xy position = marine->sprite->position;
+				functions.start_campaign_ai_script(6, 0x796c6c41, {position - xy(8, 8), position + xy(8, 8)});
+				for (int tick = 0; tick != 8; ++tick) step();
+				require(st.alliances[6][2] && !st.alliances[2][6] && !st.alliances[6][1] && !st.alliances[1][6], "the original location-only Ally program preserves its outgoing-only contract and outside hostility");
+			} else if (scenario == 2) {
+				relocate(marine, center(86));
+				for (int tick = 0; tick != 256; ++tick) step();
+				require(!st.trigger_switches[42] && !st.trigger_switches[47] && !st.countdown_active && st.unit_counts[7][UnitTypes::Hero_Alexei_Stukov] == 1 && !st.players[2].victory_state, "a Marine on Duran's assassination beacon cannot substitute for the required hero");
+			} else {
+				relocate(duran, center(86));
+				int maximum_clock = 0;
+				for (int tick = 0; tick != 12000 && !(st.countdown_active && st.trigger_switches[49]) && !st.players[2].victory_state; ++tick) { step(); maximum_clock = std::max(maximum_clock, st.countdown_timer); }
+				require(st.trigger_switches[42] && st.trigger_switches[47] && st.trigger_switches[48] && st.trigger_switches[33] && st.trigger_switches[46] && st.trigger_switches[49] && !st.trigger_switches[41] && maximum_clock == 901 && st.countdown_timer > 850 && !st.unit_counts[2][UnitTypes::Hero_Samir_Duran] && !st.dead_unit_counts[2][UnitTypes::Hero_Samir_Duran] && st.dead_unit_counts[7][UnitTypes::Hero_Alexei_Stukov] == 1 && !st.players[2].victory_state, "Duran's original assassination, temporary replacement/removal, Stukov death and paused conversations start the full 901-second reactor clock and clear the hero-loss rule");
+				if (scenario == 3) {
+					relocate(marine, center(43));
+					for (int tick = 0; tick != 4000 && !st.players[2].victory_state; ++tick) step();
+					require(st.trigger_switches[255] && st.countdown_timer > 0 && st.players[2].victory_state >= 3, "the same rescued Marine reaches the original final console and completes the paused source victory before the timer expires");
+				} else if (scenario == 4) {
+					int start_frame = st.current_frame, remaining = st.countdown_timer;
+					for (int tick = 0; tick != 17000 && !st.players[2].victory_state; ++tick) step();
+					require(st.current_frame - start_frame >= remaining * 16 - 15 && st.countdown_timer == 0 && st.players[2].victory_state == 2, "the unchanged full reactor countdown expires into the original army-kill and defeat sequence after its complete native duration");
+				} else {
+					relocate(marine, center(113));
+					for (int tick = 0; tick != 128 && !st.trigger_switches[253]; ++tick) step();
+					require(st.trigger_switches[253] && !st.trigger_switches[41] && !st.players[2].victory_state, "the original Marine region arms whole-force loss after Duran has departed");
+					unit_t* recovery = functions.find_nearest_unit(center(244), functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 1 && functions.unit_is(unit, UnitTypes::Terran_Marine) && !functions.unit_dying(unit); });
+					require(recovery, "the original emergency-rescue Marine remains near the authored temporary-unit location");
+					unit_id recovery_id = functions.get_unit_id(recovery);
+					a_vector<unit_t*> victims;
+					for (unit_t* unit : ptr(st.player_units[2])) if (!functions.unit_dying(unit) && (unit->unit_type->group_flags & GroupFlags::Men)) victims.push_back(unit);
+					for (unit_t* unit : victims) functions.kill_unit(unit);
+					for (int tick = 0; tick != 256 && !st.players[2].victory_state; ++tick) step();
+					require(!st.players[2].victory_state && functions.get_unit(recovery_id) == recovery && recovery->owner == 2 && !st.unit_counts[2][UnitTypes::Zerg_Zergling], "the source temporary Zerglings rescue the same original emergency Marine and are removed before whole-force defeat");
+					functions.kill_unit(recovery);
+					for (int tick = 0; tick != 256 && !st.players[2].victory_state; ++tick) step();
+					require(st.players[2].victory_state == 2 && st.countdown_timer > 0, "losing the whole human force after Duran's departure causes its independent source defeat before the reactor timer");
+				}
+			}
+		}
+		printf("Patriot's Blood original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void emperors_flight_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
@@ -5350,12 +5448,18 @@ static void expansion_ai_binary_checks(data_loading::data_files_loader<>& load_d
 	functions.start_campaign_ai_script(4, 0x3269562d);
 	functions.progress_campaign_ai_scripts();
 	require(!(st.shared_vision[2] & (1 << 4)), "shared-vision binary opcode removes the matching grant");
+	unit_t* selected = nullptr;
+	for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Terran_Marine)) { selected = unit; break; }
+	require(selected, "an original Marine selects the enemy-script target owner");
+	st.alliances[4][1] = 1; st.alliances[1][4] = 2;
 	auto original_alliances = st.alliances;
-	functions.start_campaign_ai_script(4, 0x796d6e45);
+	xy position = selected->sprite->position;
+	functions.start_campaign_ai_script(4, 0x796d6e45, {position, position + xy(1, 1)});
 	functions.progress_campaign_ai_scripts();
-	for (int player = 0; player != 8; ++player) require(st.alliances[4][player] == (player == 4 ? original_alliances[4][player] : 0), "player_enemy changes only the AI owner's relation to other active players");
-	for (int owner = 0; owner != 12; ++owner) if (owner != 4) require(st.alliances[owner] == original_alliances[owner], "player_enemy preserves other owners' alliance rows");
-	for (int player = 8; player != 12; ++player) require(st.alliances[4][player] == original_alliances[4][player], "player_enemy preserves neutral and unused slots");
+	for (int owner = 0; owner != 12; ++owner) for (int other = 0; other != 12; ++other) {
+		int expected = (owner == 4 && other == 1) || (owner == 1 && other == 4) ? 0 : original_alliances[owner][other];
+		require(st.alliances[owner][other] == expected, "player_enemy breaks only the selected pair's mutual relationship and preserves every other alliance, including neutral and unused slots");
+	}
 	functions.start_campaign_ai_script(1, 0x42374254);
 	functions.progress_campaign_ai_scripts();
 	require(st.lcg_rand_state == 123456789u, "the original TB7B four-byte operand sets the exact deterministic native seed");
@@ -5414,6 +5518,7 @@ int main(int argc, char** argv) {
 	bool emperors_fall_a = campaign && argc > 4 && !strcmp(argv[4], "bwterran05a");
 	bool emperors_fall_b = campaign && argc > 4 && !strcmp(argv[4], "bwterran05b");
 	bool emperors_flight = campaign && argc > 4 && !strcmp(argv[4], "bwterran06");
+	bool patriots_blood = campaign && argc > 4 && !strcmp(argv[4], "bwterran07");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5482,6 +5587,10 @@ int main(int argc, char** argv) {
 		}
 		if (emperors_flight) {
 			emperors_flight_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (patriots_blood) {
+			patriots_blood_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

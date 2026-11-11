@@ -330,6 +330,7 @@ If execution traps, inspect the first required unsupported operation. Fix that o
 - Finalize UMS mode before mode-dependent initialization. Preserve OWNR/SIDE/FORC, fog, custom stats, availability, upgrades and locations.
 - Keep shared buffers at asset indices 0-2 and the prepared mission pack at 3. Mount mission-relative files before Patch/BrooDat/StarDat fallback.
 - Normalize CHK zero-based forces into the runtime's one-based force convention at the loader boundary.
+- Resolve each trigger force through FORC. Force 1 is not necessarily the human force.
 - Normalize open humans and computers correctly. Runtime computers use `controller_computer_game`, not pregame `controller_computer`.
 - Keep original computer-to-computer alliances, rescue neutrality and later explicit alliance actions distinct.
 - Run eligible neutral/rescue-owner triggers without including those owners indiscriminately in victory/combat groups.

@@ -19468,11 +19468,12 @@ struct state_functions {
 					if (count < amount) { script.position = position; script.wait = 15; break; }
 				}
 				else if (opcode == 77) ai.target_expansion = true;
-				else if (opcode == 32) {
-					for (int player = 0; player != 8; ++player) if (player != script.owner) st.alliances.at(script.owner)[player] = 0;
-				}
-				else if (opcode == 33) {
-					for (unit_t* unit : find_units(script.area)) if (unit->owner < 8 && unit->owner != script.owner) st.alliances.at(script.owner)[unit->owner] = 1;
+				else if (opcode == 32 || opcode == 33) {
+					for (unit_t* unit : find_units(script.area)) if (unit->owner < 8 && unit->owner != script.owner) {
+						st.alliances.at(script.owner)[unit->owner] = opcode == 33;
+						// Enemy breaks both sides so formerly allied defenders can retaliate.
+						if (opcode == 32) st.alliances.at(unit->owner)[script.owner] = 0;
+					}
 				}
 				else if (opcode == 87 || opcode == 88) {
 					int player = read(1);
