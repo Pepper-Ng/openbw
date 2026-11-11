@@ -3926,6 +3926,138 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void true_colors_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Special_Map_Revealer] == 2 && st.unit_counts[4][UnitTypes::Zerg_Lurker] == 3 && st.unit_counts[5][UnitTypes::Zerg_Hatchery] == 2 && !st.building_counts[3], "True Colors retains its original three allied Lurkers, neutral Zerg base and human revealer-only opening");
+		a_vector<unit_id> lurkers, originals;
+		for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is(unit, UnitTypes::Zerg_Lurker)) lurkers.push_back(functions.get_unit_id(unit));
+		for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) originals.push_back(functions.get_unit_id(unit));
+		bool opening_fire = false, burrowed = false;
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit)) {
+				if (scenario >= 4) functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			for (int owner : {3, 4}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Zerg_Lurker)) {
+				burrowed = burrowed || functions.u_burrowed(unit);
+				opening_fire = opening_fire || unit->ground_weapon_cooldown;
+			}
+			functions.next_frame();
+		};
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "True Colors outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		for (int tick = 0; tick != 6000 && !(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 2 && st.countdown_active) && !st.players[3].victory_state; ++tick) step();
+		require(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 2 && st.unit_counts[3][UnitTypes::Zerg_Drone] == 6 && st.unit_counts[3][UnitTypes::Zerg_Lurker] == 3 && st.trigger_switches[50] && st.countdown_timer == 360 && opening_fire && burrowed && st.current_minerals[3] == 300 && st.current_gas[3] == 75 && !st.players[3].victory_state, "the complete original native Lurker ambush clears the meeting, departs and transfers the original army/base with 300/75 before starting the full six-minute countdown");
+		for (unit_id id : lurkers) require(functions.get_unit(id) && functions.get_unit(id)->owner == 3, "the human receives the same three original Lurker actors");
+		require(!st.campaign_ai[0].town_active && !st.campaign_ai[1].town_active && st.alliances[0][3] && st.alliances[1][3] && !st.unit_counts[2][UnitTypes::Hero_Norad_II] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon], "the original Terran/Protoss grace period starts before enemy macro and both hero arrivals");
+		auto clear_bases = [&]() {
+			a_vector<unit_t*> victims;
+			for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (functions.ut_building(unit) || functions.ut_worker(unit))) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+		};
+		if (scenario == 0) {
+			for (int tick = 0; tick != 128; ++tick) step();
+			require(st.countdown_timer > 350 && st.alliances[0][3] && st.alliances[1][3] && !st.campaign_ai[0].town_active && !st.campaign_ai[1].town_active && !st.players[3].victory_state, "the transferred army receives the original live grace period without an early retaliation program");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+			require(st.trigger_switches[99] && st.players[3].victory_state == 2 && st.countdown_timer > 0, "losing the transferred human base causes the original defeat even before grace-period expiry");
+		} else if (scenario == 3) {
+			clear_bases();
+			for (int tick = 0; tick != 4000 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state >= 3 && st.countdown_timer > 0 && !st.unit_counts[2][UnitTypes::Hero_Norad_II] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon], "the original zero-base/zero-hero predicate also permits victory before the two heroes arrive");
+		} else if (scenario == 7) {
+			unit_t* lurker = functions.get_unit(lurkers.front());
+			require(lurker, "the native control fixture retains an original Lurker");
+			for (int tick = 0; tick != 128; ++tick) step();
+			unit_t* enemy = functions.find_nearest_unit(lurker, functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 0 && functions.unit_is(unit, UnitTypes::Terran_SCV) && !functions.unit_dying(unit) && !functions.us_hidden(unit) && !functions.u_loaded(unit); });
+			require(enemy, "the native control fixture retains an original visible ground enemy outside transport cargo");
+			functions.issue_order(enemy, false, functions.get_order_type(Orders::HoldPosition), {});
+			relocate(enemy, lurker->sprite->position + xy(64, 0));
+			for (int tick = 0; tick != 16; ++tick) step();
+			require(!functions.try_campaign_ai_lurker(lurker) && !functions.u_burrowed(lurker), "autonomous computer burrowing never takes control of a human Lurker even beside a visible enemy");
+			functions.issue_order(lurker, false, functions.get_order_type(Orders::Burrowing), {});
+			for (int tick = 0; tick != 256 && !functions.u_burrowed(lurker); ++tick) step();
+			require(functions.u_burrowed(lurker), "the original transferred human Lurker accepts a native Burrow order");
+			xy origin = lurker->sprite->position;
+			functions.issue_order(lurker, false, functions.get_order_type(Orders::Move), {origin + xy(192, 0), nullptr});
+			for (int tick = 0; tick != 512 && (functions.u_burrowed(lurker) || functions.xy_length(lurker->sprite->position - origin) < 64); ++tick) step();
+			require(!functions.u_burrowed(lurker) && functions.xy_length(lurker->sprite->position - origin) >= 64 && lurker->owner == 3, "native Move unburrows and moves the same human Lurker instead of discarding the authored/player destination");
+		} else {
+			int start = st.current_frame;
+			for (int tick = 0; tick != 7000 && st.countdown_timer > 1; ++tick) step();
+			require(st.countdown_timer == 1 && !st.campaign_ai[0].town_active && !st.campaign_ai[1].town_active && !st.unit_counts[2][UnitTypes::Hero_Norad_II] && !st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon], "the original grace period retains its false boundary with one full second still on the clock");
+			for (int tick = 0; tick != 256 && !(st.campaign_ai[0].town_active && st.campaign_ai[1].town_active && st.unit_counts[2][UnitTypes::Hero_Norad_II] && st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon]); ++tick) step();
+			require(st.current_frame - start >= 360 * 16 - 15 && st.countdown_timer == 0 && st.trigger_switches[51] && !st.alliances[0][3] && !st.alliances[1][3] && st.campaign_ai[0].town_active && st.campaign_ai[0].area_towns.size() == 2 && st.campaign_ai[1].town_active && st.campaign_ai[1].area_towns.size() == 1 && st.unit_counts[2][UnitTypes::Hero_Norad_II] == 1 && st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon] == 1 && !st.players[3].victory_state, "full timer expiry changes the original alliances, starts both main/three area programs and creates Duke and Fenix through the source triggers");
+			if (scenario == 4 || scenario == 5) {
+				clear_bases();
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(!st.players[3].victory_state, "both original heroes independently block victory after all enemy bases are gone");
+				unit_t* hunter = find(3, UnitTypes::Zerg_Hydralisk);
+				require(hunter, "an original transferred Hydralisk can attack both native hero types");
+				for (int index = 0; index != 2; ++index) {
+					bool duke = scenario == 4 ? index == 0 : index == 1;
+					UnitTypes type = duke ? UnitTypes::Hero_Norad_II : UnitTypes::Hero_Fenix_Dragoon;
+					unit_t* hero = find(2, type);
+					require(hero, "each original source-created hero remains available");
+					relocate(hunter, hero->sprite->position + xy(128, 0));
+					functions.set_unit_hp(hero, fp8::integer(1)); functions.set_unit_shield_points(hero, 0_fp8);
+					functions.issue_order(hunter, false, hunter->unit_type->attack_unit, {hero->sprite->position, hero});
+					for (int tick = 0; tick != 6000 && (!st.dead_unit_counts[2][type] || (index == 1 && !st.players[3].victory_state)); ++tick) step();
+					require(st.dead_unit_counts[2][type] == 1 && st.killed_unit_counts[3][type] == 1, "an original Hydralisk weapon supplies the actual source hero kill");
+					if (!index) require(!st.players[3].victory_state, "the other surviving hero still blocks the original ending");
+				}
+				require(st.trigger_switches[101] && st.players[3].victory_state >= 3, "both native hero weapon kills and all enemy base losses complete the original paused conversations and victory");
+			} else if (scenario == 6) {
+				a_vector<unit_t*> victims;
+				a_vector<unit_id> workers;
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) workers.push_back(functions.get_unit_id(unit));
+				for (int owner : {0, 1}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, owner ? UnitTypes::Protoss_Zealot : UnitTypes::Terran_Marine) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				bool produced[2] = {}, positioned[2] = {}, fired[2] = {};
+				for (int tick = 0; tick != 35000 && !(produced[0] && produced[1] && fired[0] && fired[1]); ++tick) {
+					step();
+					for (int owner : {0, 1}) {
+						if (!fired[owner] && (!positioned[owner] || tick % 128 == 0)) {
+							unit_t* attacker = nullptr;
+							for (const auto* party : {&st.campaign_ai[owner].attack_party, &st.campaign_ai[owner].attacking}) {
+								for (unit_id id : *party) { unit_t* unit = functions.get_unit(id); if (unit && !functions.unit_dying(unit) && !functions.u_flying(unit) && functions.unit_or_subunit_ground_weapon(unit)) { attacker = unit; break; } }
+								if (attacker) break;
+							}
+							if (attacker) { unit_t* target = functions.get_unit(workers.at(owner)); require(target && target->owner == 3, "each True Colors target retains its protected original identity"); relocate(target, attacker->sprite->position); positioned[owner] = true; }
+						}
+						for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+							if (functions.unit_is(unit, owner ? UnitTypes::Protoss_Zealot : UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(originals.begin(), originals.end(), functions.get_unit_id(unit)) == originals.end()) produced[owner] = true;
+							if (positioned[owner] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown || unit->subunit && (unit->subunit->ground_weapon_cooldown || unit->subunit->air_weapon_cooldown))) fired[owner] = true;
+						}
+					}
+				}
+				require(produced[0] && produced[1] && fired[0] && fired[1], "both original True Colors main programs produce native fighters and fire real weapons after their original activation");
+			}
+		}
+		printf("True Colors original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void liberation_korhal_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file, int infested) {
 	for (int scenario = 0; scenario != (infested ? 4 : 5); ++scenario) {
 		game_player player(load_data_file);
@@ -6163,6 +6295,7 @@ int main(int argc, char** argv) {
 	bool reign_fire = campaign && argc > 4 && !strcmp(argv[4], "bwzerg02");
 	bool kel_morian = campaign && argc > 4 && !strcmp(argv[4], "bwzerg03");
 	bool liberation_korhal = campaign && argc > 4 && strlen(argv[4]) == 9 && !strncmp(argv[4], "bwzerg04", 8) && argv[4][8] >= 'a' && argv[4][8] <= 'f';
+	bool true_colors = campaign && argc > 4 && !strcmp(argv[4], "bwzerg05");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6255,6 +6388,10 @@ int main(int argc, char** argv) {
 		}
 		if (liberation_korhal) {
 			liberation_korhal_mission_cases(load_data_file, map_file, argv[4][8] - 'a');
+			return 0;
+		}
+		if (true_colors) {
+			true_colors_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

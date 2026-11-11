@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first twenty Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Liberation of Korhal. Fork variants occupy one story position each, giving 50 logical missions and 56 scenarios.
+- All thirty original numbered StarCraft missions and the first twenty-one Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches True Colors. Fork variants occupy one story position each, giving 51 logical missions and 57 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current 106-mode expansion gate is recorded below.
@@ -298,11 +298,22 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - All six predecessor routes, one menu position, manifest matching, cross-variant save rejection, saved-variant precedence and Retry pins pass. The original Emperor's Fall routing and save checks remain passing. Existing shared engine behavior supports the scenarios; no gameplay compatibility change was needed.
 - Isolated loopback handlers show all six correct route labels and one mission row. Saving F, changing the recorded predecessor route to A, and resuming still restores F with five original infested bases. Defeat Retry pins F and reloads its labelled briefing. Test-origin storage is cleared afterward.
 
+### Brood War 21: True Colors
+
+- Public `bwzerg05` preserves `campaign\expzerg\zerg05\staredit\scenario.chk`, SHA-256 `cd85a53ed3c9345dd4f8987421b5709d8bf87faa7d038fe149790151c70ac6b9`: format 205, 512 UNIT records, 27 triggers, one briefing and 41 audio dependencies.
+- Its 42-file pack is 14068120 bytes, decoded 14065368 bytes, SHA-256 `f83f11cab79ed794429214ad0b65f50fed0a0fea931a259a37670b2bc15b3225`. Human Zerg slot 3 begins with two Map Revealers; three original allied Lurkers execute the opening ambush before the neutral army and two-Hatchery base transfer to the human.
+- The source opening exposed missing autonomous computer Lurker burrowing. The shared campaign policy now uses native range, visibility, detection, technology and Burrow/Unburrow orders, retaining explicit movement destinations. It is restricted to computer-controlled campaign units. Native Move also unburrows a Lurker while preserving that player/script destination.
+- The unprotected original Lurker ambush now produces real burrowed weapon fire, clears the meeting and departs through the original locations. The same three actors and original base/army transfer with 300/75 resources. No opening actor, alliance, waypoint, HP percentage, wait or trigger is replaced.
+- Eight fresh-map cases pass: complete opening/grace period; transferred-base defeat; the full unshortened 360-second timer and its one-second false boundary; source-permitted early victory; Duke-first and Fenix-first native weapon kills after all enemy bases fall; paid production/combat from both original main programs; and human Lurker control with native Burrow/Move.
+- Expiry breaks the original Terran/Protoss alliances, starts two main and three area programs, and creates the source Duke/Fenix actors. Each hero independently blocks the post-expiry victory. The actual source also permits victory before hero arrival if all enemy bases are already gone; no additional win requirement is invented.
+- The browser-engine fixture runs the original opening without protection, retains the live grace-period timer, pays fifty original minerals for a native Drone morph, and reconstructs 1228 service ticks plus one command batch in a fresh instance. Three original opening transmissions and narration pass. Liberation A/F and the shared combat suites remain passing.
+- Native outcome fixtures protect the human force, weaken retained hero targets, and isolate enemy-base loss. Exact classic strategic Lurker micro and full normal-control victories remain separate comparison/acceptance work.
+- Isolated loopback handlers run the original ambush, save with the authored countdown at 360, return and Resume with the same 360-second state. The menu shows 20 of 21 completed expansion missions. Test-origin storage is cleared afterward.
+
 ### Remaining Mission Implementations
 
 The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-5. True Colors.
 6. Fury of the Swarm.
 7. Drawing of the Web.
 8. To Slay the Beast.

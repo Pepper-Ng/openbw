@@ -336,6 +336,9 @@ if (process.argv[2] === '--test-campaign-menu') {
     assert.equal(functions(false).progress().nextScenarios.bwzerg03, `Zerg04${suffix}.scx`, 'Each original optional-infestation route survives a progress reload');
   }
   assert.equal(expansion.unlocked('bwzerg04'), true, 'Any original Kel-Morian route unlocks the one Liberation story position');
+  assert.equal(expansion.unlocked('bwzerg05'), false);
+  normal.win('bwzerg04', 'Zerg05.scx');
+  assert.equal(expansion.unlocked('bwzerg05'), true, 'Every Liberation variant clears the same prerequisite for True Colors');
   assert.equal(expansion.unlocked('terran02'), false, 'Expansion victories do not unlock original missions');
   assert.equal(expansion.sequential(), 0, 'Expansion-only victories do not fabricate original portable progress');
   assert.ok(menu.includes('id="campaign-edition"') && menu.includes('<option value="bw">Brood War</option>'), 'Actual menu offers an edition switch');
@@ -917,6 +920,12 @@ function testCampaign() {
     assert.equal(units.filter(unit => unit[1] === 'Physics Lab' && unit[2] === '0').length, 4);
     assert.equal(units.filter(unit => unit[1] === 'Nuclear Silo' && unit[2] === '1').length, 6);
     assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'bwzerg05') {
+    assert.equal(mission.episode, 6); assert.equal(mission.order, 5); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
+    assert.deepEqual(human.map(unit => unit[1]), ['Map Revealer', 'Map Revealer']);
+    assert.equal(units.filter(unit => unit[1] === 'Lurker' && unit[2] === '4').length, 3);
+    assert.equal(units.filter(unit => unit[1] === 'Hatchery' && unit[2] === '5').length, 2);
+    assert.equal(x.openbw_mission_countdown(), -1);
   } else if (missionId.startsWith('bwzerg04')) {
     const infested = missionId.charCodeAt(8) - 'a'.charCodeAt(0);
     assert.equal(mission.id, 'bwzerg04'); assert.equal(mission.episode, 6); assert.equal(mission.order, 4); assert.equal(mission.race, 0); assert.equal(mission.humanSlot, 3);
@@ -988,7 +997,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750, bwzerg04: 10000}[missionId.startsWith('bwzerg04') ? 'bwzerg04' : missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750, bwzerg04: 10000, bwzerg05: 300}[missionId.startsWith('bwzerg04') ? 'bwzerg04' : missionId], 'Preserve original mission minerals');
   if (missionId === 'bwterran05a' || missionId === 'bwterran05b') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), missionId.endsWith('a') ? 100 : 150, 'Preserve original variant gas');
   if (missionId === 'bwterran04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Korhal grants its original 150 gas');
@@ -1082,6 +1091,11 @@ function testCampaign() {
     for (let tick = 0; tick < 10000 && !ready(); tick++) { x.openbw_step(); if (tick % 16 === 0) { x.openbw_render(tick * 42); consume(); } }
     assert.ok(ready(), 'The original Terran battle and SCV delivery complete before recording normal commands');
   }
+  if (missionId === 'bwzerg05') {
+    const ready = () => read(x.openbw_debug_units()).split('\n').filter(Boolean).filter(line => { const unit = line.split('\t'); return unit[1] === 'Hatchery' && Number(unit[2]) === mission.humanSlot; }).length === 2;
+    for (let tick = 0; tick < 6000 && !ready(); tick++) { x.openbw_step(); if (tick % 16 === 0) { x.openbw_render(tick * 42); consume(); } }
+    assert.ok(ready() && x.openbw_mission_countdown() > 0 && x.openbw_mission_countdown() <= 360, 'The unprotected original Lurker ambush transfers the base and starts the source grace-period timer');
+  }
   consume();
   if (missionId === 'terran03') {
     assert.ok(events.some(event => event[3] === 28), 'Original minimap pings are ordered presentation events');
@@ -1121,7 +1135,8 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
-  if (missionId.startsWith('bwzerg04')) {
+  if (missionId.startsWith('bwzerg04') || missionId === 'bwzerg05') {
+    const liberation = missionId.startsWith('bwzerg04');
     const larva = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Larva' && Number(unit[2]) === mission.humanSlot);
     assert.ok(larva);
     x.openbw_debug_select(Number(larva[0]), 0); x.openbw_render(0); x.openbw_out_clear();
@@ -1131,10 +1146,11 @@ function testCampaign() {
     new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
     x.openbw_apply(mission.humanSlot, bytes.length); x.openbw_out_clear();
     for (let tick = 0; tick < 24; tick++) x.openbw_step();
-    assert.deepEqual(read(x.openbw_resources()).split('\t').slice(0, 2).map(Number), [9950, 500]);
+    assert.deepEqual(read(x.openbw_resources()).split('\t').slice(0, 2).map(Number), liberation ? [9950, 500] : [250, 75]);
     const [progress, queued] = read(x.openbw_status()).split('\t');
     assert.equal(queued, 'Drone'); assert.ok(Number(progress) > 0 && Number(progress) < 100);
-    assert.equal(read(x.openbw_mission_string(x.openbw_mission_next_scenario())), 'Zerg05.scx');
+    if (liberation) assert.equal(read(x.openbw_mission_string(x.openbw_mission_next_scenario())), 'Zerg05.scx');
+    else assert.ok(x.openbw_mission_countdown() > 0);
   }
   if (missionId === 'bwzerg01') {
     const [header, ...scores] = read(x.openbw_mission_leaderboard()).trim().split('\n').map(line => line.split('\t').map(Number));

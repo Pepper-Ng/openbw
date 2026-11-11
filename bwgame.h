@@ -4370,6 +4370,13 @@ struct state_functions {
 	}
 
 	void order_Move(unit_t* u) {
+		if (unit_is(u, UnitTypes::Zerg_Lurker) && u_burrowed(u)) {
+			queue_order_front(u, u->order_type, {u->order_target.pos, u->order_target.unit});
+			queue_order_front(u, get_order_type(Orders::Unburrowing), {});
+			u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
+			order_done(u);
+			return;
+		}
 		if (u->order_state == 0) {
 			if (u->order_target.unit) {
 				move_to_target_reset(u, u->order_target.unit);
@@ -19905,6 +19912,27 @@ struct state_functions {
 		return true;
 	}
 
+	bool try_campaign_ai_lurker(unit_t* unit) {
+		if (!st.strict_triggers || st.players[unit->owner].controller != player_t::controller_computer_game || !unit_is(unit, UnitTypes::Zerg_Lurker)) return false;
+		if (unit_dying(unit) || unit_is_disabled(unit) || us_hidden(unit) || !u_completed(unit) || u_hallucination(unit) || u_order_not_interruptible(unit) || u_iscript_nobrk(unit)) return false;
+		if (!unit_can_use_tech(unit, get_tech_type(TechTypes::Burrowing))) return false;
+		auto order = unit->order_type->id;
+		if (order == Orders::Burrowing || order == Orders::Unburrowing) return false;
+		bool travelling = (order == Orders::Move || order == Orders::AttackMove || order == Orders::Patrol) && xy_length(unit->order_target.pos - unit->sprite->position) > 32;
+		if (!u_burrowed(unit) && order == Orders::Move && travelling) return false;
+		int range = weapon_max_range(unit, unit->unit_type->ground_weapon);
+		unit_t* target = find_nearest_unit(unit, square_at(unit->sprite->position, range + 64), [&](const unit_t* enemy) {
+			return !unit_dying(enemy) && !us_hidden(enemy) && !u_flying(enemy) && !ut_turret(enemy) && !unit_is_critter(enemy) && !u_invincible(enemy) && unit_target_is_enemy(unit, enemy) && !unit_target_is_undetected(unit, enemy) && unit_can_see_target(unit, enemy) && units_distance(unit, enemy) <= range;
+		});
+		bool burrowed = u_burrowed(unit);
+		if (burrowed ? target != nullptr : target == nullptr) return false;
+		const auto* previous = unit->order_type;
+		order_target_t destination{unit->order_target.pos, unit->order_target.unit};
+		issue_order(unit, false, get_order_type(burrowed ? Orders::Unburrowing : Orders::Burrowing), {});
+		if (travelling) queue_order_back(unit, previous, destination);
+		return true;
+	}
+
 	void progress_campaign_ai_combat(int owner) {
 		if (st.current_frame % 8 || st.players[owner].controller != player_t::controller_computer_game) return;
 		for (unit_t* unit : ptr(st.player_units[owner])) {
@@ -19919,6 +19947,7 @@ struct state_functions {
 				});
 				try_campaign_ai_wraith_cloak(unit, threat);
 			} else if (unit_is_tank(unit)) try_campaign_ai_siege(unit);
+			else if (unit_is(unit, UnitTypes::Zerg_Lurker)) try_campaign_ai_lurker(unit);
 		}
 	}
 
