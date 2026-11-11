@@ -20583,7 +20583,7 @@ struct state_functions {
 	}
 
 	static bool campaign_briefing_supported(int type) {
-		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 6 || type == 7 || type == 8;
+		return type == 1 || type == 2 || type == 3 || type == 4 || type == 5 || type == 6 || type == 7 || type == 8 || type == 9;
 	}
 
 	int trigger_transmission_duration(const trigger::action& action) {

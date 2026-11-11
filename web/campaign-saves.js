@@ -3,7 +3,7 @@ import { resolveCampaignMission } from './campaign-variants.js';
 export const campaignSaveVersion = 1;
 export const campaignSaveKeys = ['slot:1', 'slot:2', 'slot:3'];
 
-const validMission = value => /^(?:(?:terran|zerg|protoss)(?:0[1-9]|10)|bwprotoss0[1-8]|bwterran0[1-8]|bwzerg(?:0[1-9]|10|bonus))$/.test(value);
+const validMission = value => /^(?:tutorial|(?:terran|zerg|protoss)(?:0[1-9]|10)|bwprotoss0[1-8]|bwterran0[1-8]|bwzerg(?:0[1-9]|10|bonus))$/.test(value);
 const validKey = value => campaignSaveKeys.includes(value) || typeof value === 'string' && value.startsWith('auto:') && validMission(value.slice(5));
 const integer = (value, maximum) => Number.isInteger(value) && value >= 0 && value <= maximum;
 

@@ -186,7 +186,7 @@ if (process.argv[2] === '--test-campaign-menu') {
   const source = readFileSync('web/openbw.js', 'utf8');
   const progress = source.match(/function campaignProgress\(\) \{[\s\S]*?\n\}/)?.[0];
   const unlocked = source.match(/function campaignUnlocked\(missionId\) \{[\s\S]*?\n\}/)?.[0];
-  const progressFunctions = ['cyrb53', 'saveCampaignProgress', 'campaignScenarioName', 'saveCampaignVictory', 'campaignSequentialProgress', 'campaignProgressCode', 'campaignDecodeCode', 'campaignApplyCode', 'campaignNextMission', 'campaignEditionIds'].map(name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0]);
+  const progressFunctions = ['cyrb53', 'saveCampaignProgress', 'campaignScenarioName', 'saveCampaignVictory', 'campaignSequentialProgress', 'campaignProgressCode', 'campaignDecodeCode', 'campaignApplyCode', 'campaignNextMission', 'campaignEditionIds', 'campaignTutorialChoice'].map(name => source.match(new RegExp(`function ${name}\\([^]*?\\n\\}`))?.[0]);
   assert.ok(progress && unlocked, 'Actual campaign progress functions exist');
   assert.ok(progressFunctions.every(Boolean), 'Actual portable progress functions exist');
   const ids = new Function(`return ${source.match(/const campaignMissionIds = (\[[^\n]+\]);/)[1]};`)();
@@ -195,11 +195,38 @@ if (process.argv[2] === '--test-campaign-menu') {
   for (const id of [...ids, ...optionalIds]) assert.ok(menu.includes(`<option value="${id}">`), `Implemented mission ${id} is available in the actual menu`);
   const stored = new Map();
   const localStorage = { getItem: key => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
-  const functions = (debug, missionIds = ids, optionalMissionIds = optionalIds) => new Function('localStorage', 'campaignMissionIds', 'campaignOptionalMissionIds', 'campaignSupportedMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', 'campaignCodeLimit', `${progress}\n${unlocked}\n${progressFunctions.join('\n')}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked, code: campaignProgressCode, decode: campaignDecodeCode, apply: campaignApplyCode, sequential: campaignSequentialProgress, save: saveCampaignProgress, win: saveCampaignVictory, next: campaignNextMission, edition: campaignEditionIds };`)(localStorage, missionIds, optionalMissionIds, [...missionIds, ...optionalMissionIds], 'v2', 'v1', debug, 70);
+  const functions = (debug, missionIds = ids, optionalMissionIds = optionalIds) => new Function('localStorage', 'campaignMissionIds', 'campaignOptionalMissionIds', 'campaignSupportedMissionIds', 'campaignProgressKey', 'campaignLegacyProgressKey', 'campaignDebug', 'campaignCodeLimit', `${progress}\n${unlocked}\n${progressFunctions.join('\n')}\nreturn { progress: campaignProgress, unlocked: campaignUnlocked, code: campaignProgressCode, decode: campaignDecodeCode, apply: campaignApplyCode, sequential: campaignSequentialProgress, save: saveCampaignProgress, win: saveCampaignVictory, next: campaignNextMission, edition: campaignEditionIds, tutorial: campaignTutorialChoice };`)(localStorage, missionIds, optionalMissionIds, [...missionIds, ...optionalMissionIds], 'v2', 'v1', debug, 70);
   const normal = functions(false);
   const firstMissions = ids.filter(id => id === 'terran01' || id === 'bwprotoss01');
   assert.deepEqual(ids.filter(normal.unlocked), firstMissions, 'Each edition starts independently');
   assert.ok(Object.values(normal.progress().victories).every(value => value === false), 'Missing victory flags default false');
+  assert.ok(optionalIds.includes('tutorial') && !ids.includes('tutorial'), 'Boot Camp remains outside numbered story positions');
+  assert.equal(normal.unlocked('tutorial'), true, 'The original tutorial is available without story prerequisites');
+  assert.equal(normal.unlocked('bwzergbonus'), false, 'An available tutorial does not expose Dark Origin');
+  assert.ok(menu.indexOf('<option value="tutorial">') < menu.indexOf('<option value="terran01">'), 'Boot Camp is visibly placed before Wasteland');
+  assert.deepEqual(normal.tutorial('terran01'), { mission: 'tutorial', label: 'Play Tutorial', primary: 'Skip Tutorial' });
+  assert.deepEqual(normal.tutorial('tutorial'), { mission: 'terran01', label: 'Skip to Wasteland', primary: 'Play Tutorial' });
+  assert.equal(normal.tutorial('bwprotoss01'), null, 'Brood War does not acquire an invented duplicate tutorial');
+  const tutorialProgress = JSON.stringify([...stored]);
+  const tutorialCode = normal.code(normal.sequential());
+  normal.win('tutorial');
+  assert.equal(normal.progress().victories.tutorial, true);
+  assert.equal(normal.progress().victories.terran01, false);
+  assert.equal(normal.unlocked('terran01'), true);
+  assert.equal(normal.unlocked('terran02'), false, 'Tutorial completion cannot bypass Wasteland');
+  assert.equal(normal.code(normal.sequential()), tutorialCode, 'Tutorial completion does not shift portable numbered progress');
+  assert.equal(normal.next('tutorial'), 'terran01', 'Original tutorial chronology continues into Wasteland');
+  assert.equal(normal.tutorial('terran01'), null, 'Completed tutorial profiles continue their numbered story without another invitation');
+  assert.equal(normal.edition('sc', false).length, 30);
+  assert.equal(functions(true).tutorial('tutorial'), null, 'Debug loading does not offer a normal tutorial-choice action');
+  assert.throws(() => functions(true).win('tutorial'), /read-only/);
+  stored.clear();
+  for (const [key, value] of JSON.parse(tutorialProgress)) stored.set(key, value);
+  const menuAddressFunction = source.match(/function campaignMenuAddress\([^]*?\n\}/)?.[0];
+  assert.ok(menuAddressFunction);
+  const menuAddress = new Function('location', 'campaignOptionalMissionIds', 'campaignDebug', `${menuAddressFunction}\nreturn campaignMenuAddress;`)({ origin: 'https://openbw.test', pathname: '/' }, optionalIds, false);
+  assert.equal(menuAddress('tutorial').searchParams.get('mission'), 'tutorial', 'Returning from training retains its selection and Resume entry');
+  assert.equal(menuAddress('tutorial').searchParams.has('autostart'), false, 'Tutorial menu return cannot relaunch the mission automatically');
   stored.set('v1', JSON.stringify({ version: 1, completed: ['terran04', 'terran05', 'terran09'] }));
   assert.equal(normal.progress().completed.length, 3, 'Existing recorded victories are preserved');
   assert.deepEqual(ids.filter(normal.unlocked), firstMissions, 'Out-of-order wins cannot bypass missing prior victories');
@@ -425,6 +452,8 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.throws(() => validateManifest({ ...manifests[0], pack: manifests[1].pack }, 'bwterran05', 'Terran05a.scx'), /location/);
   const variantSave = sealCampaignSave({ mission: 'bwterran05', variant: 'Terran05b.scx', title: manifests[1].title, ticks: 1, frame: 1, checksum: 0, savedAt: 1, packHash: manifests[1].pack.sha256, engineHash: '0'.repeat(64), assetHashes: Array(3).fill('0'.repeat(14)), turns: [], view: { camera: [0, 0], selection: [] } });
   assert.equal(validateCampaignSave(variantSave).variant, 'Terran05b.scx');
+  const tutorialSave = sealCampaignSave({ ...variantSave, mission: 'tutorial', variant: undefined, title: 'Boot Camp' });
+  assert.equal(validateCampaignSave(tutorialSave).mission, 'tutorial', 'Optional tutorial saves use the normal bounded journal and compatibility validation');
   assert.throws(() => validateCampaignSave(variantSave, { ...variantSave, variant: 'Terran05a.scx' }), /requires the engine/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, variant: undefined })), /variant/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, mission: 'bwterran05b' })), /Invalid saved game/);
@@ -637,7 +666,12 @@ function testCampaign() {
   };
   const units = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
   const human = units.filter(unit => Number(unit[2]) === mission.humanSlot);
-  if (missionId === 'terran02') {
+  if (missionId === 'tutorial') {
+    assert.equal(mission.episode, 1); assert.equal(mission.order, 0); assert.equal(mission.race, 1); assert.equal(mission.humanSlot, 1);
+    for (const [type, count] of [['Command Center', 1], ['Supply Depot', 1], ['SCV', 1], ['Marine', 16]]) assert.equal(human.filter(unit => unit[1] === type).length, count);
+    assert.equal(units.filter(unit => unit[1] === 'Zergling' && unit[2] === '3').length, 16);
+    assert.equal(x.openbw_mission_countdown(), -1);
+  } else if (missionId === 'terran02') {
     assert.equal(units.length, 79, 'Expected 79 non-neutral actors, without melee starts');
     assert.equal(units.filter(unit => Number(unit[2]) === mission.humanSlot).length, 11);
     assert.equal(units.filter(unit => Number(unit[2]) === 2).length, 0, 'Raynor is naturally rescued during startup');
@@ -1068,7 +1102,8 @@ function testCampaign() {
   const capabilities = new Set(read(x.openbw_campaign_capabilities()).trim().split('\n'));
   for (const required of mission.requirements) assert.ok(capabilities.has(required), `Missing runtime capability ${required}`);
   const briefing = read(x.openbw_mission_briefing()).trim().split('\n').map(line => line.split('\t').map(Number));
-  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : ['terran02', 'protoss08', 'bwprotoss05'].includes(missionId) ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  assert.deepEqual([...new Set(briefing.map(action => action[0]))].sort((left, right) => left - right), missionId === 'tutorial' ? [1, 3, 4, 5, 6, 8, 9] : ['zerg05', 'protoss06'].includes(missionId) ? [3, 4, 5, 6, 8] : ['terran02', 'protoss08', 'bwprotoss05'].includes(missionId) ? [1, 2, 3, 4, 5, 6, 8] : ['terran06', 'terran07', 'terran08', 'terran10'].includes(missionId) ? [1, 3, 4, 5, 6, 7, 8] : [1, 3, 4, 5, 6, 8]);
+  if (missionId === 'tutorial') assert.equal(briefing[0][0], 9, 'The original first briefing action enables Skip Tutorial before any timed speech');
   const transmissionTime = (base, adjustment, modifier) => modifier === 7 ? adjustment : modifier === 8 ? base + adjustment : Math.max(0, base - adjustment);
   for (const action of briefing.filter(action => action[0] === 8)) assert.equal(x.openbw_mission_transmission_time(action[3], action[5], action[6]), transmissionTime(action[3], action[5], action[6]), 'Original briefing uses its stored duration and modifier');
   const beforeBriefing = x.openbw_frame();
@@ -1076,7 +1111,7 @@ function testCampaign() {
   assert.equal(x.openbw_frame(), beforeBriefing, 'Briefing cannot advance the world');
   x.openbw_mission_begin();
   for (let frame = 0; frame < 4; frame++) x.openbw_step();
-  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750, bwzerg04: 10000, bwzerg05: 300, bwzerg06: 800, bwzerg07: 300, bwzerg08: 150, bwzerg09: 300, bwzergbonus: 0, bwzerg10: 500}[missionId.startsWith('bwzerg04') ? 'bwzerg04' : missionId], 'Preserve original mission minerals');
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), {tutorial: 150, terran01: 40, terran02: 200, terran03: 100, terran04: 0, terran05: 300, terran06: 75, terran07: 170, terran08: 250, terran09: 250, terran10: 500, zerg01: 200, zerg02: 300, zerg03: 150, zerg04: 250, zerg05: 0, zerg06: 250, zerg07: 800, zerg08: 350, zerg09: 750, zerg10: 1000, protoss01: 400, protoss02: 170, protoss03: 300, protoss04: 0, protoss05: 150, protoss06: 0, protoss07: 2500, protoss08: 70, protoss09: 1000, protoss10: 100, bwprotoss01: 0, bwprotoss02: 600, bwprotoss03: 250, bwprotoss04: 200, bwprotoss05: 0, bwprotoss06: 800, bwprotoss07: 200, bwprotoss08: 1000, bwterran01: 250, bwterran02: 0, bwterran03: 500, bwterran04: 200, bwterran05a: 150, bwterran05b: 250, bwterran06: 0, bwterran07: 0, bwterran08: 1500, bwzerg01: 0, bwzerg02: 0, bwzerg03: 750, bwzerg04: 10000, bwzerg05: 300, bwzerg06: 800, bwzerg07: 300, bwzerg08: 150, bwzerg09: 300, bwzergbonus: 0, bwzerg10: 500}[missionId.startsWith('bwzerg04') ? 'bwzerg04' : missionId], 'Preserve original mission minerals');
   if (missionId === 'bwterran05a' || missionId === 'bwterran05b') assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), missionId.endsWith('a') ? 100 : 150, 'Preserve original variant gas');
   if (missionId === 'bwterran04') {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[1]), 150, 'Korhal grants its original 150 gas');
@@ -1214,6 +1249,23 @@ function testCampaign() {
     assert.equal(missionSoundLoads.length, loads, 'Mission sound handles are reused');
   }
   assert.equal(x.openbw_outcome(), 0, 'Idle original state must not invent a mission outcome');
+  if (missionId === 'tutorial') {
+    const center = read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).find(unit => unit[1] === 'Command Center' && unit[2] === '1');
+    assert.ok(center);
+    x.openbw_debug_select(Number(center[0]), 0); x.openbw_render(0); x.openbw_out_clear();
+    const scv = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(row => row[1] === 'SCV');
+    assert.ok(scv?.[0]);
+    x.openbw_key(1, scv[0].charCodeAt(0), 0); x.openbw_key(0, scv[0].charCodeAt(0), 0); x.openbw_render(0);
+    const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(bytes.length > 0, 'Original tutorial SCV training uses normal synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(mission.humanSlot, bytes.length); x.openbw_out_clear();
+    for (let tick = 0; tick < 24; tick++) x.openbw_step();
+    assert.deepEqual(read(x.openbw_resources()).split('\t').slice(0, 2).map(Number), [100, 0]);
+    const [progress, queued] = read(x.openbw_status()).split('\t');
+    assert.equal(queued, 'SCV'); assert.ok(Number(progress) > 0 && Number(progress) < 100);
+    assert.equal(x.openbw_mission_countdown(), -1);
+  }
   if (missionId === 'bwzergbonus') {
     const current = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
     for (const [type, count] of [['Zeratul', 1], ['Dragoon', 2], ['Dark Archon', 4]]) assert.equal(current().filter(unit => unit[1] === type && unit[2] === '1').length, count, 'The original opening creates and rescues the exact baseless investigation squad');

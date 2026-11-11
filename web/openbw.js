@@ -1705,6 +1705,7 @@ async function boot(session) {
         showBriefingPortrait(slot);
         briefingUntil = briefingClock + x.openbw_mission_transmission_time(time, amount, modifier);
       }
+      if (type === 9 && session.mission.id === 'tutorial') $('briefing-skip-tutorial').hidden = false;
     }
     if (briefingIndex === briefingActions.length && briefingClock >= briefingUntil) {
       briefingPlaying = false;
@@ -1715,6 +1716,13 @@ async function boot(session) {
   if (session.mission) {
     const stream = readCString(x.openbw_mission_briefing()).trim();
     briefingActions = stream ? stream.split('\n').map(line => line.split('\t').map(Number)) : [];
+    $('briefing-skip-tutorial').hidden = session.mission.id !== 'tutorial' || briefingActions[0]?.[0] !== 9;
+    $('briefing-skip-tutorial').onclick = () => {
+      if (session.mission.id !== 'tutorial' || !briefingActive || $('briefing-skip-tutorial').hidden) { $('briefing-state').textContent = 'Skipping is not enabled for this briefing.'; return; }
+      stopNarration();
+      briefingPlaying = false;
+      location.replace(campaignAddress('terran01', null, true));
+    };
     $('briefing-title').textContent = session.mission.title;
     const objectives = briefingActions.find(action => action[0] === 4);
     if (objectives) $('briefing-objectives').textContent = missionString(objectives[1]);
@@ -2336,7 +2344,7 @@ const campaignCodeLimit = 70;
 const campaignDebug = new URLSearchParams(location.search).get('campaign-debug') === '1';
 const selectedMission = new URLSearchParams(location.search).get('mission');
 const campaignMissionIds = ['terran01', 'terran02', 'terran03', 'terran04', 'terran05', 'terran06', 'terran07', 'terran08', 'terran09', 'terran10', 'zerg01', 'zerg02', 'zerg03', 'zerg04', 'zerg05', 'zerg06', 'zerg07', 'zerg08', 'zerg09', 'zerg10', 'protoss01', 'protoss02', 'protoss03', 'protoss04', 'protoss05', 'protoss06', 'protoss07', 'protoss08', 'protoss09', 'protoss10', 'bwprotoss01', 'bwprotoss02', 'bwprotoss03', 'bwprotoss04', 'bwprotoss05', 'bwprotoss06', 'bwprotoss07', 'bwprotoss08', 'bwterran01', 'bwterran02', 'bwterran03', 'bwterran04', 'bwterran05', 'bwterran06', 'bwterran07', 'bwterran08', 'bwzerg01', 'bwzerg02', 'bwzerg03', 'bwzerg04', 'bwzerg05', 'bwzerg06', 'bwzerg07', 'bwzerg08', 'bwzerg09', 'bwzerg10'];
-const campaignOptionalMissionIds = ['bwzergbonus'];
+const campaignOptionalMissionIds = ['tutorial', 'bwzergbonus'];
 const campaignSupportedMissionIds = [...campaignMissionIds, ...campaignOptionalMissionIds];
 let campaignManifest = null;
 let campaignDownload = null;
@@ -2347,6 +2355,7 @@ function campaignMenuAddress(mission = $('mission-select').value) {
   const address = new URL(location.origin + location.pathname);
   address.searchParams.set('campaign', '1');
   address.searchParams.set('edition', mission.startsWith('bw') ? 'bw' : 'sc');
+  if (campaignOptionalMissionIds.includes(mission)) address.searchParams.set('mission', mission);
   if (campaignDebug) address.searchParams.set('campaign-debug', '1');
   return address;
 }
@@ -2413,7 +2422,7 @@ function campaignApplyCode(code) {
   return true;
 }
 function campaignUnlocked(missionId) {
-  if (campaignOptionalMissionIds.includes(missionId)) return campaignDebug || campaignProgress().bonusUnlocked;
+  if (campaignOptionalMissionIds.includes(missionId)) return missionId === 'tutorial' || campaignDebug || campaignProgress().bonusUnlocked;
   const index = campaignMissionIds.indexOf(missionId);
   const victories = campaignProgress().victories;
   const first = missionId.startsWith('bw') ? campaignMissionIds.findIndex(id => id.startsWith('bw')) : 0;
@@ -2421,7 +2430,8 @@ function campaignUnlocked(missionId) {
 }
 function campaignNextMission(missionId, nextScenario = '') {
   let next;
-  if (missionId === 'bwzerg09' && /^Bonus\.scx$/i.test(nextScenario)) next = 'bwzergbonus';
+  if (missionId === 'tutorial') next = 'terran01';
+  else if (missionId === 'bwzerg09' && /^Bonus\.scx$/i.test(nextScenario)) next = 'bwzergbonus';
   else if (missionId === 'bwzergbonus') next = 'bwzerg10';
   else {
     const editionIds = campaignMissionIds.filter(id => id.startsWith('bw') === missionId.startsWith('bw'));
@@ -2429,6 +2439,12 @@ function campaignNextMission(missionId, nextScenario = '') {
     if (index >= 0) next = editionIds[index + 1];
   }
   return campaignSupportedMissionIds.includes(next) ? next : null;
+}
+function campaignTutorialChoice(missionId, progress = campaignProgress()) {
+  if (campaignDebug) return null;
+  if (missionId === 'tutorial') return { mission: 'terran01', label: 'Skip to Wasteland', primary: 'Play Tutorial' };
+  if (missionId === 'terran01' && !progress.victories.tutorial && !progress.victories.terran01) return { mission: 'tutorial', label: 'Play Tutorial', primary: 'Skip Tutorial' };
+  return null;
 }
 function campaignSelectedAsset(missionId, savedVariant) {
   const parameters = new URLSearchParams(location.search);
@@ -2449,7 +2465,7 @@ function selectGameMode(campaign) {
 function loadSelectedMission() {
   for (const option of $('mission-select').options) option.disabled = !campaignUnlocked(option.value);
   const editionIds = campaignEditionIds();
-  if (!editionIds.includes($('mission-select').value) || !campaignUnlocked($('mission-select').value)) $('mission-select').value = editionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
+  if (!editionIds.includes($('mission-select').value) || !campaignUnlocked($('mission-select').value)) $('mission-select').value = editionIds.find(id => id !== 'tutorial' && campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
   const missionId = $('mission-select').value;
   $('campaign-start').disabled = !editionIds.length;
   if (!editionIds.length) {
@@ -2483,6 +2499,12 @@ function loadSelectedMission() {
 }
 function renderCampaignSelection() {
   const progress = campaignProgress(), completed = progress.completed;
+  const choice = campaignTutorialChoice($('mission-select').value, progress);
+  $('campaign-tutorial-choice').hidden = !choice;
+  $('campaign-tutorial-choice').disabled = !choice;
+  $('campaign-tutorial-choice').textContent = choice?.label || '';
+  $('campaign-start-label').textContent = choice?.primary || ($('mission-select').value === 'tutorial' ? 'Play Tutorial' : 'Start Mission');
+  $('campaign-tutorial-info').hidden = !choice;
   const list = $('campaign-missions');
   const membership = campaignEditionIds().join(',');
   if (!list.querySelector('input') || list.dataset.missions !== membership) {
@@ -2603,8 +2625,16 @@ $('mode-sandbox').onclick = () => selectGameMode(false);
 $('mode-campaign').onclick = () => selectGameMode(true);
 $('mission-select').onchange = loadSelectedMission;
 $('campaign-edition').onchange = loadSelectedMission;
+$('campaign-tutorial-choice').onclick = () => {
+  const choice = campaignTutorialChoice($('mission-select').value);
+  if (!choice) { $('mission-size').textContent = 'The tutorial choice is no longer available.'; return; }
+  $('mission-select').value = choice.mission;
+  loadSelectedMission();
+  $('campaign-start').click();
+};
 $('campaign-start').onclick = async () => {
   $('campaign-start').disabled = true;
+  $('campaign-tutorial-choice').disabled = true;
   $('mission-select').disabled = true;
   $('campaign-missions').disabled = true;
   $('campaign-resume').disabled = true;
@@ -2671,7 +2701,7 @@ $('campaign-code-apply').onclick = () => {
   try {
     if (campaignApplyCode($('campaign-code-input').value)) {
       const progress = campaignProgress();
-      const editionIds = campaignEditionIds();
+      const editionIds = campaignEditionIds().filter(id => id !== 'tutorial');
       $('mission-select').value = editionIds.find(id => !progress.victories[id] && campaignUnlocked(id)) || editionIds[editionIds.length - 1] || '';
       loadSelectedMission();
       status.textContent = 'Campaign progress restored.';
@@ -2705,7 +2735,7 @@ if (campaignSupportedMissionIds.includes(selectedMission)) {
 } else if (!location.search || new URLSearchParams(location.search).get('campaign') === '1') {
   if (new URLSearchParams(location.search).get('edition') === 'bw') $('campaign-edition').value = 'bw';
   const editionIds = campaignEditionIds();
-  $('mission-select').value = editionIds.find(id => campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
+  $('mission-select').value = editionIds.find(id => id !== 'tutorial' && campaignUnlocked(id) && !campaignProgress().completed.includes(id)) || editionIds[0] || '';
   selectGameMode(true);
 } else {
   selectGameMode(false);

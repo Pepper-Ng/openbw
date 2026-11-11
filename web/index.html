@@ -469,6 +469,7 @@
   #campaign-launch-info, #sandbox-launch-info { flex: 1; min-width: 150px; }
   #campaign-selected-name, #sandbox-title { display: block; font-size: 14px; color: #e2e8f0; overflow-wrap: anywhere; }
   #campaign-launch #mission-size { margin: 3px 0 0; font-size: 11px; }
+  #campaign-tutorial-info { margin: 6px 0 0; color: #aeb8bf; font-size: 12px; }
   #campaign-launch button, #sandbox-start button { margin: 0; display: inline-flex; align-items: center; gap: 8px; min-height: 42px; }
   #sandbox-start #map-info { margin: 3px 0 0; font-size: 11px; }
   #campaign-resume { background: #7bc79c; }
@@ -484,9 +485,9 @@
   #campaign-save-controls select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 6px; background: #161d22; color: #dce5e9; border: 1px solid #56616a; border-radius: 4px; font: inherit; }
   #save-status { font-size: 11px; color: #adbdc5; margin-top: 8px; overflow-wrap: anywhere; }
   #settings:has(#campaign-save-controls:not([hidden])) { box-sizing: border-box; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 60px); overflow-y: auto; z-index: 8; background: #111923; }
-  #campaign-resume[hidden], #campaign-save-controls[hidden], #go-next[hidden], #load-fresh[hidden] { display: none !important; }
+  #campaign-resume[hidden], #campaign-save-controls[hidden], #go-next[hidden], #load-fresh[hidden], #campaign-tutorial-choice[hidden], #campaign-tutorial-info[hidden] { display: none !important; }
   #load-actions { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
-  #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #load-actions button[hidden] { display: none !important; }
+  #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #briefing-skip-tutorial[hidden], #load-actions button[hidden] { display: none !important; }
   #mission-briefing { position: fixed; inset: 0; z-index: 15; display: grid; align-content: center; overflow: auto; padding: 24px; box-sizing: border-box; background: rgba(5, 12, 16, .96); color: #e2e8f0; }
   .briefing-content { width: min(100%, 720px); margin: auto; min-width: 0; }
   #briefing-title { font-size: 24px; margin: 0 0 12px; }
@@ -608,6 +609,7 @@
     <div class="briefing-actions">
       <button id="briefing-play" type="button"><i data-lucide="play"></i><span>Play Briefing</span></button>
       <button id="briefing-begin" type="button"><i data-lucide="skip-forward"></i><span>Begin Mission</span></button>
+      <button id="briefing-skip-tutorial" type="button" hidden><i data-lucide="skip-forward"></i><span>Skip Tutorial</span></button>
       <button id="briefing-return" type="button"><i data-lucide="arrow-left"></i><span>Return</span></button>
     </div>
     <div id="briefing-state" role="status">Ready</div>
@@ -658,7 +660,7 @@
         <option value="sc">StarCraft</option>
         <option value="bw">Brood War</option>
       </select>
-      <p id="campaign-order">Each edition starts independently. Complete missions in story order within that edition.</p>
+      <p id="campaign-order">Each edition starts independently. Complete numbered missions in story order within that edition.</p>
       <div id="campaign-progress"><span>0 of 30 completed</span><progress max="30" value="0" aria-label="Campaign progress"></progress></div>
       <div id="campaign-code-tools">
         <div><label for="campaign-code">Progress Code</label><div class="campaign-code-row"><input id="campaign-code" type="text" readonly spellcheck="false" autocomplete="off" aria-label="Current campaign progress code"><button id="campaign-code-copy" type="button" title="Copy progress code" aria-label="Copy progress code"><i data-lucide="copy"></i></button></div></div>
@@ -667,6 +669,7 @@
       </div>
       <select id="mission-select" hidden aria-label="Mission">
         <optgroup label="Terran Campaign">
+        <option value="tutorial">Boot Camp (optional tutorial)</option>
         <option value="terran01">1. Wasteland</option>
         <option value="terran02">2. Backwater Station</option>
         <option value="terran03">3. Desperate Alliance</option>
@@ -737,9 +740,10 @@
         </optgroup>
       </select>
       <div id="campaign-launch">
-        <div id="campaign-launch-info"><strong id="campaign-selected-name">1. Wasteland</strong><div id="mission-size" role="status" aria-live="polite"></div></div>
+        <div id="campaign-launch-info"><strong id="campaign-selected-name">1. Wasteland</strong><div id="mission-size" role="status" aria-live="polite"></div><p id="campaign-tutorial-info" hidden>Boot Camp comes before Wasteland. Play the optional tutorial, or skip it and start the numbered campaign.</p></div>
         <button id="campaign-resume" type="button" hidden><i data-lucide="play"></i>Resume</button>
-        <button id="campaign-start" type="button"><i data-lucide="play"></i>Start Mission</button>
+        <button id="campaign-tutorial-choice" type="button" hidden>Play Tutorial</button>
+        <button id="campaign-start" type="button"><i data-lucide="play"></i><span id="campaign-start-label">Start Mission</span></button>
       </div>
       <fieldset id="campaign-missions"><legend>Missions</legend></fieldset>
       <div id="campaign-saves" aria-label="Saved games"></div>

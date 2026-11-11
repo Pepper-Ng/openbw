@@ -357,6 +357,8 @@ Pass placed UNIT properties through the shared `apply_creation_properties` helpe
 
 Keep conditional secret missions separate from numbered ordering, campaign totals and portable codes. Persist the original branch filename and latch earned access across replays. Next must follow that filename; a secret victory must return to the original numbered continuation. Check locked direct URLs, debug isolation, saves and missing imported branch history.
 
+Keep the original `tutorial` optional and before Wasteland in the visible mission list. Offer Play/Skip without shifting numbered progress. Briefing action 9 enables a real Skip Tutorial control; both skipping and completing Boot Camp continue to Wasteland. Preserve optional selections on menu return so their saves remain directly resumable.
+
 ### Trigger Semantics And Clocks
 
 Classic Command uses all-unit counts for At Most and completed-unit counts for At Least/Exactly. Reign of Fire consequently loses if both starting Drones morph before any building completes. Preserve this verified original quirk; it is not an incomplete-building compatibility defect.

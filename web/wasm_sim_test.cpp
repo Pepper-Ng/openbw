@@ -3926,6 +3926,110 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void boot_camp_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 7; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		action_state commands;
+		action_functions actions(st, commands);
+		require(st.game->scenario_format == 59 && st.players[1].controller == player_t::controller_occupied && st.players[1].race == race_t::terran && st.unit_counts[1][UnitTypes::Terran_Command_Center] == 1 && st.unit_counts[1][UnitTypes::Terran_Supply_Depot] == 1 && st.unit_counts[1][UnitTypes::Terran_SCV] == 1 && st.unit_counts[1][UnitTypes::Terran_Marine] == 16 && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 16, "Boot Camp retains its original Terran base, single SCV, sixteen Marines and sixteen Zerglings");
+		auto step = [&]() { functions.next_frame(); };
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[1] == 150 && !st.current_gas[1] && !st.countdown_active && st.campaign_ai_scripts.empty() && !st.players[1].victory_state, "the original training grants 150/0 without a generic enemy AI, timer or starting-unit replacement");
+		const auto& goal = st.game->triggers.at(6);
+		require(goal.conditions[0].type == 2 && goal.conditions[1].type == 2 && goal.conditions[2].type == 4 && goal.actions[0].type == 13, "the actual source completion predicate remains three Depots, one Refinery and one hundred gas before its full final instruction");
+		if (scenario == 1 || scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[1])) if (scenario == 1 || !functions.unit_is(unit, UnitTypes::Terran_Marine)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 800 && !st.players[1].victory_state; ++tick) step();
+			if (scenario == 1) require(st.players[1].victory_state == 2, "losing all original human units causes the actual tutorial defeat");
+			else require(!st.players[1].victory_state && st.unit_counts[1][UnitTypes::Terran_Marine] == 16, "the source does not invent a base-or-worker-loss defeat while original Marines survive");
+		} else if (scenario >= 3) {
+			unit_t* center = find(1, UnitTypes::Terran_Command_Center);
+			require(actions.action_select(1, center) && actions.action_train(1, functions.get_unit_type(UnitTypes::Terran_SCV)) && st.current_minerals[1] == 100, "normal native SCV training pays fifty of the original tutorial minerals");
+			for (int tick = 0; tick != 1200 && st.completed_unit_counts[1][UnitTypes::Terran_SCV] != 2; ++tick) step();
+			require(st.completed_unit_counts[1][UnitTypes::Terran_SCV] == 2, "the second SCV completes under the original starting supply limit");
+			auto mine = [&]() {
+				for (unit_t* worker : ptr(st.player_units[1])) if (functions.unit_is(worker, UnitTypes::Terran_SCV) && !functions.unit_dying(worker) && !functions.us_hidden(worker)) {
+					unit_t* mineral = functions.find_nearest_unit(worker, functions.map_bounds(), [&](const unit_t* resource) { return functions.unit_is_mineral_field(resource) && !functions.unit_dying(resource); });
+					require(mineral && actions.action_select(1, worker) && actions.action_default_order(1, mineral->sprite->position, mineral, mineral->unit_type, false), "original SCVs accept normal mineral-harvesting orders");
+				}
+			};
+			auto afford = [&](int amount) {
+				mine();
+				for (int tick = 0; tick != 10000 && st.current_minerals[1] < amount; ++tick) step();
+				require(st.current_minerals[1] >= amount && !st.players[1].victory_state, "native mining rather than a fixture grant funds each tutorial structure");
+			};
+			auto build = [&](UnitTypes id) {
+				afford(100);
+				unit_t* worker = find(1, UnitTypes::Terran_SCV);
+				require(worker && actions.action_select(1, worker), "an original or normally trained SCV supplies paid tutorial construction");
+				const auto* type = functions.get_unit_type(id);
+				int before = st.completed_unit_counts[1][id];
+				bool placed = false;
+				if (id == UnitTypes::Terran_Refinery) {
+					unit_t* geyser = find(11, UnitTypes::Resource_Vespene_Geyser);
+					require(geyser, "the original tutorial geyser supplies the Refinery footprint");
+					xy tile = (geyser->sprite->position - type->placement_size / 2) / 32;
+					placed = actions.action_build(1, functions.get_order_type(Orders::PlaceBuilding), type, {size_t(tile.x), size_t(tile.y)});
+				} else {
+					xy home = center->sprite->position / 32;
+					for (int radius = 2; radius != 18 && !placed; ++radius) for (int y = -radius; y <= radius && !placed; ++y) for (int x = -radius; x <= radius && !placed; ++x) {
+						if (std::abs(x) != radius && std::abs(y) != radius) continue;
+						xy tile = home + xy(x, y), position = tile * 32 + type->placement_size / 2;
+						if (tile.x < 0 || tile.y < 0 || !functions.is_in_map_bounds(position)) continue;
+						if (functions.can_place_building(worker, 1, type, position, false, false) && functions.is_reachable(worker->sprite->position, position)) placed = actions.action_build(1, functions.get_order_type(Orders::PlaceBuilding), type, {size_t(tile.x), size_t(tile.y)});
+					}
+				}
+				require(placed, "native paid tutorial construction uses a legal original-map footprint");
+				for (int tick = 0; tick != 4000 && st.completed_unit_counts[1][id] == before; ++tick) step();
+				require(st.completed_unit_counts[1][id] == before + 1, "the normally paid Supply Depot or Refinery completes through native SCV construction");
+			};
+			build(UnitTypes::Terran_Supply_Depot);
+			build(UnitTypes::Terran_Supply_Depot);
+			require(st.completed_unit_counts[1][UnitTypes::Terran_Supply_Depot] == 3 && !st.players[1].victory_state, "three completed original/paid Depots alone cannot bypass the actual Refinery and gas requirements");
+			build(UnitTypes::Terran_Refinery);
+			unit_t* refinery = find(1, UnitTypes::Terran_Refinery);
+			require(refinery && !st.current_gas[1] && !st.players[1].victory_state, "the actual Refinery completes before native gas collection and tutorial victory");
+			for (unit_t* worker : ptr(st.player_units[1])) if (functions.unit_is(worker, UnitTypes::Terran_SCV) && !functions.unit_dying(worker) && !functions.us_hidden(worker)) require(actions.action_select(1, worker) && actions.action_default_order(1, refinery->sprite->position, refinery, refinery->unit_type, false), "normal SCV orders begin harvesting the original geyser");
+			bool below = false;
+			for (int tick = 0; tick != 12000 && !st.players[1].victory_state; ++tick) {
+				if (st.current_gas[1] < 100) {
+					below = true;
+					require(!functions.test_trigger_condition(goal.conditions[2], 1), "ordinary gas deliveries below one hundred cannot satisfy the source completion condition");
+				}
+				step();
+			}
+			require(below && st.players[1].victory_state >= 3 && st.current_gas[1] >= 100 && st.completed_unit_counts[1][UnitTypes::Terran_Supply_Depot] == 3 && st.completed_unit_counts[1][UnitTypes::Terran_Refinery] == 1 && st.trigger_switches[6] && !st.next_scenario[1], "the unchanged tutorial completes its full instruction sequence using only native paid training, construction and mineral/gas harvesting");
+			if (scenario == 4) {
+				st.current_gas[1] = 99;
+				require(!functions.test_trigger_condition(goal.conditions[2], 1), "the actual original gas condition is false at exactly ninety-nine");
+				st.current_gas[1] = 100;
+				require(functions.test_trigger_condition(goal.conditions[2], 1), "the actual original gas condition is true at exactly one hundred");
+			} else if (scenario == 5 || scenario == 6) {
+				UnitTypes id = scenario == 5 ? UnitTypes::Terran_Supply_Depot : UnitTypes::Terran_Refinery;
+				require(functions.test_trigger_condition(goal.conditions[scenario == 5 ? 0 : 1], 1), "the original fulfilled structure condition supplies the positive boundary");
+				functions.kill_unit(find(1, id));
+				for (int tick = 0; tick != 32; ++tick) step();
+				require(!functions.test_trigger_condition(goal.conditions[scenario == 5 ? 0 : 1], 1), "two Depots or a missing Refinery independently fail the actual source condition despite a sufficient earned gas bank");
+			}
+		}
+		printf("Boot Camp original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void omega_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	const std::array<int, 3> owners{{0, 1, 6}};
 	const std::array<std::array<UnitTypes, 4>, 3> production{{{{UnitTypes::Terran_Command_Center, UnitTypes::Terran_Barracks, UnitTypes::Terran_Factory, UnitTypes::Terran_Starport}}, {{UnitTypes::Protoss_Nexus, UnitTypes::Protoss_Robotics_Facility, UnitTypes::Protoss_Gateway, UnitTypes::Protoss_Stargate}}, {{UnitTypes::Terran_Command_Center, UnitTypes::Terran_Barracks, UnitTypes::Terran_Factory, UnitTypes::Terran_Starport}}}};
@@ -7192,6 +7296,7 @@ int main(int argc, char** argv) {
 	bool reckoning = campaign && argc > 4 && !strcmp(argv[4], "bwzerg09");
 	bool dark_origin = campaign && argc > 4 && !strcmp(argv[4], "bwzergbonus");
 	bool omega = campaign && argc > 4 && !strcmp(argv[4], "bwzerg10");
+	bool boot_camp = campaign && argc > 4 && !strcmp(argv[4], "tutorial");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -7312,6 +7417,10 @@ int main(int argc, char** argv) {
 		}
 		if (omega) {
 			omega_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (boot_camp) {
+			boot_camp_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

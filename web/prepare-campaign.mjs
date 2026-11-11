@@ -8,6 +8,7 @@ import { campaignVariants, resolveCampaignMission } from './campaign-variants.js
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const missions = {
+  tutorial: { title: 'Boot Camp', episode: 1, order: 0, scenarioHash: '4aafcfe93cc42cb642fde912a459a6c89b0cd6a1f8160c93cac3c34dd0b13af1', units: 46, triggers: 11, sounds: 20 },
   terran01: { title: 'Wasteland', order: 1, scenarioHash: '4b0e5009c4ae80cfb4cb13ede30842db0aa05bb3be2eedad695fb093fa5786f6', units: 49, triggers: 9, sounds: 8 },
   terran02: { title: 'Backwater Station', order: 2, scenarioHash: 'd8a7f6b70422ff32e4fd3f6293de4013f883e0761814d4496ffd18b7eb13dfce', units: 98, triggers: 15, sounds: 21 },
   terran03: { title: 'Desperate Alliance', order: 3, scenarioHash: '9d83a8bde18c38ee12f54f4c5253bed5466027fc612141e9a7415c94d3346737', units: 199, triggers: 10, sounds: 16 },
