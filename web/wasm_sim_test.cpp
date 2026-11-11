@@ -3926,6 +3926,180 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void fury_swarm_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 8; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 5 && st.unit_counts[3][UnitTypes::Zerg_Lair] == 1 && !st.unit_counts[3][UnitTypes::Zerg_Drone] && st.unit_counts[6][UnitTypes::Terran_Civilian] == 30, "Fury preserves its original five Hatcheries, Lair, workerless army and thirty UED scientists");
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		unit_t* lair = find(3, UnitTypes::Zerg_Lair);
+		unit_t* hatch = functions.find_nearest_unit(lair, functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 3 && functions.unit_is(unit, UnitTypes::Zerg_Hatchery); });
+		unit_id hunter = functions.get_unit_id(find(3, UnitTypes::Zerg_Hydralisk));
+		a_vector<unit_id> targets;
+		bool wave[2] = {}, opening_fire[2] = {};
+		a_vector<unit_id> original_raiders;
+		for (int owner : {4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) original_raiders.push_back(functions.get_unit_id(unit));
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Fury outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		if (scenario == 3 || scenario == 4) relocate(functions.get_unit(hunter), lair->sprite->position + xy(128, 0));
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[3])) if (!functions.unit_dying(unit) && (scenario == 0 || unit == lair || unit == hatch || ((scenario == 3 || scenario == 4) && functions.get_unit_id(unit) == hunter) || std::find(targets.begin(), targets.end(), functions.get_unit_id(unit)) != targets.end())) {
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+				unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250;
+			}
+			functions.next_frame();
+			for (int owner : {4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+				if (st.current_frame < 180 * 16 && std::find(original_raiders.begin(), original_raiders.end(), functions.get_unit_id(unit)) == original_raiders.end() && (functions.unit_is(unit, UnitTypes::Zerg_Zergling) || functions.unit_is(unit, UnitTypes::Zerg_Hydralisk) || functions.unit_is(unit, UnitTypes::Zerg_Lurker))) wave[owner - 4] = true;
+				if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) opening_fire[owner - 4] = true;
+			}
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[3] == 800 && st.current_gas[3] == 300 && st.campaign_ai[6].town_active && !st.campaign_ai[4].town_active && !st.campaign_ai[5].town_active && !st.trigger_switches[8] && !st.players[3].victory_state, "the original 800/300 opening starts only the UED defensive program before the scripted renegade attacks");
+		require(st.game->campaign_resource_areas.size() == 10, "five authored starts and four additional resource clusters retain the classic one-based watched-area numbering");
+		for (const auto& pair : {std::pair<size_t, size_t>{6, 3}, {9, 4}, {8, 6}, {7, 10}}) require(functions.is_in_bounds(st.game->campaign_resource_areas.at(pair.first).position, st.locations.at(pair.second - 1).area), "watched resource areas six/nine/eight/seven resolve to their actual authored human outposts");
+		if (scenario == 2) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && !st.trigger_switches[9] && st.unit_counts[6][UnitTypes::Terran_Civilian] == 30, "losing all original human buildings before scientist completion causes the independent source defeat");
+		} else if (scenario == 6) {
+			a_vector<unit_t*> scientists;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Civilian)) scientists.push_back(unit);
+			for (unit_t* unit : scientists) functions.kill_unit(unit);
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			require(st.trigger_switches[9] && st.players[3].victory_state >= 3, "the unchanged scientist-zero predicate can also win before the later objective presentation is reached");
+		} else {
+			if (scenario == 5) {
+				action_state commands;
+				action_functions actions(st, commands);
+				auto ready = [&]() {
+					int count = 0;
+					for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Larva) && unit->build_queue.empty() && functions.xy_length(unit->sprite->position - lair->sprite->position) < 640) ++count;
+					return count >= 3;
+				};
+				for (int tick = 0; tick != 1200 && !ready(); ++tick) step();
+				require(ready(), "the original core resource depots naturally spawn three available Larva before paid observation-target production");
+				for (int index = 0; index != 3; ++index) {
+					unit_t* larva = functions.find_nearest_unit(lair, functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 3 && functions.unit_is(unit, UnitTypes::Zerg_Larva) && unit->build_queue.empty() && functions.xy_length(unit->sprite->position - lair->sprite->position) < 640; });
+					require(larva && actions.action_select(3, larva) && actions.action_morph(3, functions.get_unit_type(UnitTypes::Zerg_Drone)), "native paid production creates the three protected Fury observation targets from original core-base Larva");
+					targets.push_back(functions.get_unit_id(larva));
+				}
+				require(st.current_minerals[3] == 650 && st.current_gas[3] == 300, "three native Drone morphs pay exactly one hundred fifty original minerals");
+			}
+			auto started_expansion = [&]() {
+				for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is(unit, UnitTypes::Zerg_Hatchery) && !functions.u_completed(unit) && !functions.unit_dying(unit) && functions.campaign_ai_unit_town(4, unit) > 0) return unit;
+				return (unit_t*)nullptr;
+			};
+			for (int tick = 0; tick != 12000 && !st.players[3].victory_state; ++tick) {
+				if (scenario == 0 ? st.current_frame >= 6000 : scenario == 7 ? started_expansion() != nullptr : st.trigger_switches[8] && st.custom_score[3] == 30) break;
+				step();
+			}
+			require(wave[0] && wave[1] && opening_fire[0] && opening_fire[1] && st.trigger_switches[2] && st.trigger_switches[3] && st.campaign_ai[4].town_active && st.campaign_ai[5].town_active && !st.players[3].victory_state, "both original timed attack cohorts fire real weapons, enter the human sector and activate their authored main programs after the opening phase");
+			if (scenario == 0) {
+				require(st.unit_counts[3][UnitTypes::Zerg_Hatchery] == 5 && st.campaign_ai[4].area_towns.empty() && st.campaign_ai[5].area_towns.empty() && !st.trigger_switches[8], "watched expansion commands and townpoint retries cannot create towns on still-occupied original human resource areas");
+			} else if (scenario == 7) {
+				unit_t* building = started_expansion();
+				require(building, "the original watched expansion supplies a genuinely unfinished paid Hatchery");
+				size_t town = functions.campaign_ai_unit_town(4, building);
+				auto original = std::find_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 4 && script.town == 0; });
+				require(original != st.campaign_ai_scripts.end(), "the original brown program supplies the isolated wait-buildstart boundary");
+				auto probe = *original;
+				probe.position = 17830; probe.wait = 0; probe.town = town; probe.area = st.campaign_ai[4].area_towns.at(town - 1).area;
+				st.campaign_ai_scripts.push_back(probe);
+				functions.progress_campaign_ai_scripts();
+				auto pending = [&](size_t position) { return std::any_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [&](const auto& script) { return script.owner == 4 && script.town == town && script.position == position && script.wait == 15; }); };
+				require(pending(17830), "the original wait-buildstart instruction waits without inventing a missing local Drone");
+				st.campaign_ai_scripts.erase(std::remove_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [&](const auto& script) { return script.owner == 4 && script.town == town && script.position == 17830 && script.wait == 15; }), st.campaign_ai_scripts.end());
+				unit_t* worker = functions.find_nearest_unit(building, functions.map_bounds(), [&](const unit_t* unit) { return unit->owner == 4 && functions.unit_is(unit, UnitTypes::Zerg_Drone) && functions.u_completed(unit) && functions.campaign_ai_unit_town(4, unit) == 0 && !functions.unit_dying(unit); });
+				require(worker, "an original main-town Drone supplies the positive construction-start boundary");
+				relocate(worker, building->sprite->position + xy(128, 0));
+				st.campaign_ai_scripts.push_back(probe);
+				functions.progress_campaign_ai_scripts();
+				require(pending(17839), "one actual local Drone releases wait-buildstart one and still blocks the original two-Drone boundary");
+			} else {
+				require(st.trigger_switches[8] && st.custom_score[3] == 30 && st.dead_unit_counts[3][UnitTypes::Zerg_Hatchery] == 4 && st.campaign_ai[4].area_towns.size() == 2 && st.campaign_ai[5].area_towns.size() == 2, "the original four-outpost collapse and paid watched expansions establish the thirty-scientist objective and score");
+				for (int owner : {4, 5}) for (const auto& town : st.campaign_ai[owner].area_towns) require(town.resource_area > 0 && functions.is_in_bounds(town.home, st.locations.at(8).area), "each new town retains its watched resource identity inside the authored human sector");
+				if (scenario == 3 || scenario == 4) {
+					a_vector<unit_t*> scientists;
+					for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Civilian) && !functions.unit_dying(unit)) scientists.push_back(unit);
+					require(scientists.size() == 30, "the original scientist cohort retains all thirty actors before the isolated ending");
+					unit_id last = functions.get_unit_id(scientists.front());
+					for (size_t index = 1; index != scientists.size(); ++index) functions.kill_unit(scientists[index]);
+					for (int tick = 0; tick != 256 && st.custom_score[3] != 1; ++tick) step();
+					require(st.custom_score[3] == 1 && !st.players[3].victory_state && st.unit_counts[6][UnitTypes::Terran_Command_Center] == 1, "one surviving original scientist blocks victory and produces the exact remaining-scientist score while UED buildings remain alive");
+					unit_t* shooter = functions.get_unit(hunter);
+					unit_t* target = functions.get_unit(last);
+					require(shooter && target, "the original protected Hydralisk and final scientist retain their identities");
+					relocate(shooter, target->sprite->position + xy(64, 0));
+					functions.set_unit_hp(target, fp8::integer(1));
+					functions.issue_order(shooter, false, shooter->unit_type->attack_unit, {target->sprite->position, target});
+					for (int tick = 0; tick != 1600 && !st.trigger_switches[9]; ++tick) {
+						unit_t* current = functions.get_unit(last);
+						if (current && !functions.unit_dying(current)) functions.set_unit_hp(current, fp8::integer(1));
+						step();
+					}
+					require(st.trigger_switches[9] && st.killed_unit_counts[3][UnitTypes::Terran_Civilian] >= 1 && !st.players[3].victory_state, "a real original Hydralisk weapon kill of the final scientist arms the source ending before its full five-second wait");
+					if (scenario == 4) {
+						a_vector<unit_t*> victims;
+						for (unit_t* unit : ptr(st.player_units[3])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+						for (unit_t* unit : victims) functions.kill_unit(unit);
+					}
+					for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+					require(st.players[3].victory_state >= 3 && st.custom_score[3] == 0 && st.alliances[6][3] && !st.alliances[4][5] && !st.alliances[5][4] && !st.alliances[6][4], "zero scientists, source coalition changes and the complete original ending win even after post-objective human base loss");
+				} else if (scenario == 5) {
+					a_vector<unit_id> cohort;
+					a_vector<unit_t*> victims;
+					for (int owner : {4, 5, 6}) for (unit_t* unit : ptr(st.player_units[owner])) {
+						cohort.push_back(functions.get_unit_id(unit));
+						if (functions.unit_is(unit, owner == 6 ? UnitTypes::Terran_Marine : UnitTypes::Zerg_Hydralisk) && !functions.unit_dying(unit)) victims.push_back(unit);
+					}
+					for (unit_t* unit : victims) functions.kill_unit(unit);
+					bool produced[3] = {}, fired[3] = {}, sunken = false;
+					for (int tick = 0; tick != 36000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2] && sunken); ++tick) {
+						step();
+						for (int index = 0; index != 3; ++index) {
+							int owner = index + 4;
+							unit_t* target = functions.get_unit(targets.at(index));
+							require(target && target->owner == 3 && functions.unit_is(target, UnitTypes::Zerg_Drone), "each paid Fury combat target retains its generation-safe native identity");
+							if (!fired[index] && tick % 128 == 0) {
+								unit_t* attacker = nullptr;
+								if (owner == 6) attacker = find(6, UnitTypes::Terran_Barracks);
+								else for (const auto* party : {&st.campaign_ai[owner].attack_party, &st.campaign_ai[owner].attacking}) {
+									for (unit_id id : *party) { unit_t* unit = functions.get_unit(id); if (unit && !functions.unit_dying(unit) && !functions.u_flying(unit) && functions.unit_or_subunit_ground_weapon(unit)) { attacker = unit; break; } }
+									if (attacker) break;
+								}
+								if (attacker) relocate(target, attacker->sprite->position + xy(128, 0));
+							}
+							for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+								if (functions.unit_is(unit, owner == 6 ? UnitTypes::Terran_Marine : UnitTypes::Zerg_Hydralisk) && functions.u_completed(unit) && std::find(cohort.begin(), cohort.end(), functions.get_unit_id(unit)) == cohort.end()) produced[index] = true;
+								if (unit->ground_weapon_cooldown || unit->air_weapon_cooldown) fired[index] = true;
+								if (owner != 6 && functions.unit_is(unit, UnitTypes::Zerg_Sunken_Colony) && functions.u_completed(unit) && functions.campaign_ai_unit_town(owner, unit) > 0) sunken = true;
+							}
+						}
+					}
+					require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2] && sunken, "both original Zerg mains and UED defense produce paid replacement fighters and native weapon fire, including a real watched-town Sunken morph");
+				}
+			}
+		}
+		printf("Fury of the Swarm original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void true_colors_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 8; ++scenario) {
 		game_player player(load_data_file);
@@ -4599,7 +4773,10 @@ static void chain_beast_mission_cases(data_loading::data_files_loader<>& load_da
 			require(functions.xy_length(torrasque->sprite->position - origin) > 32, "the original Junkyard Dog program actually moves the source-created Torrasque");
 			unit_t* target = find(6, UnitTypes::Terran_SCV);
 			require(target, "an original SCV supplies a protected native Torrasque weapon target");
-			relocate(target, torrasque->sprite->position);
+			relocate(torrasque, functions.map_bounds().to / 2);
+			functions.issue_order(target, false, functions.get_order_type(Orders::Stop), {});
+			relocate(target, torrasque->sprite->position + xy(64, 0));
+			require(functions.units_distance(torrasque, target) <= 64 && functions.is_reachable(torrasque->sprite->position, target->sprite->position), "the Torrasque weapon observation isolates a reachable nearby target outside the growing source AI bases");
 			bool fired = false;
 			for (int tick = 0; tick != 512 && !fired; ++tick) { step(); fired = torrasque->ground_weapon_cooldown != 0; }
 			require(fired, "Junkyard Dog acquires a nearby enemy and fires native Torrasque weapons");
@@ -6296,6 +6473,7 @@ int main(int argc, char** argv) {
 	bool kel_morian = campaign && argc > 4 && !strcmp(argv[4], "bwzerg03");
 	bool liberation_korhal = campaign && argc > 4 && strlen(argv[4]) == 9 && !strncmp(argv[4], "bwzerg04", 8) && argv[4][8] >= 'a' && argv[4][8] <= 'f';
 	bool true_colors = campaign && argc > 4 && !strcmp(argv[4], "bwzerg05");
+	bool fury_swarm = campaign && argc > 4 && !strcmp(argv[4], "bwzerg06");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6392,6 +6570,10 @@ int main(int argc, char** argv) {
 		}
 		if (true_colors) {
 			true_colors_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (fury_swarm) {
+			fury_swarm_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

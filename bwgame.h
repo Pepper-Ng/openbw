@@ -181,6 +181,12 @@ struct game_state {
 	std::array<type_indexed_array<bool, TechTypes>, 12> tech_available;
 
 	std::array<xy, 12> start_locations;
+	struct campaign_resource_area {
+		xy position;
+		a_vector<xy> minerals;
+		a_vector<xy> geysers;
+	};
+	a_vector<campaign_resource_area> campaign_resource_areas;
 
 	int max_unit_width;
 	int max_unit_height;
@@ -286,6 +292,8 @@ struct state_base_copyable {
 		struct area_town {
 			rect area;
 			xy home;
+			size_t resource_area = 0;
+			unit_id builder{};
 			type_indexed_array<std::pair<int, int>, UnitTypes> build_requests{};
 		};
 		a_vector<area_town> area_towns;
@@ -19322,9 +19330,8 @@ struct state_functions {
 					break;
 				} else if (opcode == 3) {
 					if (st.players.at(script.owner).controller != player_t::controller_computer_game) { script.position = 0; break; }
-					ai.home = (script.area.from + script.area.to) / 2;
+					if (!script.town) ai.home = (script.area.from + script.area.to) / 2;
 					ai.town_active = true;
-					script.town = 0;
 				} else if (opcode == 4) {
 					if (st.players.at(script.owner).controller != player_t::controller_computer_game) { script.position = 0; break; }
 					auto existing = std::find_if(ai.area_towns.begin(), ai.area_towns.end(), [&](const auto& town) { return town.area.from == script.area.from && town.area.to == script.area.to; });
@@ -19349,13 +19356,14 @@ struct state_functions {
 				} else if (opcode == 8) {
 					const auto* tech = get_tech_type((TechTypes)read(2));
 					ai.tech_requests[tech->id] = read(1);
-				} else if (opcode == 9) {
+				} else if (opcode == 9 || opcode == 10) {
 					int amount = read(1);
 					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					int count = 0;
 					for (unit_t* unit : ptr(st.player_units[script.owner])) {
-						if (unit_dying(unit) || campaign_ai_type(unit->unit_type->id) != type->id || campaign_ai_unit_town(script.owner, unit) != script.town) continue;
-						if (u_completed(unit)) ++count;
+						if (unit_dying(unit) || campaign_ai_unit_town(script.owner, unit) != script.town) continue;
+						if (campaign_ai_type(unit->unit_type->id) == type->id && (opcode == 10 || u_completed(unit))) ++count;
+						else if (opcode == 10 && unit_is_egg(unit) && !unit->build_queue.empty() && campaign_ai_type(unit->build_queue.front()->id) == type->id) count += ut_two_units_in_one_egg(type) ? 2 : 1;
 					}
 					if (count < amount) { script.position = position; script.wait = 15; break; }
 				} else if (opcode == 11) {
@@ -19470,16 +19478,18 @@ struct state_functions {
 					int position = read(1);
 					xy home = script.town ? ai.area_towns.at(script.town - 1).home : ai.home;
 					if (position) {
+						bool expansion = script.town && ai.area_towns.at(script.town - 1).resource_area;
 						a_vector<unit_t*> resources;
 						for (unit_t* unit : ptr(st.visible_units)) {
 							if (unit_dying(unit)) continue;
+							if (expansion && !is_in_bounds(unit->sprite->position, script.area)) continue;
 							if (position == 1 ? !unit_is_mineral_field(unit) : !unit_is(unit, UnitTypes::Resource_Vespene_Geyser) && !unit_is_refinery(unit)) continue;
 							resources.push_back(unit);
 						}
 						std::stable_sort(resources.begin(), resources.end(), [&](const unit_t* a, const unit_t* b) { return xy_length(a->sprite->position - home) < xy_length(b->sprite->position - home); });
 						size_t index = position == 1 ? 0 : position - 2;
-						if (index >= resources.size()) error("campaign guard resource position %d unavailable", position);
-						home = resources[index]->sprite->position;
+						if (index < resources.size()) home = resources[index]->sprite->position;
+						else if (!expansion) error("campaign guard resource position %d unavailable", position);
 					}
 					ai.guards.push_back({type->id, home, {}});
 				}
@@ -19609,6 +19619,28 @@ struct state_functions {
 					xy position(x, y);
 					if (!is_in_bounds(position, map_bounds())) error("campaign AI nuclear target out of bounds");
 					try_campaign_ai_nuke(script.owner, &position);
+				}
+				else if (opcode == 111) {
+					size_t resource = read(1), target = read(2);
+					if (!resource || resource >= game_st.campaign_resource_areas.size() || target < 4 || target >= table) error("campaign watched resource area or program out of bounds");
+					if (std::any_of(ai.area_towns.begin(), ai.area_towns.end(), [&](const auto& town) { return town.resource_area == resource; })) continue;
+					xy home = game_st.campaign_resource_areas[resource].position;
+					bool occupied = false;
+					for (unit_t* unit : ptr(st.visible_units)) if (!unit_dying(unit) && u_grounded_building(unit) && ut_resource_depot(unit) && xy_length(unit->sprite->position - home) <= 640 && is_reachable(unit->sprite->position, home)) occupied = true;
+					if (occupied) continue;
+					if (ai.area_towns.size() >= 8 || st.campaign_ai_scripts.size() >= 64) error("campaign watched expansion limit exceeded");
+					state_base_copyable::campaign_ai_player::area_town town;
+					town.home = home; town.area = square_at(home, 480); town.resource_area = resource;
+					ai.area_towns.push_back(town);
+					auto child = script;
+					child.position = target; child.wait = 0; child.return_position = 0; child.killable = false;
+					child.town = ai.area_towns.size(); child.area = town.area;
+					st.campaign_ai_scripts.push_back(child);
+				}
+				else if (opcode == 112) {
+					size_t amount = read(1), target = read(2);
+					if (target < 4 || target >= table) error("campaign town-count jump out of bounds");
+					if (ai.area_towns.size() < amount) script.position = target;
 				}
 				else error("unsupported campaign AI opcode %d at %d", opcode, int(position));
 			}
@@ -19790,6 +19822,7 @@ struct state_functions {
 
 	size_t campaign_ai_unit_town(int owner, const unit_t* unit) const {
 		const auto& towns = st.campaign_ai.at(owner).area_towns;
+		if (ut_worker(unit)) for (size_t index = 0; index != towns.size(); ++index) if (towns[index].builder == get_unit_id(unit)) return index + 1;
 		for (size_t index = 0; index != towns.size(); ++index) if (is_in_bounds(unit->sprite->position, towns[index].area)) return index + 1;
 		return 0;
 	}
@@ -20223,6 +20256,10 @@ struct state_functions {
 		for (unit_t* producer : ptr(st.player_units[owner])) {
 			if (unit_dying(producer) || !u_completed(producer) || !producer->build_queue.empty() || campaign_ai_unit_town(owner, producer) != town) continue;
 			if (ut_building(type)) {
+				if (unit_is_zerg_building(producer) && unit_is_zerg_building(type) && unit_can_build(producer, type) && build_queue_push(producer, type)) {
+					set_unit_order(producer, get_order_type(Orders::ZergBuildingMorph));
+					return true;
+				}
 				if (ut_addon(type)) {
 					if (!ut_building(producer) || unit_is_building_addon(producer)) continue;
 					const auto* order = get_order_type(Orders::PlaceAddon);
@@ -20253,6 +20290,19 @@ struct state_functions {
 			} else if (ut_building(producer)) {
 				if (!unit_can_build(producer, type) || !build_queue_push(producer, type)) continue;
 				set_secondary_order(producer, get_order_type(Orders::Train));
+				return true;
+			}
+		}
+		if (town && ut_resource_depot(type) && st.campaign_ai[owner].area_towns.at(town - 1).resource_area) {
+			auto& expansion = st.campaign_ai[owner].area_towns.at(town - 1);
+			unit_t* assigned = get_unit(expansion.builder);
+			if (assigned && !unit_dying(assigned) && assigned->owner == owner && ut_worker(assigned)) return false;
+			unit_t* builder = find_nearest_unit(expansion.home, map_bounds(), [&](const unit_t* unit) {
+				return unit->owner == owner && ut_worker(unit) && !unit_dying(unit) && !us_hidden(unit) && u_completed(unit) && unit->build_queue.empty() && campaign_ai_unit_town(owner, unit) == 0 && is_reachable(unit->sprite->position, expansion.home) && unit_build_order_valid(unit, get_order_type(unit_is(unit, UnitTypes::Protoss_Probe) ? Orders::PlaceProtossBuilding : unit_is(unit, UnitTypes::Terran_SCV) ? Orders::PlaceBuilding : Orders::DroneStartBuild), type, owner);
+			});
+			if (builder) {
+				expansion.builder = get_unit_id(builder);
+				issue_order(builder, false, get_order_type(Orders::Move), {expansion.home, nullptr});
 				return true;
 			}
 		}
@@ -22867,6 +22917,62 @@ struct game_load_functions : state_functions {
 		return u;
 	}
 
+	void initialize_campaign_resource_areas() {
+		auto& areas = game_st.campaign_resource_areas;
+		areas.clear();
+		areas.push_back({});
+		for (size_t player = 0; player != 8; ++player) if (game_st.start_locations[player] != xy{}) {
+			game_state::campaign_resource_area area;
+			area.position = game_st.start_locations[player];
+			areas.push_back(area);
+		}
+		struct resource { unit_t* unit; bool mineral; bool assigned = false; };
+		a_vector<resource> resources;
+		for (unit_t* unit : ptr(st.visible_units)) if (!unit_dying(unit) && (unit_is_mineral_field(unit) || unit_is(unit, UnitTypes::Resource_Vespene_Geyser) || unit_is_refinery(unit))) resources.push_back({unit, unit_is_mineral_field(unit)});
+		auto member = [&](const resource& resource, xy position) {
+			return !resource.assigned && xy_length(resource.unit->sprite->position - position) <= (resource.mineral ? 640 : 896) && is_reachable(resource.unit->sprite->position, position);
+		};
+		auto add = [&](game_state::campaign_resource_area& area, resource& resource) {
+			(resource.mineral ? area.minerals : area.geysers).push_back(resource.unit->sprite->position);
+			resource.assigned = true;
+		};
+		for (size_t index = 1; index != areas.size(); ++index) for (auto& resource : resources) if (member(resource, areas[index].position)) add(areas[index], resource);
+		for (bool minerals : {false, true}) for (;;) {
+			resource* seed = nullptr;
+			int best = -1;
+			for (auto& candidate : resources) {
+				if (candidate.assigned || candidate.mineral != minerals) continue;
+				int score = 1;
+				for (const auto& resource : resources) if (member(resource, candidate.unit->sprite->position)) score += std::min(4, std::max(0, resource.unit->building.resource.resource_count) / 500 + 1);
+				if (score > best) { best = score; seed = &candidate; }
+			}
+			if (!seed) break;
+			xy sum{};
+			int count = 0;
+			for (const auto& resource : resources) if (member(resource, seed->unit->sprite->position)) { sum += resource.unit->sprite->position; ++count; }
+			if (!count) error("empty campaign resource cluster");
+			xy center = sum / count;
+			resource* nearest = seed;
+			int distance = std::numeric_limits<int>::max();
+			for (auto& resource : resources) if (resource.mineral && member(resource, seed->unit->sprite->position)) {
+				int current = xy_length(resource.unit->sprite->position - center);
+				if (current < distance) { distance = current; nearest = &resource; }
+			}
+			xy origin = nearest->unit->sprite->position;
+			game_state::campaign_resource_area area;
+			xy from = origin, to = origin;
+			for (auto& resource : resources) if (member(resource, origin)) {
+				xy position = resource.unit->sprite->position;
+				from.x = std::min(from.x, position.x); from.y = std::min(from.y, position.y);
+				to.x = std::max(to.x, position.x); to.y = std::max(to.y, position.y);
+				add(area, resource);
+			}
+			area.position = (from + to) / 2;
+			if (areas.size() >= 251) error("campaign resource-area limit exceeded");
+			areas.push_back(area);
+		}
+	}
+
 	void create_starting_units(int owner, xy position, race_t race) {
 
 		const unit_type_t* resource_depot_type;
@@ -23693,6 +23799,7 @@ struct game_load_functions : state_functions {
 			}
 		}
 
+		if (use_map_settings) initialize_campaign_resource_areas();
 		if (initial_processing) {
 			process_frame();
 			process_frame();

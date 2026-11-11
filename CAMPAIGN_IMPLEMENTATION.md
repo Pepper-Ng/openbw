@@ -379,6 +379,10 @@ Expose required support through the existing runtime capability mechanism and co
 
 For a computer Lurker encounter, verify actual native burrowing and weapon fire before accepting actor placement as combat evidence. Preserve explicit Move destinations across native Unburrow transitions. Keep autonomous campaign policy separate from human control and melee bots.
 
+For watched expansions, initialize resource-area identities once before initial frames. Preserve authored start-slot ordering, the unused zero index and stable resource traversal. Verify every watched ID against its actual source region; later mining must not change its identity. Label scanner or placement approximations explicitly.
+
+Test occupied-area refusal after the parent programs become active. Then observe real migrant workers, paid resource-depot construction and local production. Construction-start waits count actual units and started queues; they must not invent missing workers. Use native building-morph orders and costs for upgraded Zerg bases and colonies.
+
 - Extend `start_campaign_ai_script`, `progress_campaign_ai_scripts` or the owning native helper, rather than scripting mission-specific waves.
 - Keep town/area-town production counts separate from player-wide military state.
 - Count pending construction, training and two-unit eggs. Apply defined caps before spending, including a zero cap.
