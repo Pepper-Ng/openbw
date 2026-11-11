@@ -61,7 +61,7 @@ Identify the stable public ID, source request, campaign edition and chronologica
 - The unused original archive prototypes `terran07` and `terran10` are not shipping mission aliases.
 - Expansion public `bwprotossNN` maps to `campaign\expprotoss\protossNN\staredit\scenario.chk`.
 - Expansion public `bwterranNN` maps to `campaign\expterran\terranNN\staredit\scenario.chk`.
-- Another expansion episode needs its own verified path mapping.
+- Expansion public `bwzergNN` maps to `campaign\expzerg\zergNN\staredit\scenario.chk`.
 
 Keep canonical titles in catalogue metadata. Preserve legacy scenario name strings.
 
@@ -409,6 +409,8 @@ For a narrow new opcode, add an isolated assertion as well as the original missi
 - Preserve local play when progress persistence fails, with the existing user-visible failure state.
 
 ## 7. Wire Every Catalogue Surface
+
+Goal-score leaderboards use native custom score and a remaining target, including zero targets. Keep the score, kill-count and ordinary unit-count sources distinct when sharing their presentation.
 
 The offline profile already exists from stage 4. Finish the runtime/test wiring, then expose the verified mission in the UI. Check each row:
 

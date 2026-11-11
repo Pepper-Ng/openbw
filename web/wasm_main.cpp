@@ -297,7 +297,7 @@ OPENBW_EXPORT(openbw_mission_leaderboard) const char* openbw_mission_leaderboard
 		int controller = g_ui->st.players[owner].controller;
 		if (controller != player_t::controller_occupied && !(g_ui->mission_leaderboard_computers && controller == player_t::controller_computer_game)) continue;
 		int count = g_ui->mission_leaderboard_score == 7 ? g_ui->st.custom_score[owner] : g_ui->mission_leaderboard_kills ? g_ui->st.killed_unit_counts[owner][(UnitTypes)g_ui->mission_leaderboard_unit] : g_ui->trigger_command_count(g_ui->st, owner, owner, g_ui->mission_leaderboard_unit, true);
-		if (g_ui->mission_leaderboard_kills) count = std::max(0, g_ui->mission_leaderboard_goal - count);
+		if (g_ui->mission_leaderboard_remaining) count = std::max(0, g_ui->mission_leaderboard_goal - count);
 		result += format("%d\t%d\n", owner, count);
 	}
 	return result.c_str();

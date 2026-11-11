@@ -20468,7 +20468,7 @@ struct state_functions {
 		switch (type) {
 		case 1: case 2: case 3: case 4: case 5: case 6: case 7: case 8:
 		case 9: case 10: case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 21: case 22: case 23: case 24: case 25: case 26: case 28: case 30: case 31:
-		case 27: case 32: case 36: case 38: case 39: case 41: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 57:
+		case 27: case 32: case 36: case 37: case 38: case 39: case 41: case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 57:
 			return true;
 		default:
 			return false;
@@ -20535,7 +20535,8 @@ struct state_functions {
 			on_trigger_action(owner, a);
 			return true;
 		case 21: // leaderboard score
-			if (a.extra_n != 7) error("unsupported leaderboard score type %d", a.extra_n);
+		case 37: // leaderboard goal score
+			if (a.extra_n != 7 || (a.type == 37 && a.group2_n < 0)) error("unsupported leaderboard score type or goal %d", a.extra_n);
 			on_trigger_action(owner, a);
 			return true;
 		case 36: // leaderboard goal kills

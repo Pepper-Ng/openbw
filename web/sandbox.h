@@ -339,6 +339,7 @@ struct play_ui : ui_functions {
 	int mission_leaderboard_score = -1;
 	int mission_leaderboard_goal = 0;
 	bool mission_leaderboard_kills = false;
+	bool mission_leaderboard_remaining = false;
 	int mission_leaderboard_title = 0;
 	bool mission_leaderboard_computers = true;
 	struct mission_event {
@@ -418,13 +419,15 @@ struct play_ui : ui_functions {
 			mission_leaderboard_score = -1;
 			mission_leaderboard_goal = action.type == 36 ? action.group2_n : 0;
 			mission_leaderboard_kills = action.type == 36;
+			mission_leaderboard_remaining = action.type == 36;
 			mission_leaderboard_title = action.string_index;
 		}
-		if (action.type == 21) {
+		if (action.type == 21 || action.type == 37) {
 			mission_leaderboard_unit = -1;
 			mission_leaderboard_score = action.extra_n;
-			mission_leaderboard_goal = 0;
+			mission_leaderboard_goal = action.type == 37 ? action.group2_n : 0;
 			mission_leaderboard_kills = false;
+			mission_leaderboard_remaining = action.type == 37;
 			mission_leaderboard_title = action.string_index;
 		}
 		if (action.type == 30) mission_speech_muted = true;

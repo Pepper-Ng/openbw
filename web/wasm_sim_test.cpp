@@ -3926,6 +3926,94 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void vile_disruption_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Zergling] == 2 && st.unit_counts[0][UnitTypes::Hero_Hunter_Killer] + st.unit_counts[3][UnitTypes::Hero_Hunter_Killer] == 6 && st.unit_counts[1][UnitTypes::Zerg_Hive] == 7 && !st.building_counts[3], "Vile Disruption preserves two original Zerglings, six rescuable Hunter Killers and seven neutral Hives without a generic base");
+		a_vector<unit_id> hunters, hives;
+		for (int owner : {0, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, UnitTypes::Hero_Hunter_Killer)) hunters.push_back(functions.get_unit_id(unit));
+		for (unit_t* unit : ptr(st.player_units[1])) if (functions.unit_is(unit, UnitTypes::Zerg_Hive)) hives.push_back(functions.get_unit_id(unit));
+		auto step = [&]() {
+			for (int owner : {1, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit) && (unit->unit_type->group_flags & GroupFlags::Men || functions.unit_is(unit, UnitTypes::Zerg_Hive))) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			functions.next_frame();
+		};
+		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Vile Disruption outcome actors use legal native placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(!st.current_minerals[3] && !st.current_gas[3] && st.unit_counts[3][UnitTypes::Hero_Hunter_Killer] == 6 && !st.players[3].victory_state && st.campaign_ai_scripts.empty(), "natural proximity rescues all six original Hunter Killers without resources, replacement actors or a melee AI");
+		for (unit_id id : hunters) require(functions.get_unit(id) && functions.get_unit(id)->owner == 3, "the opening retains each original Hunter Killer identity");
+		unit_t* actor = functions.get_unit(hunters.front());
+		if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[3])) if (unit->unit_type->group_flags & GroupFlags::Men) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 512 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && !st.dead_unit_counts[1][UnitTypes::Zerg_Hive], "loss of the whole original fighting force independently causes source defeat");
+		} else if (scenario == 2) {
+			functions.kill_unit(functions.get_unit(hives.front()));
+			for (int tick = 0; tick != 4000 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && st.dead_unit_counts[1][UnitTypes::Zerg_Hive] == 1, "loss of any neutral original Hive runs the original paused defeat");
+		} else {
+			const size_t areas[] = {4, 5, 7, 9, 11, 15, 84};
+			const size_t approaches[] = {36, 156, 157, 88, 218, 86, 217};
+			int stages = scenario == 0 ? 1 : scenario == 3 ? 1 : 7;
+			bool source_fire = false;
+			for (int stage = 0; stage != stages; ++stage) {
+				relocate(actor, center(approaches[stage]));
+				for (int tick = 0; tick != 256; ++tick) step();
+				unit_t* hive = functions.find_nearest_unit(center(areas[stage]), st.locations.at(areas[stage] - 1).area, [&](const unit_t* unit) { return functions.unit_is(unit, UnitTypes::Zerg_Hive); });
+				require(hive && hive->owner == 1, "each rescue gate uses its own original neutral Hive");
+				unit_id id = functions.get_unit_id(hive);
+				relocate(actor, hive->sprite->position + xy(96, 0));
+				for (int tick = 0; tick != 1600 && (hive->owner != 3 || st.custom_score[3] < stage + 1); ++tick) step();
+				require(functions.get_unit(id) == hive && hive->owner == 3 && st.custom_score[3] == stage + 1 && !st.players[3].victory_state, "each authored rescue transfers the same Hive and advances the exact rescued-Hive custom score once");
+				for (int tick = 0; tick != 256; ++tick) {
+					step();
+					for (int owner : {4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) source_fire = source_fire || unit->ground_weapon_cooldown || unit->air_weapon_cooldown;
+				}
+				if (stage == 0 && scenario == 3) {
+					functions.kill_unit(hive);
+					for (int tick = 0; tick != 4000 && !st.players[3].victory_state; ++tick) step();
+					require(st.players[3].victory_state == 2 && st.dead_unit_counts[3][UnitTypes::Zerg_Hive] == 1, "a rescued Hive still participates in the original global Hive-loss defeat rule");
+				}
+			}
+			if (scenario == 0) require(source_fire && st.unit_counts[3][UnitTypes::Zerg_Zergling] >= 8 && st.unit_counts[3][UnitTypes::Zerg_Hive] == 1, "the first original rescue creates its six Zergling reinforcements while source-driven attackers fire native weapons");
+			if (scenario == 4) {
+				for (int tick = 0; tick != 4000 && !st.trigger_switches[55] && !st.players[3].victory_state; ++tick) step();
+				printf("Vile Disruption finale: score=%d hives=%d flags=%d/%d/%d outcome=%d\n", st.custom_score[3], st.unit_counts[3][UnitTypes::Zerg_Hive], st.trigger_switches[50], st.trigger_switches[19], st.trigger_switches[55], st.players[3].victory_state); fflush(stdout);
+				require(st.trigger_switches[50] && st.trigger_switches[19] && st.trigger_switches[55] && source_fire && !st.players[3].victory_state, "seven rescued Hives still require the complete original final reinforcement and enemy-wave sequence");
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : functions.find_units(st.locations.at(84).area)) if ((unit->owner == 4 || unit->owner == 5) && unit->unit_type->group_flags & GroupFlags::Men && !functions.unit_dying(unit)) victims.push_back(unit);
+				require(victims.size() > 1, "the final source sector contains original enemy-wave actors");
+				for (size_t i = 1; i < victims.size(); ++i) functions.kill_unit(victims[i]);
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(!st.players[3].victory_state, "one remaining enemy in the original final sector blocks victory even after every Hive is rescued");
+				for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) {
+					a_vector<unit_t*> remaining;
+					for (unit_t* unit : functions.find_units(st.locations.at(84).area)) if ((unit->owner == 4 || unit->owner == 5) && unit->unit_type->group_flags & GroupFlags::Men && !functions.unit_dying(unit)) remaining.push_back(unit);
+					for (unit_t* unit : remaining) functions.kill_unit(unit);
+					step();
+				}
+				require(st.players[3].victory_state >= 3 && !st.dead_unit_counts[3][UnitTypes::Zerg_Hive] && !st.dead_unit_counts[1][UnitTypes::Zerg_Hive], "the unchanged final-sector predicate completes Vile Disruption with all seven original Hives alive");
+			}
+		}
+		printf("Vile Disruption original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void chain_beast_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 9; ++scenario) {
 		game_player player(load_data_file);
@@ -5714,6 +5802,7 @@ int main(int argc, char** argv) {
 	bool emperors_flight = campaign && argc > 4 && !strcmp(argv[4], "bwterran06");
 	bool patriots_blood = campaign && argc > 4 && !strcmp(argv[4], "bwterran07");
 	bool chain_beast = campaign && argc > 4 && !strcmp(argv[4], "bwterran08");
+	bool vile_disruption = campaign && argc > 4 && !strcmp(argv[4], "bwzerg01");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5790,6 +5879,10 @@ int main(int argc, char** argv) {
 		}
 		if (chain_beast) {
 			chain_beast_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (vile_disruption) {
+			vile_disruption_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

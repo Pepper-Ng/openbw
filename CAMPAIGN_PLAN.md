@@ -5,7 +5,7 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first sixteen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete. Both Emperor's Fall variants occupy one story position, giving 46 logical missions and 47 scenarios.
+- All thirty original numbered StarCraft missions and the first seventeen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches Vile Disruption. Both Emperor's Fall variants occupy one story position, giving 47 logical missions and 48 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
 - The previous original-campaign gate passed sixty-six modes. The current hundred-mode expansion gate is recorded below.
@@ -243,11 +243,21 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - Loopback browser handlers verify briefing, Begin, objectives, save, return, Resume, defeat Retry and final victory progress. The menu shows 15 of 16 completed before the finale, and final victory hides Next. Test-origin storage is cleared afterward.
 - The loaded browser engine produces a nonblank 1280-by-800 framebuffer. The integrated browser was hidden, so this check does not claim visible-canvas or physical-device acceptance.
 
+### Brood War 17: Vile Disruption
+
+- Public `bwzerg01` preserves `campaign\expzerg\zerg01\staredit\scenario.chk`, SHA-256 `9f308010673e284524a98138aef2a21a96fa135cd2a5360b5a4d04914985fe55`: format 205, 247 UNIT records, 73 triggers, one briefing and 27 audio dependencies.
+- Its 28-file pack is 6781959 bytes, decoded 6780455 bytes, SHA-256 `98f447b520c7dc4a6d81c77bbeedb349b021389719d4ba8afb277c15e31ca5d8`. The original internal scenario title remains Untitled Scenario; catalogue metadata uses the canonical mission title.
+- Human Zerg slot 3 starts with two Zerglings and no base or funds. Initial processing naturally rescues the six nearby original Hunter Killers. Seven neutral original Hives form the authored rescue route.
+- Shared action 37 now supports the original custom-score goal leaderboard. Hives to Rescue starts at seven remaining, excludes computer rows and derives remaining progress from native custom score. Existing ordinary score and kill-goal boards retain their behavior.
+- Five fresh-map native cases pass: initial hero rescue and first-Hive reinforcement/combat; whole-force defeat; neutral-Hive death; rescued-Hive death; and the full seven-Hive route, exact per-Hive score, source reinforcements/final waves, remaining-enemy rejection and final-sector victory.
+- The source supplies no AI programs. Placed actors and original trigger-created units fire native weapons; no macro bot or replacement wave is added. Native outcome fixtures protect original Hives/army and relocate original actors. Normal-input recovery uses neither protection nor teleportation.
+- The browser-engine fixture preserves the original briefing, zero funds, six rescued Hunter Killers and original score-goal title/count. Normal Zergling movement reconstructs 1228 service ticks and one command batch in a fresh instance. The existing Dylarian custom-score recovery also passes.
+- Isolated loopback handlers load the correct briefing, Begin, original scoreboard and nonblank browser-engine framebuffer, then save, return and Resume. The menu shows 16 of 17 completed expansion missions. Test-origin storage is cleared afterward.
+
 ### Remaining Mission Implementations
 
-The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following ten numbered missions and its secret mission:
+The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-1. Vile Disruption.
 2. Reign of Fire.
 3. The Kel-Morian Combine.
 4. The Liberation of Korhal, including all six source variants, `zerg04a` through `zerg04f`, and the preceding mission's original branch selection.
