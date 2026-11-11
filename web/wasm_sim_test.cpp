@@ -3926,6 +3926,200 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void chain_beast_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 9; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[6].controller == player_t::controller_occupied && st.players[6].race == race_t::terran && st.unit_counts[6][UnitTypes::Terran_Marine] == 13 && st.unit_counts[6][UnitTypes::Terran_Medic] == 2 && st.unit_counts[6][UnitTypes::Terran_SCV] == 4 && st.unit_counts[7][UnitTypes::Special_Overmind] == 1 && st.unit_counts[7][UnitTypes::Special_Zerg_Beacon] == 4, "To Chain the Beast preserves the original Terran base, thirteen Marines, two Medics, Overmind and four Zerg beacons");
+		auto step = [&]() {
+			for (unit_t* unit : ptr(st.player_units[6])) if (!functions.unit_dying(unit)) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			functions.next_frame();
+		};
+		auto center = [&](size_t location) { const auto& area = st.locations.at(location - 1).area; return (area.from + area.to) / 2; };
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "finale outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[6] == 1500 && st.current_gas[6] == 300 && st.campaign_ai[0].town_active && st.campaign_ai[4].town_active && st.campaign_ai[5].town_active && st.campaign_ai[0].area_towns.size() == 1 && st.campaign_ai[4].area_towns.size() == 1 && st.campaign_ai[5].area_towns.size() == 1 && !st.players[6].victory_state && !st.trigger_switches[7], "the original opening grants 1500/300 and runs all three enemy main programs plus their area towns");
+		if (scenario == 0) {
+			for (int tick = 0; tick != 2048 && st.campaign_ai[4].guards.size() < 7; ++tick) step();
+			auto& ai = st.campaign_ai[4];
+			require(ai.guards.size() == 7 && !ai.guarded_regions.empty() && !ai.help_regions.empty() && std::any_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 4 && script.killable; }), "the original brown program registers resource-position guards, owned defense regions, allied help and its killable child");
+			xy home = ai.guards.front().home;
+			unit_t* minerals = functions.find_nearest_unit(home, functions.map_bounds(), [&](const unit_t* unit) { return functions.unit_is_mineral_field(unit); });
+			unit_t* gas = functions.find_nearest_unit(home, functions.map_bounds(), [&](const unit_t* unit) { return functions.unit_is(unit, UnitTypes::Resource_Vespene_Geyser) || functions.unit_is_refinery(unit); });
+			require(minerals && gas && ai.guards[2].home == minerals->sprite->position && ai.guards[3].home == gas->sprite->position && ai.guards[5].home == minerals->sprite->position && ai.guards[6].home == gas->sprite->position, "native guards use town center, the original mineral line and original gas site rather than collapsing all requested positions to town center");
+			functions.update_campaign_ai_regions(0);
+			for (const auto& region : ai.help_regions) require(st.campaign_ai[0].regions.at(region.index).defended, "an allied computer defends the original requested help regions");
+			for (size_t region : ai.guarded_regions) require(ai.regions.at(region).defended, "guard_all retains each source-owned region in the shared defense system");
+			int linked = 0;
+			for (unit_t* unit : ptr(st.player_units[4])) if (functions.unit_is_nydus(unit) && unit->building.nydus.exit && unit->building.nydus.exit->building.nydus.exit == unit) ++linked;
+			require(linked == 2, "both original brown Nydus Canals retain their authored reciprocal connection");
+			size_t help_region = ai.help_regions.front().index;
+			unit_t* target = find(6, UnitTypes::Terran_SCV);
+			const auto& region = st.game->regions.regions.at(help_region);
+			relocate(target, {region.center.x.integer_part(), region.center.y.integer_part()});
+			functions.update_campaign_ai_regions(4);
+			require(std::any_of(ai.help_regions.begin(), ai.help_regions.end(), [&](const auto& region) { return region.index == help_region && region.contested; }), "an enemy entering a requested building region marks the one-time help request as contested");
+			relocate(target, center(20));
+			functions.update_campaign_ai_regions(4);
+			require(std::none_of(ai.help_regions.begin(), ai.help_regions.end(), [&](const auto& region) { return region.index == help_region; }), "defending the requested region completes its one-time allied help request");
+		} else if (scenario == 1) {
+			a_vector<unit_t*> victims;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			for (int tick = 0; tick != 256 && !st.players[6].victory_state; ++tick) step();
+			require(st.players[6].victory_state == 2 && !st.trigger_switches[16], "losing all human buildings before securing the Overmind causes the original defeat");
+		} else if (scenario == 2 || scenario == 4) {
+			int owner = scenario == 2 ? 0 : 5;
+			unit_t* cerebrate = find(owner, UnitTypes::Special_Cerebrate);
+			unit_t* marine = find(6, UnitTypes::Terran_Marine);
+			unit_id colony{};
+			require(cerebrate && marine, "the original source Cerebrate and Marine remain available");
+			if (scenario == 2) {
+				unit_t* sunken = find(0, UnitTypes::Zerg_Sunken_Colony);
+				require(sunken && functions.u_invincible(sunken), "the orange colony starts with original trigger invincibility");
+				colony = functions.get_unit_id(sunken);
+				functions.set_unit_hp(sunken, fp8::integer(100));
+				relocate(marine, sunken->sprite->position + xy(64, 0));
+				functions.issue_order(marine, false, marine->unit_type->attack_unit, {sunken->sprite->position, sunken});
+				for (int tick = 0; tick != 64; ++tick) step();
+				require(functions.u_invincible(sunken) && sunken->hp >= fp8::integer(100), "ordinary weapons cannot bypass the original invulnerable colony gate while native Zerg regeneration continues");
+			}
+			relocate(marine, cerebrate->sprite->position + xy(128, 0));
+			functions.set_unit_hp(cerebrate, fp8::integer(1));
+			functions.issue_order(marine, false, marine->unit_type->attack_unit, {cerebrate->sprite->position, cerebrate});
+			for (int tick = 0; tick != 1600 && !st.trigger_switches[scenario == 2 ? 1 : 2]; ++tick) step();
+			require(st.trigger_switches[scenario == 2 ? 1 : 2] && st.killed_unit_counts[6][UnitTypes::Special_Cerebrate] == 1 && !st.players[6].victory_state, "a real original Marine weapon kill completes the correct Cerebrate gate without substituting for four Medics");
+			if (scenario == 2) {
+				unit_t* sunken = functions.get_unit(colony);
+				require(sunken && !functions.u_invincible(sunken), "the same original colony loses invincibility after its Cerebrate dies");
+				for (unit_t* unit : ptr(st.player_units[0])) if (functions.unit_is(unit, UnitTypes::Zerg_Sunken_Colony)) require(!functions.u_invincible(unit), "the authored Cerebrate gate clears colony invincibility");
+			} else {
+				for (int tick = 0; tick != 128; ++tick) step();
+				require(std::none_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.killable; }) && st.campaign_ai[4].area_towns.size() == 2 && st.campaign_ai[4].town_active && !st.players[6].victory_state, "the original red-Cerebrate switch starts TB8C, ends marked threads and retains brown's unmarked parent and towns");
+			}
+		} else if (scenario == 3) {
+			for (int tick = 0; tick != 16000 && !st.unit_counts[5][UnitTypes::Hero_Torrasque]; ++tick) step();
+			unit_t* torrasque = find(5, UnitTypes::Hero_Torrasque);
+			require(torrasque && st.current_frame >= 900 * 16 && st.trigger_switches[5] && torrasque->hp <= torrasque->unit_type->hitpoints / 2 + fp8::integer(1) && !st.players[6].victory_state, "the original fifteen-minute gate creates a real Torrasque with the authored fifty-percent hit points");
+			unit_id first = functions.get_unit_id(torrasque);
+			xy origin = torrasque->sprite->position;
+			for (int tick = 0; tick != 256; ++tick) step();
+			require(functions.xy_length(torrasque->sprite->position - origin) > 32, "the original Junkyard Dog program actually moves the source-created Torrasque");
+			unit_t* target = find(6, UnitTypes::Terran_SCV);
+			require(target, "an original SCV supplies a protected native Torrasque weapon target");
+			relocate(target, torrasque->sprite->position);
+			bool fired = false;
+			for (int tick = 0; tick != 512 && !fired; ++tick) { step(); fired = torrasque->ground_weapon_cooldown != 0; }
+			require(fired, "Junkyard Dog acquires a nearby enemy and fires native Torrasque weapons");
+			functions.kill_unit(torrasque);
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(!st.unit_counts[5][UnitTypes::Hero_Torrasque], "the source does not replace a killed Torrasque before its own cooldown");
+			for (int tick = 0; tick != 3000 && !st.unit_counts[5][UnitTypes::Hero_Torrasque]; ++tick) step();
+			require(find(5, UnitTypes::Hero_Torrasque) && !(functions.get_unit_id(find(5, UnitTypes::Hero_Torrasque)) == first), "the original score-driven cooldown creates a new Torrasque rather than reviving the same actor");
+		} else if (scenario == 5 || scenario == 6) {
+			action_state commands;
+			action_functions actions(st, commands);
+			unit_t* worker = find(6, UnitTypes::Terran_SCV);
+			unit_t* barracks = find(6, UnitTypes::Terran_Barracks);
+			const auto* academy = functions.get_unit_type(UnitTypes::Terran_Academy);
+			require(worker && barracks && actions.action_select(6, worker), "the original SCV can construct the native Medic prerequisite");
+			bool placed = false;
+			xy start = worker->sprite->position / 32 * 32;
+			for (int y = -256; y <= 256 && !placed; y += 32) for (int x = -256; x <= 256 && !placed; x += 32) {
+				xy position = start + xy(x, y) + academy->placement_size / 2;
+				if (functions.can_place_building(worker, 6, academy, position, false, false) && functions.is_reachable(worker->sprite->position, position)) {
+					xy tile = (position - academy->placement_size / 2) / 32;
+					placed = actions.action_build(6, functions.get_order_type(Orders::PlaceBuilding), academy, {size_t(tile.x), size_t(tile.y)});
+				}
+			}
+			require(placed, "an original SCV accepts legal paid Academy construction");
+			for (int tick = 0; tick != 2400 && !st.completed_unit_counts[6][UnitTypes::Terran_Academy]; ++tick) step();
+			require(st.completed_unit_counts[6][UnitTypes::Terran_Academy] == 1 && actions.action_select(6, barracks) && actions.action_train(6, functions.get_unit_type(UnitTypes::Terran_Medic)) && actions.action_train(6, functions.get_unit_type(UnitTypes::Terran_Medic)), "native paid Academy completion permits exactly two additional Medics from the original Barracks");
+			for (int tick = 0; tick != 1600 && st.completed_unit_counts[6][UnitTypes::Terran_Medic] < 4; ++tick) step();
+			require(st.completed_unit_counts[6][UnitTypes::Terran_Medic] == 4 && st.current_minerals[6] == 1250 && st.current_gas[6] == 250, "four real Medics include the two original actors plus two paid trainees");
+			a_vector<unit_id> medics;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_Medic)) medics.push_back(functions.get_unit_id(unit));
+			const size_t beacons[] = {13, 14, 16, 17};
+			unit_t* wrong = find(6, UnitTypes::Terran_Marine);
+			relocate(wrong, center(beacons[0]));
+			for (int tick = 0; tick != 64; ++tick) step();
+			require(st.unit_counts[6][UnitTypes::Special_Zerg_Beacon] == 0 && !st.trigger_switches[7], "a Marine cannot substitute for a Medic at an original Overmind beacon");
+			for (int index = 0; index != 3; ++index) {
+				relocate(functions.get_unit(medics[index]), center(beacons[index]));
+				for (int tick = 0; tick != 128 && (st.unit_counts[6][UnitTypes::Special_Zerg_Beacon] < index + 1 || functions.get_unit(medics[index])); ++tick) step();
+				require(st.unit_counts[6][UnitTypes::Special_Zerg_Beacon] == index + 1 && !functions.get_unit(medics[index]) && !st.dead_unit_counts[6][UnitTypes::Terran_Medic] && !st.trigger_switches[7] && !st.players[6].victory_state, "each original beacon removes one actual Medic without a death; three beacons cannot win");
+			}
+			relocate(functions.get_unit(medics[3]), center(beacons[3]));
+			for (int tick = 0; tick != 256 && !st.trigger_switches[16]; ++tick) step();
+			require(st.unit_counts[6][UnitTypes::Special_Zerg_Beacon] == 4 && st.trigger_switches[7] && st.trigger_switches[16] && !st.players[6].victory_state, "only the fourth real Medic arms the original full victory sequence and disables base-loss defeat");
+			if (scenario == 6) {
+				a_vector<unit_t*> victims;
+				for (unit_t* unit : ptr(st.player_units[6])) if (functions.ut_building(unit) && !functions.unit_dying(unit)) victims.push_back(unit);
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+			}
+			bool duran = false, kerrigan = false, dugalle = false;
+			for (int tick = 0; tick != 16000 && !st.players[6].victory_state; ++tick) {
+				step();
+				duran = duran || st.unit_counts[7][UnitTypes::Hero_Samir_Duran] > 0;
+				kerrigan = kerrigan || st.unit_counts[3][UnitTypes::Hero_Infested_Kerrigan] > 0;
+				dugalle = dugalle || st.unit_counts[2][UnitTypes::Hero_Norad_II] > 0;
+			}
+			require(st.trigger_switches[8] && st.trigger_switches[12] && st.trigger_switches[13] && st.trigger_switches[14] && st.trigger_switches[19] && !st.trigger_switches[17] && duran && kerrigan && dugalle && st.players[6].victory_state >= 3, "the complete original Cerebrate cleanup, Duran/Kerrigan/DuGalle conversation, departures and fleet battle reach Episode V victory even after post-capture base loss");
+		} else if (scenario == 7) {
+			a_vector<unit_id> original;
+			a_vector<unit_t*> victims, targets;
+			for (unit_t* unit : ptr(st.player_units[6])) if (functions.unit_is(unit, UnitTypes::Terran_SCV)) targets.push_back(unit);
+			for (int owner : {0, 4, 5}) for (unit_t* unit : ptr(st.player_units[owner])) {
+				original.push_back(functions.get_unit_id(unit));
+				if (functions.unit_is(unit, owner == 5 ? UnitTypes::Zerg_Mutalisk : UnitTypes::Zerg_Zergling) && !functions.unit_dying(unit)) victims.push_back(unit);
+			}
+			for (unit_t* unit : victims) functions.kill_unit(unit);
+			bool produced[3] = {}, positioned[3] = {}, fired[3] = {};
+			for (int tick = 0; tick != 42000 && !(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2]); ++tick) {
+				step();
+				for (int index = 0; index != 3; ++index) {
+					int owner = index == 0 ? 0 : index + 3;
+					if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+						unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+						if (attacker) { relocate(targets[index], attacker->sprite->position + xy(64, 0)); positioned[index] = true; }
+					}
+					for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+						if (functions.unit_is(unit, owner == 5 ? UnitTypes::Zerg_Mutalisk : UnitTypes::Zerg_Zergling) && functions.u_completed(unit) && std::find(original.begin(), original.end(), functions.get_unit_id(unit)) == original.end()) produced[index] = true;
+						if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+					}
+				}
+			}
+			require(produced[0] && produced[1] && produced[2] && fired[0] && fired[1] && fired[2], "all three original main programs replace fighters and fire native weapons within their authored long waits");
+		} else {
+			auto child = std::find_if(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.killable; });
+			require(child != st.campaign_ai_scripts.end(), "the original brown main program supplies a killable child");
+			auto marked = *child;
+			marked.owner = 0; marked.wait = 1234;
+			st.campaign_ai_scripts.push_back(marked);
+			functions.start_campaign_ai_script(4, 0x43384254, st.locations.at(7).area);
+			functions.progress_campaign_ai_scripts();
+			require(std::none_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.killable; }) && std::any_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 0; }) && std::any_of(st.campaign_ai_scripts.begin(), st.campaign_ai_scripts.end(), [](const auto& script) { return script.owner == 4; }), "the original Kill Thread command terminates marked sleeping threads across players while retaining all unmarked programs");
+		}
+		printf("To Chain the Beast original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void patriots_blood_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 6; ++scenario) {
 		game_player player(load_data_file);
@@ -5519,6 +5713,7 @@ int main(int argc, char** argv) {
 	bool emperors_fall_b = campaign && argc > 4 && !strcmp(argv[4], "bwterran05b");
 	bool emperors_flight = campaign && argc > 4 && !strcmp(argv[4], "bwterran06");
 	bool patriots_blood = campaign && argc > 4 && !strcmp(argv[4], "bwterran07");
+	bool chain_beast = campaign && argc > 4 && !strcmp(argv[4], "bwterran08");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -5591,6 +5786,10 @@ int main(int argc, char** argv) {
 		}
 		if (patriots_blood) {
 			patriots_blood_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (chain_beast) {
+			chain_beast_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

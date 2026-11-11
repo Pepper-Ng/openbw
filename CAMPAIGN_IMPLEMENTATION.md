@@ -433,6 +433,8 @@ For a fork, keep one public story ID in `campaignMissions` and define its assets
 
 Variant manifests and saves retain the public ID and require the canonical source filename in `variant`. Validate the variant, pack URL and pack hash together. A saved variant takes precedence over changed predecessor progress and URL pins during Resume. Retry pins the loaded variant. Missing branch information selects the original A route; unknown variants fail explicitly.
 
+Korhal's original victory triggers select Ground Zero after the Physics Labs objective and Birds of War after the Nuclear Silos objective. Preserve their simultaneous-completion ordering. These are one mission's alternative routes, not two sequential unlocks.
+
 Verify the stage-4 manifest's schema/content version, source hash, pack URL/size/hash, human slot/race, capabilities and per-file metadata. Reprepare after an extractor/profile change. Do not edit generated manifests to disguise a profile mismatch.
 
 ## 8. Prove Native Mission Behavior

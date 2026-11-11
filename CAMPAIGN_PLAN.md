@@ -5,10 +5,10 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first fifteen Brood War story missions are implemented in the catalogue. Episode IV is complete; the UED episode reaches Patriot's Blood. Both Emperor's Fall variants occupy one story position, giving 45 logical missions and 46 scenarios.
+- All thirty original numbered StarCraft missions and the first sixteen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete. Both Emperor's Fall variants occupy one story position, giving 46 logical missions and 47 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
-- The previous original-campaign gate passed sixty-six modes. The current ninety-eight-mode expansion gate is recorded below.
+- The previous original-campaign gate passed sixty-six modes. The current hundred-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
 - Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are pushed to `campaign`. Countdown (`63f3826`), UED First Strike (`9c2a933`) and The Dylarian Shipyards (`99513b4`) are also pushed as separate sentence-only mission commits without co-author trailers. Ruins of Tarsonis (`6e6e010`) and Assault on Korhal (`9ea1e39`) are pushed separately with the same message format. The remote branch was verified against local HEAD.
 - Emperor's Fall, including both variants (`0335d11`), Emperor's Flight (`e3a5217`) and Patriot's Blood (`ba26d4f`) are pushed as three separate sentence-only mission commits without co-author trailers. The remote `campaign` implementation tip was verified as `ba26d4f271e6e72e97c9fbe27b74354665c2f49c`. The 98-mode gate, original-source identities and isolated GUI checks passed before publication.
@@ -227,6 +227,42 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - The normal browser-engine opening runs unprotected. Five original transmissions, actual narration, Duran movement and a fresh-instance recovery of 1228 service ticks plus one command batch pass.
 - Isolated loopback GUI checks load the original briefing, run through the entrance fight, save at 1251 ticks, return to the menu and Resume the same mission. The saved force includes Duran, original Marines and Medics. Test-origin storage was cleared afterward.
 
+### Brood War 16: To Chain the Beast
+
+- Public `bwterran08` is the final Episode V mission. It preserves `campaign\expterran\terran08\staredit\scenario.chk`, SHA-256 `b1d19c2323564ba64c252c1d5ba4705ffd6fbc69f8ed3cf36936ecb0da8d4197`: format 205, 698 UNIT records, 61 triggers, one briefing and 23 audio dependencies.
+- Its 24-file pack is 10538214 bytes, decoded 10536774 bytes, SHA-256 `1044c945c0a9bedd4aaa2d8c0afb53362ef52a17b6d1a55d05eaeb3a0b08e541`. The scenario and narration remain unchanged.
+- Human Terran slot 6 starts with thirteen Marines, four SCVs, two Medics, the original base and 1500/300 resources. Three original enemy main programs and three area programs use their authored waits and funding.
+- Shared AI support adds owned-region guarding, one-time building-region help for allied computers, resource-position town guards, marked-thread termination and Junkyard Dog movement/combat. `TB8B` creates a killable child; `TB8C` stops marked threads across players while retaining unmarked programs.
+- [PyMS's command reference](https://github.com/poiuyqwert/PyMS/blob/master/Help/Programs/PyAI/Command_Reference.md) defines these operations and guard positions. The [Junkyard Dog reference](https://github.com/BoomerangAide/GPTP/blob/master/GPTP/hooks/orders/junkyarddog_order.cpp) supplies its 1024-2048-pixel roam distance, native target acquisition and ground timeout. Exact classic strategic placement and defense allocation remain comparison work.
+- Nine fresh-map cases pass. They verify the original opening, guards/help lifecycle, reciprocal pre-placed Nydus links, base-loss defeat, the orange Cerebrate's invulnerable-colony gate, the full fifteen-minute Torrasque activation and native weapon fire/replacement, and the red Cerebrate's thread-switch effect.
+- Capture cases construct an Academy with an original SCV and train two Medics through paid native commands. The resulting four Medics include the two source actors. A Marine cannot activate a beacon; three consumed Medics cannot win. The fourth transfers the final original beacon and arms the complete ending.
+- Original Medics are removed without deaths. The full ending kills the Cerebrates, stages Duran, Kerrigan and DuGalle, completes their conversation and departures, and runs the fleet battle into victory. Losing the human base after capture still reaches that authored victory.
+- Protected observation confirms paid replacement fighters and native weapon fire from all three main programs, including their original long waits. Matrices, relocated original targets and weakened Cerebrates are confined to native outcome fixtures.
+- Browser-engine initialization, narration and normal paid Marine production pass. A fresh instance reconstructs 1228 service ticks and one command batch with matching state. The original funds fall to 1450/300 while production remains in flight.
+- Loopback browser handlers verify briefing, Begin, objectives, save, return, Resume, defeat Retry and final victory progress. The menu shows 15 of 16 completed before the finale, and final victory hides Next. Test-origin storage is cleared afterward.
+- The loaded browser engine produces a nonblank 1280-by-800 framebuffer. The integrated browser was hidden, so this check does not claim visible-canvas or physical-device acceptance.
+
+### Remaining Mission Implementations
+
+The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following ten numbered missions and its secret mission:
+
+1. Vile Disruption.
+2. Reign of Fire.
+3. The Kel-Morian Combine.
+4. The Liberation of Korhal, including all six source variants, `zerg04a` through `zerg04f`, and the preceding mission's original branch selection.
+5. True Colors.
+6. Fury of the Swarm.
+7. Drawing of the Web.
+8. To Slay the Beast.
+9. The Reckoning.
+10. Omega.
+
+The secret mission **Dark Origin** also remains. Preserve its original conditional route from The Reckoning rather than exposing it as an unconditional numbered step.
+
+The optional original Terran tutorial **Boot Camp** is also outside the implemented catalogue. It is separate from the numbered story campaign.
+
+The [source map inventory](https://github.com/poiuyqwert/PyMS/blob/master/PyMS/Data/Mapdata.txt) confirms the six Liberation variants. The [named mission catalogue](https://github.com/kinopiowarrior/StarDroid/blob/main/app/src/main/java/org/openbw/androidtest/CampaignCatalog.java) provides the remaining canonical titles and archive roots. Audit each owned scenario before implementing its predicates or branch policy.
+
 ### Brood War UI And Release Verification
 
 - At the three-expansion-mission milestone, the rebuilt native/browser engines passed 72 modes: 33 native mission suites, 33 recorded-input recoveries and the six shared AI/combat, menu, commands, Protoss-selection, network and lobby modes. All 33 generated pack hashes matched their manifests; all 30 original hashes also matched the historical plan identities.
@@ -240,6 +276,8 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - After Emperor's Fall, Emperor's Flight and Patriot's Blood, all 98 release modes passed: 46 native scenario suites, 46 recorded-input recoveries and the six shared suites. The catalogue contains 45 story missions; the fork contributes two scenario assets and one story position.
 - Packer, native-test and browser-runtime binaries were rebuilt. All 46 pack identities and 848 manifest file hashes passed. Every scenario and audio file matched fresh extraction from the verified owned source archives byte-for-byte. Source/AI readers, source-download/cache/checksum/stall tests, signalling, grouped-mine placement, JavaScript syntax and whitespace checks also passed.
 - Loopback GUI outcome fixtures verify Next from Birds of War to Emperor's Flight and then Patriot's Blood. Returning from the final briefing retains Brood War, 14 of 15 completed story missions and fifteen mission rows. Both fork variants share one progress position. Test-origin storage was cleared afterward.
+- After To Chain the Beast, all 100 release modes passed: 47 native scenario suites, 47 recorded-input recoveries and the six shared suites. The catalogue contains 46 story missions and 47 scenario assets. Korhal's seven native branch cases and the variant menu/save/Retry routing remain passing.
+- All 47 pack identities and 872 manifest file hashes passed. Every scenario and narration file matched fresh extraction from verified owned source archives byte-for-byte. Source/AI readers, source download/cache/stall/checksum tests, signalling, grouped-mine placement, JavaScript syntax and whitespace checks passed. Packer, native-test and browser-engine binaries were rebuilt.
 - Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed at the three-mission milestone. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.

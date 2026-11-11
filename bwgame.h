@@ -254,6 +254,7 @@ struct state_base_copyable {
 		int owner;
 		size_t position;
 		bool broodwar = false;
+		bool killable = false;
 		int wait = 0;
 		size_t town = 0;
 		rect area;
@@ -289,6 +290,8 @@ struct state_base_copyable {
 		a_vector<area_town> area_towns;
 		struct valued_region { size_t index; bool contested; };
 		a_vector<valued_region> valued_regions;
+		a_vector<size_t> guarded_regions;
+		a_vector<valued_region> help_regions;
 		struct defense_request { int category; int amount; UnitTypes type; };
 		struct defense_region {
 			bool owned = false;
@@ -4945,6 +4948,22 @@ struct state_functions {
 		}
 	}
 
+	void order_JunkYardDog(unit_t* u) {
+		if (u->order_state == 0) {
+			direction_t direction = direction_from_index(lcg_rand(48, 0, 255));
+			int distance = lcg_rand(48, 1024, 2048);
+			u->order_target = {restrict_move_target_to_valid_bounds(u, u->sprite->position + to_xy(direction_xy(direction, distance))), nullptr};
+			set_unit_move_target(u, u->order_target.pos);
+			u->order_state = 1;
+			u->spell_cooldown = 255;
+		}
+		if (!attack_move_movement(u, false)) return;
+		if (u->main_order_timer) return;
+		u->main_order_timer = 15;
+		if (unit_is_at_move_target(u) || (!u_flying(u) && !u->spell_cooldown)) u->order_state = 0;
+		else attack_move_acquire_target(u, false);
+	}
+
 	void order_AttackUnit(unit_t* u) {
 		attack_unit_reacquire_target(u);
 		if (attack_unit_move_in_range(u)) {
@@ -8056,6 +8075,9 @@ struct state_functions {
 			break;
 		case Orders::AttackMove:
 			order_AttackMove(u);
+			break;
+		case Orders::JunkYardDog:
+			order_JunkYardDog(u);
 			break;
 		case Orders::InfestedCommandCenter:
 			order_InfestedCommandCenter(u);
@@ -19439,8 +19461,20 @@ struct state_functions {
 				else if (opcode == 61) {
 					const auto* type = get_unit_type(campaign_ai_type((UnitTypes)read(2)));
 					int position = read(1);
-					if (position || script.town) error("unsupported campaign guard position %d in town %d", position, int(script.town));
-					ai.guards.push_back({type->id, ai.home, {}});
+					xy home = script.town ? ai.area_towns.at(script.town - 1).home : ai.home;
+					if (position) {
+						a_vector<unit_t*> resources;
+						for (unit_t* unit : ptr(st.visible_units)) {
+							if (unit_dying(unit)) continue;
+							if (position == 1 ? !unit_is_mineral_field(unit) : !unit_is(unit, UnitTypes::Resource_Vespene_Geyser) && !unit_is_refinery(unit)) continue;
+							resources.push_back(unit);
+						}
+						std::stable_sort(resources.begin(), resources.end(), [&](const unit_t* a, const unit_t* b) { return xy_length(a->sprite->position - home) < xy_length(b->sprite->position - home); });
+						size_t index = position == 1 ? 0 : position - 2;
+						if (index >= resources.size()) error("campaign guard resource position %d unavailable", position);
+						home = resources[index]->sprite->position;
+					}
+					ai.guards.push_back({type->id, home, {}});
 				}
 				else if (opcode == 72) {
 					size_t target = read(2);
@@ -19486,6 +19520,25 @@ struct state_functions {
 					try_campaign_ai_nuke(script.owner, &position);
 				}
 				else if (opcode == 90) continue; // Original Harass Here is unused.
+				else if (opcode == 92 || opcode == 110) {
+					for (unit_t* unit : ptr(st.player_units[script.owner])) {
+						if (unit_dying(unit) || us_hidden(unit) || ut_turret(unit) || (opcode == 110 && !ut_building(unit))) continue;
+						size_t region = get_region_at(unit->sprite->position)->index;
+						if (opcode == 92) {
+							if (std::find(ai.guarded_regions.begin(), ai.guarded_regions.end(), region) == ai.guarded_regions.end()) ai.guarded_regions.push_back(region);
+						} else if (std::none_of(ai.help_regions.begin(), ai.help_regions.end(), [&](const auto& value) { return value.index == region; })) ai.help_regions.push_back({region, false});
+					}
+				}
+				else if (opcode == 97) {
+					for (auto& thread : st.campaign_ai_scripts) if (thread.killable) thread.position = 0;
+					script.position = 0;
+				}
+				else if (opcode == 98) script.killable = true;
+				else if (opcode == 101) {
+					a_vector<unit_t*> units;
+					for (unit_t* unit : find_units(script.area)) if (unit->owner == script.owner && !unit_dying(unit) && !us_hidden(unit) && !ut_building(unit) && !ut_turret(unit) && unit_can_move(unit)) units.push_back(unit);
+					for (unit_t* unit : units) issue_order(unit, false, get_order_type(Orders::JunkYardDog), {});
+				}
 				else if (opcode == 102) ai.next_nuke_frame = st.current_frame + ai.nuke_interval;
 				else if (opcode == 103) disruption_web((script.area.from + script.area.to) / 2, script.owner);
 				else if (opcode == 104) {
@@ -19664,6 +19717,11 @@ struct state_functions {
 				for (const auto* neighbor : region.non_walkable_neighbors) ai.regions[neighbor->index].defended = true;
 			}
 		}
+		for (size_t region : ai.guarded_regions) ai.regions.at(region).defended = true;
+		for (int ally = 0; ally != 8; ++ally) {
+			if (ally != owner && !st.alliances[owner][ally]) continue;
+			for (const auto& region : st.campaign_ai[ally].help_regions) ai.regions.at(region.index).defended = true;
+		}
 		for (int enemy_owner = 0; enemy_owner != 8; ++enemy_owner) {
 			if (enemy_owner == owner || st.alliances[owner][enemy_owner]) continue;
 			for (unit_t* enemy : ptr(st.player_units[enemy_owner])) {
@@ -19680,6 +19738,11 @@ struct state_functions {
 			}
 		}
 		if (ai.maximum_force) for (auto& region : ai.regions) for (int& needed : region.needed) needed = std::min(needed, ai.maximum_force);
+		ai.help_regions.erase(std::remove_if(ai.help_regions.begin(), ai.help_regions.end(), [&](auto& value) {
+			bool occupied = std::any_of(ai.regions.at(value.index).targets.begin(), ai.regions.at(value.index).targets.end(), [&](unit_id id) { return get_unit(id) != nullptr; });
+			if (occupied) value.contested = true;
+			return value.contested && !occupied;
+		}), ai.help_regions.end());
 		for (auto value = ai.valued_regions.begin(); value != ai.valued_regions.end();) {
 			auto& region = ai.regions.at(value->index);
 			bool occupied = std::any_of(region.targets.begin(), region.targets.end(), [&](unit_id id) { return get_unit(id) != nullptr; });
