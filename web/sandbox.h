@@ -337,6 +337,7 @@ struct play_ui : ui_functions {
 	int mission_objective_string = 0;
 	int mission_leaderboard_unit = -1;
 	int mission_leaderboard_score = -1;
+	int mission_leaderboard_resource = -1;
 	int mission_leaderboard_goal = 0;
 	bool mission_leaderboard_kills = false;
 	bool mission_leaderboard_remaining = false;
@@ -417,6 +418,7 @@ struct play_ui : ui_functions {
 		if (action.type == 17 || action.type == 36) {
 			mission_leaderboard_unit = action.extra_n;
 			mission_leaderboard_score = -1;
+			mission_leaderboard_resource = -1;
 			mission_leaderboard_goal = action.type == 36 ? action.group2_n : 0;
 			mission_leaderboard_kills = action.type == 36;
 			mission_leaderboard_remaining = action.type == 36;
@@ -425,9 +427,19 @@ struct play_ui : ui_functions {
 		if (action.type == 21 || action.type == 37) {
 			mission_leaderboard_unit = -1;
 			mission_leaderboard_score = action.extra_n;
+			mission_leaderboard_resource = -1;
 			mission_leaderboard_goal = action.type == 37 ? action.group2_n : 0;
 			mission_leaderboard_kills = false;
 			mission_leaderboard_remaining = action.type == 37;
+			mission_leaderboard_title = action.string_index;
+		}
+		if (action.type == 19) {
+			mission_leaderboard_unit = -1;
+			mission_leaderboard_score = -1;
+			mission_leaderboard_resource = action.extra_n;
+			mission_leaderboard_goal = 0;
+			mission_leaderboard_kills = false;
+			mission_leaderboard_remaining = false;
 			mission_leaderboard_title = action.string_index;
 		}
 		if (action.type == 30) mission_speech_muted = true;

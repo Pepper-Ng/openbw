@@ -3926,6 +3926,127 @@ static void legacy_xelnaga_mission_cases(data_loading::data_files_loader<>& load
 	}
 }
 
+static void kel_morian_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
+	for (int scenario = 0; scenario != 9; ++scenario) {
+		game_player player(load_data_file);
+		data_loading::mpq_file<> map_loader(map_file);
+		game_load_functions loader(player.st());
+		loader.setup_info.starting_minerals = 0;
+		loader.load_map(map_loader);
+		auto& st = player.st();
+		st.strict_triggers = true;
+		state_functions functions(st);
+		require(st.game->scenario_format == 205 && st.players[3].controller == player_t::controller_occupied && st.players[3].race == race_t::zerg && st.unit_counts[3][UnitTypes::Zerg_Drone] == 8 && st.unit_counts[3][UnitTypes::Zerg_Queen] == 1 && st.unit_counts[2][UnitTypes::Hero_Fenix_Dragoon] + st.unit_counts[3][UnitTypes::Hero_Fenix_Dragoon] == 1 && !st.building_counts[3], "Kel-Morian retains its original baseless Zerg army, eight Drones, one Queen and rescuable Fenix");
+		auto step = [&]() {
+			for (int owner : {2, 3}) for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) { unit->defensive_matrix_hp = fp8::integer(64000); unit->defensive_matrix_timer = 250; }
+			functions.next_frame();
+		};
+		auto find = [&](int owner, UnitTypes type) {
+			for (unit_t* unit : ptr(st.player_units[owner])) if (functions.unit_is(unit, type) && !functions.unit_dying(unit) && !functions.us_hidden(unit)) return unit;
+			return (unit_t*)nullptr;
+		};
+		auto relocate = [&](unit_t* unit, xy position) {
+			functions.unit_finder_remove(unit); functions.move_unit(unit, position);
+			auto placement = functions.find_unit_placement(unit, position, true);
+			require(placement.first, "Kel-Morian outcome actors use legal native destination placement");
+			functions.move_unit(unit, placement.second); functions.refresh_unit_position(unit);
+		};
+		for (int tick = 0; tick != 128; ++tick) step();
+		require(st.current_minerals[3] == 750 && !st.current_gas[3] && st.unit_counts[3][UnitTypes::Hero_Fenix_Dragoon] == 1 && !st.players[3].victory_state && !st.trigger_switches[0], "the original opening grants 750 minerals, naturally rescues Fenix and leaves base-loss defeat unarmed");
+		for (int owner : {0, 1, 4, 5, 6}) require(st.campaign_ai[owner].town_active, "each original Kel-Morian Terran main program activates");
+		auto next = [&]() -> const a_string& { require(st.next_scenario[3] > 0, "the source next-scenario record exists"); return st.game->map_strings.at(st.next_scenario[3] - 1); };
+		require(next() == "Zerg04a.scx", "the original default route precedes the optional infestation branches");
+		if (scenario < 6) {
+			unit_t* queen = find(3, UnitTypes::Zerg_Queen);
+			require(queen && functions.unit_can_use_tech(queen, functions.get_tech_type(TechTypes::Infestation)), "the original Queen can use native Infestation");
+			for (int index = 0; index != scenario; ++index) {
+				int owner = index == 0 ? 0 : index == 1 ? 1 : index + 2;
+				unit_t* cc = find(owner, UnitTypes::Terran_Command_Center);
+				require(cc, "each branch uses a different original enemy Command Center");
+				unit_id id = functions.get_unit_id(cc);
+				functions.set_unit_hp(cc, cc->unit_type->hitpoints / 2);
+				require(!functions.unit_can_be_infested(cc), "a Command Center at exactly fifty percent health is not infestible");
+				functions.set_unit_hp(cc, cc->unit_type->hitpoints * 49 / 100);
+				require(functions.unit_can_be_infested(cc), "the same original Command Center below fifty percent is infestible");
+				relocate(queen, cc->sprite->position);
+				functions.issue_order(queen, false, functions.get_order_type(Orders::CastInfestation), {cc->sprite->position, cc});
+				for (int tick = 0; tick != 1024 && !(cc->owner == 3 && functions.unit_is(cc, UnitTypes::Zerg_Infested_Command_Center) && !functions.us_hidden(queen)); ++tick) step();
+				require(functions.get_unit(id) == cc && cc->owner == 3 && functions.unit_is(cc, UnitTypes::Zerg_Infested_Command_Center) && st.completed_unit_counts[3][UnitTypes::Zerg_Infested_Command_Center] == index + 1 && (!st.players[3].victory_state || index == 4), "normal Queen infestation retains the actual original Command Center and adds exactly one owned infested base");
+			}
+			if (scenario < 5) {
+				st.current_minerals[3] = 9999;
+				for (int tick = 0; tick != 1600; ++tick) step();
+				require(!st.players[3].victory_state, "9999 banked minerals cannot satisfy the source ten-thousand-mineral objective");
+				st.current_minerals[3] = 10000;
+			}
+			for (int tick = 0; tick != 1600 && !st.players[3].victory_state; ++tick) step();
+			if (scenario == 5) require(st.current_minerals[3] == 10500, "infesting all five enemy Command Centers triggers the original 10500-mineral completion grant");
+			a_string expected = "Zerg04";
+			expected += char('a' + scenario);
+			expected += ".scx";
+			require(st.players[3].victory_state >= 3 && next() == expected, "the original mineral objective selects the matching zero-through-five-infested-base continuation");
+		} else if (scenario == 6) {
+			functions.kill_unit(find(3, UnitTypes::Hero_Fenix_Dragoon));
+			for (int tick = 0; tick != 3000 && !st.players[3].victory_state; ++tick) step();
+			require(st.players[3].victory_state == 2 && next() == "Zerg03.scx", "Fenix loss runs the original paused defeat and authored retry");
+		} else {
+			unit_t* worker = find(3, UnitTypes::Zerg_Drone);
+			const auto* type = functions.get_unit_type(UnitTypes::Zerg_Hatchery);
+			action_state commands;
+			action_functions actions(st, commands);
+			require(worker && actions.action_select(3, worker), "the original Kel-Morian Drone accepts normal building selection");
+			bool placed = false;
+			xy start = worker->sprite->position / 32 * 32;
+			for (int y = -320; y <= 320 && !placed; y += 32) for (int x = -320; x <= 320 && !placed; x += 32) {
+				xy tile = (start + xy(x, y)) / 32, position = tile * 32 + type->placement_size / 2;
+				if (functions.can_place_building(worker, 3, type, position, false, false) && functions.is_reachable(worker->sprite->position, position)) placed = actions.action_build(3, functions.get_order_type(Orders::DroneStartBuild), type, {size_t(tile.x), size_t(tile.y)});
+			}
+			require(placed, "native placement supplies a legal paid first Hatchery");
+			for (int tick = 0; tick != 3200 && !st.trigger_switches[0]; ++tick) step();
+			require(st.trigger_switches[0] && st.completed_unit_counts[3][UnitTypes::Zerg_Hatchery] == 1 && st.current_minerals[3] == 450 && !st.players[3].victory_state, "a completed original Drone-built Hatchery arms base-loss defeat and spends exactly three hundred minerals");
+			if (scenario == 7) {
+				functions.kill_unit(find(3, UnitTypes::Zerg_Hatchery));
+				for (int tick = 0; tick != 256 && !st.players[3].victory_state; ++tick) step();
+				require(st.players[3].victory_state == 2 && next() == "Zerg03.scx", "losing the final Zerg base after its arrival causes the independent original defeat");
+			} else {
+				for (int owner : {0, 1, 6}) require(st.campaign_ai[owner].attack_party.empty(), "the original mineral-pressure gates keep the three high-threshold programs idle below two thousand minerals");
+				st.current_minerals[3] = 9000;
+				a_vector<unit_t*> workers, victims;
+				a_vector<unit_id> originals;
+				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone)) workers.push_back(unit);
+				for (int owner : {0, 1, 4, 5, 6}) for (unit_t* unit : ptr(st.player_units[owner])) {
+					originals.push_back(functions.get_unit_id(unit));
+					if (functions.unit_is(unit, owner == 6 ? UnitTypes::Terran_Goliath : UnitTypes::Terran_Marine) && !functions.us_hidden(unit)) victims.push_back(unit);
+				}
+				for (unit_t* unit : victims) functions.kill_unit(unit);
+				bool produced[5] = {}, positioned[5] = {}, fired[5] = {};
+				for (int tick = 0; tick != 36000 && !(produced[0] && produced[1] && produced[2] && produced[3] && produced[4] && fired[0] && fired[1] && fired[2] && fired[3] && fired[4]); ++tick) {
+					step();
+					for (int index = 0; index != 5; ++index) {
+						int owner = index < 2 ? index : index + 2;
+						if (!positioned[index] && !st.campaign_ai[owner].attack_party.empty()) {
+							unit_t* attacker = functions.get_unit(st.campaign_ai[owner].attack_party.front());
+							if (attacker) { relocate(workers.at(index), attacker->sprite->position); positioned[index] = true; }
+						}
+						for (unit_t* unit : ptr(st.player_units[owner])) if (!functions.unit_dying(unit)) {
+							if (functions.unit_is(unit, owner == 6 ? UnitTypes::Terran_Goliath : UnitTypes::Terran_Marine) && functions.u_completed(unit) && std::find(originals.begin(), originals.end(), functions.get_unit_id(unit)) == originals.end()) produced[index] = true;
+							if (positioned[index] && (unit->ground_weapon_cooldown || unit->air_weapon_cooldown)) fired[index] = true;
+						}
+					}
+				}
+				for (int index = 0; index != 5; ++index) {
+					int owner = index < 2 ? index : index + 2;
+					printf("Kel-Morian AI owner %d: produced=%d positioned=%d fired=%d party=%d funds=%d/%d Marines=%d Goliaths=%d\n", owner, produced[index], positioned[index], fired[index], int(st.campaign_ai[owner].attack_party.size()), st.current_minerals[owner], st.current_gas[owner], st.unit_counts[owner][UnitTypes::Terran_Marine], st.unit_counts[owner][UnitTypes::Terran_Goliath]);
+				}
+				fflush(stdout);
+				require(produced[0] && produced[1] && produced[2] && produced[3] && produced[4] && fired[0] && fired[1] && fired[2] && fired[3] && fired[4], "all five original Terran programs replace fighters and fire native weapons within authored waits");
+			}
+		}
+		printf("The Kel-Morian Combine original mission case %d passed.\n", scenario);
+		fflush(stdout);
+	}
+}
+
 static void reign_fire_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
 	for (int scenario = 0; scenario != 8; ++scenario) {
 		game_player player(load_data_file);
@@ -5938,6 +6059,7 @@ int main(int argc, char** argv) {
 	bool chain_beast = campaign && argc > 4 && !strcmp(argv[4], "bwterran08");
 	bool vile_disruption = campaign && argc > 4 && !strcmp(argv[4], "bwzerg01");
 	bool reign_fire = campaign && argc > 4 && !strcmp(argv[4], "bwzerg02");
+	bool kel_morian = campaign && argc > 4 && !strcmp(argv[4], "bwzerg03");
 
 	auto load_data_file = data_loading::data_files_directory(data_dir);
 	game_player player(load_data_file);
@@ -6022,6 +6144,10 @@ int main(int argc, char** argv) {
 		}
 		if (reign_fire) {
 			reign_fire_mission_cases(load_data_file, map_file);
+			return 0;
+		}
+		if (kel_morian) {
+			kel_morian_mission_cases(load_data_file, map_file);
 			return 0;
 		}
 		original_campaign_availability_checks(player.st());

@@ -355,6 +355,8 @@ Distinguish a delivered airborne base from a landed base. Ground-only Bring regi
 
 ### Trigger Semantics And Clocks
 
+Classic Command uses all-unit counts for At Most and completed-unit counts for At Least/Exactly. Reign of Fire consequently loses if both starting Drones morph before any building completes. Preserve this verified original quirk; it is not an incomplete-building compatibility defect.
+
 - Stop condition/action lists at the first type-zero record and honor disabled flags.
 - Preserve append order and stable references when multiple TRIG sections exist. Test the native loader, not only the authoring parser.
 - Preserve Force/All Players/Current Player expansion, explicit slots, raw comparisons and resource Set/Add/Subtract boundaries.
@@ -413,6 +415,8 @@ For a narrow new opcode, add an isolated assertion as well as the original missi
 ## 7. Wire Every Catalogue Surface
 
 Goal-score leaderboards use native custom score and a remaining target, including zero targets. Keep the score, kill-count and ordinary unit-count sources distinct when sharing their presentation.
+
+Resource leaderboards report the current mineral/gas bank, not total gathered or custom score. Validate spending as well as accumulation. Kel-Morian's continuation is selected by owned Infested Command Center count after its mineral objective completes.
 
 The offline profile already exists from stage 4. Finish the runtime/test wiring, then expose the verified mission in the UI. Check each row:
 

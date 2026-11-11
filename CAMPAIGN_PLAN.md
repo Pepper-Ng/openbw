@@ -5,10 +5,10 @@ This document records coverage, decisions, mission evidence, publication history
 ## Status And Scope
 
 - Status updated: 2026-11-11.
-- All thirty original numbered StarCraft missions and the first eighteen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches Reign of Fire. Both Emperor's Fall variants occupy one story position, giving 48 logical missions and 49 scenarios.
+- All thirty original numbered StarCraft missions and the first nineteen Brood War story missions are implemented in the catalogue. Episodes IV and V are complete; Episode VI reaches The Kel-Morian Combine. Both Emperor's Fall variants occupy one story position, giving 49 logical missions and 50 scenarios.
 - Catalogue completion is an implementation milestone. Protected outcome tests, recorded-input recovery and GUI smoke checks do not establish thirty complete human victories or exact classic AI/difficulty.
 - The expansion framework and first three mission milestones were pushed in history through `befa0c7d508260b4bedff260fc889003cff79b4d`. Quest for Uraj (`0954594`) and The Battle of Braxis (`d29ec27`) are separate sentence-only commits without co-author trailers. Both are pushed to `campaign`, and the remote branch tip was verified.
-- The previous original-campaign gate passed sixty-six modes. The current hundred-mode expansion gate is recorded below.
+- The previous original-campaign gate passed sixty-six modes. The current 106-mode expansion gate is recorded below.
 - The authorized work branch is `campaign`; `sandbox`, merging and deployment have separate scope.
 - Return to Char (`8f50522`) and The Insurgent (`7dd9e25`) are pushed to `campaign`. Countdown (`63f3826`), UED First Strike (`9c2a933`) and The Dylarian Shipyards (`99513b4`) are also pushed as separate sentence-only mission commits without co-author trailers. Ruins of Tarsonis (`6e6e010`) and Assault on Korhal (`9ea1e39`) are pushed separately with the same message format. The remote branch was verified against local HEAD.
 - Emperor's Fall, including both variants (`0335d11`), Emperor's Flight (`e3a5217`) and Patriot's Blood (`ba26d4f`) are pushed as three separate sentence-only mission commits without co-author trailers. The remote `campaign` implementation tip was verified as `ba26d4f271e6e72e97c9fbe27b74354665c2f49c`. The 98-mode gate, original-source identities and isolated GUI checks passed before publication.
@@ -265,12 +265,23 @@ No blocking product questions are needed to follow this plan. The defaults are E
 - The unprotected browser-engine fixture waits for the original SCV, records normal Psi Emitter movement, captures both original Drones, and starts a paid Hatchery with one Drone left. It retains 550/200 resources and reconstructs 1779 service ticks plus two command batches in a fresh instance. Six original opening transmissions and narration pass. Egression and Quest for Uraj native outcomes and Egression input recovery also pass.
 - Isolated loopback handlers load the correct briefing, Begin, save the original opening, return and Resume. The menu shows 17 of 18 completed expansion missions. Test-origin storage is cleared afterward.
 
+### Brood War 19: The Kel-Morian Combine
+
+- Public `bwzerg03` preserves `campaign\expzerg\zerg03\staredit\scenario.chk`, SHA-256 `3d4db669c12a60a60ee7edcebcaf77ebc79fd2e30e2418dc37dcb2701efa8eb2`: format 205, 553 UNIT records, 23 triggers, one briefing and 24 audio dependencies.
+- Its 25-file pack is 8060632 bytes, decoded 8059176 bytes, SHA-256 `6d34ce83f2bb9b8908a7758fa570af7652ac56879aa945f5004929209b7b6b95`. Human Zerg slot 3 starts without a base, with eight Drones, the original army, one Queen and 750/0 resources. Nearby original Fenix naturally rescues to the human.
+- Shared support adds bounded single-active-subroutine AI call/return, enemy-ownership jumps, closest-enemy mineral/gas jumps and resource leaderboards. [PyMS's command reference](https://github.com/poiuyqwert/PyMS/blob/master/PyMS/FileFormats/AIBIN/CodeHandlers/CodeCommands.py) defines these operations. The original five main programs retain their common subroutine, waits and original funding.
+- Nine fresh-map cases pass. Six cases preserve the zero-through-five-infested-Command-Center routes, `Zerg04a.scx` through `Zerg04f.scx`. The original Queen infests actual original enemy Command Centers, retaining each actor. Exactly fifty-percent health rejects infestation; forty-nine percent permits it.
+- With enemy Command Centers remaining, 9999 banked minerals cannot win and exactly 10000 selects the matching source continuation. Infesting all five instead runs the original 10500-mineral completion grant and selects `Zerg04f.scx`. The route depends on owned Infested Command Centers, not the mineral amount above the victory threshold.
+- Separate cases cover Fenix-loss defeat, paid first-Hatchery construction and subsequent base-loss defeat, and replacement fighter production/native weapon fire from all five main programs. The production fixture raises the human bank to 9000, below victory, to exercise the source's 2000/4000/6000/8000-mineral pressure gates. Protected original Drone targets provide reachable combat observations.
+- Shared placement fixtures now check actual tile-snapped footprint centers before clicking. Normal Hatchery construction pays 300 of the original 750 minerals. Completing it activates the original current-bank resource leaderboard; a paid Larva-to-Drone morph leaves 400/0 and remains in flight.
+- Fresh-instance recovery reconstructs 3169 service ticks and two command batches. The scoreboard reports the current 400-mineral bank rather than custom score or total harvested. All six authored continuation filenames survive local victory-progress reloads; Liberation assets remain outside the implemented catalogue.
+- Isolated loopback handlers load the correct briefing, Begin, save the original opening, return and Resume. The menu shows 18 of 19 completed expansion missions. Menu layouts fit 1280-, 390- and 844-pixel widths. Test-origin storage is cleared afterward.
+
 ### Remaining Mission Implementations
 
 The thirty numbered original missions and Episodes IV/V are implemented. Episode VI still needs the following numbered missions and its secret mission:
 
-3. The Kel-Morian Combine.
-4. The Liberation of Korhal, including all six source variants, `zerg04a` through `zerg04f`, and the preceding mission's original branch selection.
+4. The Liberation of Korhal, including all six source variants, `zerg04a` through `zerg04f`, selected by the preceding mission's zero-through-five-infested-Command-Center outcome.
 5. True Colors.
 6. Fury of the Swarm.
 7. Drawing of the Web.
@@ -299,6 +310,9 @@ The [source map inventory](https://github.com/poiuyqwert/PyMS/blob/master/PyMS/D
 - Loopback GUI outcome fixtures verify Next from Birds of War to Emperor's Flight and then Patriot's Blood. Returning from the final briefing retains Brood War, 14 of 15 completed story missions and fifteen mission rows. Both fork variants share one progress position. Test-origin storage was cleared afterward.
 - After To Chain the Beast, all 100 release modes passed: 47 native scenario suites, 47 recorded-input recoveries and the six shared suites. The catalogue contains 46 story missions and 47 scenario assets. Korhal's seven native branch cases and the variant menu/save/Retry routing remain passing.
 - All 47 pack identities and 872 manifest file hashes passed. Every scenario and narration file matched fresh extraction from verified owned source archives byte-for-byte. Source/AI readers, source download/cache/stall/checksum tests, signalling, grouped-mine placement, JavaScript syntax and whitespace checks passed. Packer, native-test and browser-engine binaries were rebuilt.
+- After the first three Episode VI missions, all 106 release modes passed: 50 native scenario suites, 50 recorded-input recoveries and the six shared suites. All 50 pack identities and 962 manifest file hashes passed; each scenario and narration file matched fresh extraction from verified owned source archives byte-for-byte.
+- Packer, native-test and browser-engine binaries were rebuilt. Source/AI readers, source download/cache/stall/checksum checks, signalling, grouped-mine placement, JavaScript syntax and whitespace checks passed. Normal-input recovery covers the Psi Emitter capture, paid Hatchery construction, banked-resource spending and the preserved original branch filenames.
+- Loopback outcome fixtures verify Next from Vile Disruption to Reign of Fire and then The Kel-Morian Combine. Defeat Retry reloads Kel-Morian; briefing return retains Brood War and 18 of 19 completed. Test-origin storage is cleared afterward. Full normal-control victories, physical-device acceptance and exact classic strategic-AI comparison remain separate gates.
 - Bounded scenario/AI reader tests, source-download/cache/checksum/stall tests and JavaScript syntax checks passed at the three-mission milestone. Only the documented existing compiler warnings remain.
 - A fresh isolated Chromium context passed independent edition entry, StarCraft/Brood War switching, 30/3 mission totals, fresh sequential locks, and usable edition-selector bounds at 390- and 844-pixel widths.
 - Visible controls passed original Escape from Aiur briefing/Begin, save-on-return navigation preserving the Brood War edition, persistent Resume and resumed simulation. The context, browser and temporary local server were closed afterward; normal user progress was not touched.

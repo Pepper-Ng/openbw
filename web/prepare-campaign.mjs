@@ -56,6 +56,7 @@ const missions = {
   bwterran08: { title: 'To Chain the Beast', episode: 5, order: 8, scenarioHash: 'b1d19c2323564ba64c252c1d5ba4705ffd6fbc69f8ed3cf36936ecb0da8d4197', units: 698, triggers: 61, sounds: 23 },
   bwzerg01: { title: 'Vile Disruption', episode: 6, order: 1, scenarioHash: '9f308010673e284524a98138aef2a21a96fa135cd2a5360b5a4d04914985fe55', units: 247, triggers: 73, sounds: 27 },
   bwzerg02: { title: 'Reign of Fire', episode: 6, order: 2, scenarioHash: '32985e8804ca7e667c26a95b44f8c0f171586a899cd1acf0b6abb06a666309c3', units: 282, triggers: 78, sounds: 36 },
+  bwzerg03: { title: 'The Kel-Morian Combine', episode: 6, order: 3, scenarioHash: '3d4db669c12a60a60ee7edcebcaf77ebc79fd2e30e2418dc37dcb2701efa8eb2', units: 553, triggers: 23, sounds: 24 },
 };
 const variantProfiles = {
   bwterran05b: { scenarioHash: 'ef5270cc733291603cc1646dff1ce03f40dc310a6025d4ea99ebe53ff88d5a20', units: 468, triggers: 29, sounds: 26 },
