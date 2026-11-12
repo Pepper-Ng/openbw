@@ -16,7 +16,7 @@ const campaignSaves = () => campaignSaveModule ||= import('./campaign-saves.js?v
 // GLOBAL sed of the placeholder, which also rewrites comparisons that spell it out —
 // so test for the placeholder's underscores instead of matching it literally.
 const DEV = BUILD.startsWith('__') || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-const { createInterfaceOptions } = await import('./ui-options.js?v=' + (DEV ? Date.now() : BUILD));
+const { createInterfaceOptions, createGameMenu, shortcuts } = await import('./ui-options.js?v=' + (DEV ? Date.now() : BUILD));
 const { campaignVariants, resolveCampaignMission } = await import('./campaign-variants.js?v=' + (DEV ? Date.now() : BUILD));
 
 // Dev builds swap the favicon to the classic SC icon (prod keeps BW.ICO from the
@@ -107,6 +107,11 @@ async function mapHash(file) {
 
 const $ = (id) => document.getElementById(id);
 const interfaceOptions = createInterfaceOptions();
+const shortcutHint = id => {
+  const { bindings } = interfaceOptions.preferences.hotkeys;
+  const chord = Object.hasOwn(bindings, id) ? bindings[id] : shortcuts.GLOBAL_SHORTCUTS.find(entry => entry.id === id)?.key;
+  return chord ? shortcuts.formatChord(chord) : '';
+};
 const setBar = (f) => { $('bar').firstElementChild.style.width = (f * 100).toFixed(1) + '%'; };
 const setMsg = (m) => { $('msg').textContent = m; };
 
@@ -302,12 +307,6 @@ const SCANCODE = {
   ControlLeft: 224, ShiftLeft: 225, ControlRight: 228, ShiftRight: 229,
 };
 
-// A user-chosen key (KeyboardEvent.code) that acts exactly like Escape — for setups where
-// the physical Esc is awkward, and ahead of pointer-lock/fullscreen modes where the browser
-// reserves Esc for itself. Vim users' Caps Lock→Esc habit is the canonical example.
-let altEsc = '';
-try { altEsc = localStorage.getItem('openbw-alt-esc') || ''; } catch {}
-
 // View zoom: the engine renders at window/zoom and CSS upscales the canvas
 // (image-rendering: pixelated). 1x = native resolution, the default and minimum;
 // zooming in gives bigger, chunkier OG-style pixels. Pinch / Ctrl+wheel adjusts it.
@@ -451,31 +450,111 @@ function wireInput(canvas, x) {
   // left for the browser. The modifier keys themselves are always forwarded so the
   // engine can track held state (for select-all, shift-queue, group assign).
   const MOD_SC = new Set([224, 225, 228, 229]);
+  if (!x.openbw_shortcut_card || !x.openbw_activate_command)
+    throw new Error('This engine needs rebuilding for keyboard customization. Rebuild the browser engine and any optional bot modules.');
+  const physicalModifiers = new Set();
+  const heldShortcuts = new Map();
+  let capsLockState;
+  const setModifiers = (ctrl, shift) => {
+    x.openbw_key(ctrl ? 1 : 0, 0, 224); x.openbw_key(0, 0, 228);
+    x.openbw_key(shift ? 1 : 0, 0, 225); x.openbw_key(0, 0, 229);
+  };
+  const restoreModifiers = () => {
+    for (const scancode of MOD_SC) x.openbw_key(physicalModifiers.has(scancode) ? 1 : 0, 0, scancode);
+  };
+  wireInput.restoreModifiers = restoreModifiers;
+  const readShortcutText = pointer => {
+    const bytes = new Uint8Array(x.memory.buffer);
+    let end = pointer;
+    while (bytes[end]) end++;
+    return new TextDecoder().decode(bytes.subarray(pointer, end));
+  };
+  wireInput.shortcuts = () => {
+    const rows = shortcuts.commandShortcuts(readShortcutText(x.openbw_shortcut_card()));
+    const contextual = interfaceOptions.resolved.commands === 'contextual';
+    const visible = shortcuts.commandShortcuts(readShortcutText(x.openbw_card()))
+      .filter(row => !contextual || (row.label !== 'Move' && !(row.label === 'Stop' && row.fields[2] === '0')))
+      .map(row => row.command);
+    return { rows, visible };
+  };
+  const shortcutError = text => {
+    const bytes = new TextEncoder().encode(text), pointer = x.openbw_in_ptr(bytes.length);
+    new Uint8Array(x.memory.buffer, pointer, bytes.length).set(bytes);
+    x.openbw_post_message(bytes.length);
+  };
+  wireInput.shortcutError = shortcutError;
+  wireInput.releaseKeys = () => {
+    for (const scancode of heldShortcuts.values()) x.openbw_key(0, 0, scancode);
+    heldShortcuts.clear();
+    physicalModifiers.clear();
+    for (const scancode of MOD_SC) x.openbw_key(0, 0, scancode);
+    x.openbw_render(performance.now());
+  };
+  window.addEventListener('blur', wireInput.releaseKeys);
+  const nativeShortcut = (sym, scancode, event, ctrl = event.ctrlKey, shift = event.shiftKey) => {
+    setModifiers(ctrl, shift);
+    x.openbw_key(1, sym, scancode); x.openbw_key(0, sym, scancode);
+    restoreModifiers();
+    x.openbw_render(performance.now());
+  };
   const key = (down) => (e) => {
-    if (interfaceOptions.open || e.target.closest?.('#settings, #help') ||
-        document.activeElement?.matches('input, select, textarea, [contenteditable="true"]')) {
-      if (!down) x.openbw_key(0, 0, SCANCODE[e.code] || 0);
-      return;
-    }
-    if (altEsc && e.code === altEsc) {
-      // Fire a complete Esc press. Caps Lock is a lock key — macOS delivers keydown when
-      // the lock turns on but only keyup when it turns off — so accept either edge for it;
-      // ordinary keys act on keydown alone (both edges would double-fire the cancel).
-      if (down || e.code === 'CapsLock') { x.openbw_key(1, 0, 41); x.openbw_key(0, 0, 41); }
-      e.preventDefault();
-      return;
+    let press = down;
+    if (e.code === 'CapsLock') {
+      const state = e.getModifierState('CapsLock');
+      if (!down) press = state !== capsLockState;
+      capsLockState = state;
     }
     const sc = SCANCODE[e.code] || 0;
-    const sym = e.key.length === 1 ? e.key.toLowerCase().charCodeAt(0) : 0;
-    if (!sc && !sym) return;
-    if (MOD_SC.has(sc)) { x.openbw_key(down ? 1 : 0, 0, sc); return; }   // track, don't preventDefault
-    const isDigit = sym >= 48 && sym <= 57;
-    const gameBinds = (!e.metaKey && !e.altKey && !e.ctrlKey)          // unmodified keys
-                   || (e.ctrlKey && !e.metaKey && !e.altKey && isDigit); // Ctrl+digit = control groups
-    if (!gameBinds) return;   // hand Cmd+1, Cmd+R, Ctrl+T, … back to the browser
-    x.openbw_key(down ? 1 : 0, sym, sc);
-    if (down) x.openbw_render(performance.now());
+    if (MOD_SC.has(sc)) {
+      if (down) physicalModifiers.add(sc); else physicalModifiers.delete(sc);
+    }
+    if (!down && heldShortcuts.has(e.code)) {
+      x.openbw_key(0, 0, heldShortcuts.get(e.code)); heldShortcuts.delete(e.code);
+    }
+    if (interfaceOptions.open ||
+        document.activeElement?.matches('input, select, textarea, [contenteditable="true"]')) {
+      if (!down) x.openbw_key(0, 0, SCANCODE[e.code] || 0);
+      if (!down && MOD_SC.has(sc)) restoreModifiers();
+      return;
+    }
+    if (MOD_SC.has(sc)) {
+      x.openbw_key(down ? 1 : 0, 0, sc);
+      if (!down) restoreModifiers();
+      return;
+    }
+    if (!press) return;
+    document.body.classList.add('keyboard-input');
+    const live = wireInput.menu?.isOpen ? { rows: [], visible: [] } : wireInput.shortcuts();
+    const matches = shortcuts.resolveShortcut(e, live.rows, interfaceOptions.preferences.hotkeys, live.visible)
+      .filter(row => !wireInput.menu?.isOpen || ['global:cancel', 'global:alternate-cancel',
+        'ui:settings', 'ui:pause', 'ui:sound', 'ui:fullscreen', 'ui:objectives'].includes(row.id));
+    if (!matches.length) return;
     e.preventDefault();
+    if (matches.length > 1) {
+      shortcutError(`Conflicting shortcut ${shortcuts.formatChord(shortcuts.eventChord(e))}: ${matches.map(row => row.label).join(', ')}. Open Options > Hotkeys.`);
+      return;
+    }
+    const match = matches[0], id = match.id;
+    if (match.command) {
+      setModifiers(e.ctrlKey, e.shiftKey);
+      if (shortcuts.activateCommand(x, match.command) < 0) shortcutError('This command is no longer available.');
+      restoreModifiers();
+      x.openbw_render(performance.now());
+    } else if (id.startsWith('camera:')) {
+      if (!down) return;
+      const direction = { right: 79, left: 80, down: 81, up: 82 }[id.split(':')[1]];
+      if (!heldShortcuts.has(e.code)) {
+        heldShortcuts.set(e.code, direction); x.openbw_key(1, 0, direction); x.openbw_render(performance.now());
+      }
+    } else if (id.startsWith('group:')) {
+      nativeShortcut(48 + Number(id.split(':')[2]), 0, e, id.split(':')[1] === 'assign');
+    } else if (id === 'selection:next' || id === 'selection:previous') {
+      nativeShortcut(0, 43, e, false, id === 'selection:previous');
+    } else if (id === 'selection:alert') {
+      nativeShortcut(0, 44, e);
+    } else if (id === 'global:cancel' || id === 'global:alternate-cancel') {
+      if (!wireInput.uiAction?.('global:cancel')) nativeShortcut(0, 41, e);
+    } else if (!e.repeat) wireInput.uiAction?.(id);
   };
   window.addEventListener('keydown', key(true));
   window.addEventListener('keyup', key(false));
@@ -845,8 +924,9 @@ async function boot(session) {
     if (masterGain) masterGain.gain.value = muted ? 0 : 1;
     muteBtn.innerHTML = `<i data-lucide="${muted ? 'volume-x' : 'volume-2'}"></i>`;
     window.lucide?.createIcons();
-    muteBtn.title = muted ? 'Unmute sound' : 'Mute sound';
-    muteBtn.setAttribute('aria-label', muteBtn.title);
+    const label = muted ? 'Unmute sound' : 'Mute sound';
+    muteBtn.title = label + (shortcutHint('ui:sound') ? ` (${shortcutHint('ui:sound')})` : '');
+    muteBtn.setAttribute('aria-label', label);
   };
   $('topbar').style.display = 'flex';
   muteBtn.onclick = () => {
@@ -856,19 +936,6 @@ async function boot(session) {
     ensureAudio();
   };
   applyMute();
-
-  // Controls popup toggled by the "?" button; dismissed by clicking elsewhere.
-  const helpBtn = $('helpbtn'), helpPop = $('help');
-  helpBtn.onclick = (e) => {
-    e.stopPropagation();
-    $('settings').style.display = 'none';
-    helpPop.style.display = helpPop.style.display === 'block' ? 'none' : 'block';
-  };
-  document.addEventListener('click', (e) => {
-    if (helpPop.style.display === 'block' && e.target !== helpBtn && !helpPop.contains(e.target)) {
-      helpPop.style.display = 'none';
-    }
-  });
 
   // Black-box recorder for the intermittent 100%-CPU wedge: stamp each boot stage and a
   // once-a-second run heartbeat into localStorage, which survives a killed renderer. After
@@ -1031,15 +1098,19 @@ async function boot(session) {
 
   // Settings popup (⚙, top-left). Order/rally lines are off by default; the choice
   // persists. Wired here because it drives the wasm, which is now instantiated.
-  const settingsBtn = $('settingsbtn'), settingsPop = $('settings'), optLines = $('opt-lines');
+  const settingsBtn = $('settingsbtn'), optLines = $('opt-lines');
+  const gameMenu = createGameMenu(() => {
+    wireInput.releaseKeys();
+    x.openbw_mouse_move(-1, -1);
+  });
+  wireInput.menu = gameMenu;
   let showLines = false;
   try { showLines = localStorage.getItem('openbw-order-lines') === '1'; } catch {}
   optLines.checked = showLines;
   x.openbw_set_order_lines(showLines ? 1 : 0);
   settingsBtn.onclick = (e) => {
     e.stopPropagation();
-    helpPop.style.display = 'none';
-    settingsPop.style.display = settingsPop.style.display === 'block' ? 'none' : 'block';
+    gameMenu.toggle();
   };
   optLines.onchange = () => {
     try { localStorage.setItem('openbw-order-lines', optLines.checked ? '1' : '0'); } catch {}
@@ -1075,11 +1146,13 @@ async function boot(session) {
       ? () => (root.webkitRequestFullscreen || root.webkitRequestFullScreen).call(root) : null;
   const updateFullscreenButton = () => {
     fsBtn.disabled = appMode || !requestFullscreen;
-    fsBtn.textContent = appMode ? 'App mode' : !requestFullscreen ? 'Fullscreen unavailable'
+    const label = appMode ? 'App mode' : !requestFullscreen ? 'Fullscreen unavailable'
       : fullscreenElement() ? 'Exit fullscreen' : coarsePointer() ? 'Fullscreen'
-        : `Fullscreen (${navigator.platform.startsWith('Mac') ? '\u2325\u21a9' : 'Alt-Enter'})`;
+        : 'Fullscreen' + (shortcutHint('ui:fullscreen') ? ` (${shortcutHint('ui:fullscreen')})` : '');
+    $('fullscreen-label').textContent = label;
+    fsBtn.setAttribute('aria-label', label);
     fsBtn.title = !requestFullscreen && !appMode
-      ? 'On iPhone, use Safari Share > Add to Home Screen, leave Open as Web App enabled, then launch the Home Screen icon.' : '';
+      ? 'On iPhone, use Safari Share > Add to Home Screen, leave Open as Web App enabled, then launch the Home Screen icon.' : label;
   };
   updateFullscreenButton();
   const toggleFullscreen = async () => {
@@ -1096,19 +1169,9 @@ async function boot(session) {
     }
   };
   fsBtn.onclick = () => {
-    settingsPop.style.display = 'none';
+    gameMenu.close();
     toggleFullscreen();
   };
-  // Alt-Enter (the classic PC-game convention) / F11 toggle fullscreen. The game's
-  // own key handler hands modified keys back to the browser, so no game binds shadowed.
-  window.addEventListener('keydown', (e) => {
-    if (interfaceOptions.open) return;
-    const combo = e.key === 'F11'
-      || (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'Enter');
-    if (!combo || e.repeat) return;
-    e.preventDefault();
-    toggleFullscreen();
-  });
   // In fullscreen, capture Esc with the Keyboard Lock API (Chromium): a TAP of Esc is
   // delivered to the game — so Esc keeps working as cancel, and it no longer drops
   // pointer lock — while HOLDING Esc exits fullscreen (the browser shows the hint).
@@ -1130,23 +1193,7 @@ async function boot(session) {
   document.addEventListener('fullscreenchange', fullscreenChanged);
   document.addEventListener('webkitfullscreenchange', fullscreenChanged);
 
-  // Alternative Esc key: click the button, press the key to bind (Esc itself clears).
-  // Stored as KeyboardEvent.code; the key handler routes it as a full Esc press.
-  const altEscBtn = $('opt-altesc');
-  const altEscShow = () => {
-    altEscBtn.textContent = altEsc ? altEsc.replace(/^(Key|Digit)/, '') : 'none';
-  };
-  altEscShow();
-  altEscBtn.onclick = (e) => {
-    e.stopPropagation();
-    altEscBtn.textContent = 'press a key…';
-    window.addEventListener('keydown', (ev) => {
-      ev.preventDefault(); ev.stopPropagation();
-      altEsc = ev.code === 'Escape' ? '' : ev.code;
-      try { localStorage.setItem('openbw-alt-esc', altEsc); } catch {}
-      altEscShow();
-    }, { capture: true, once: true });
-  };
+  $('edit-hotkeys').onclick = () => interfaceOptions.show('hotkeys');
   // Save the recorded game as a StarCraft .rep. Our command stream already is BW's action
   // format, so the wasm just serialises what it recorded — opens in BW and replay tools.
   const saveReplay = (btn) => {
@@ -1224,10 +1271,10 @@ async function boot(session) {
   let debugResourcesPending = false;
   if (/(\?|&)debug\b/.test(location.search)) {
     $('opt-debug').style.display = 'block';
-    $('dbg-victory').onclick = () => { settingsPop.style.display = 'none'; x.openbw_debug_outcome(1); };
-    $('dbg-defeat').onclick = () => { settingsPop.style.display = 'none'; x.openbw_debug_outcome(2); };
-    $('dbg-resources').onclick = () => { settingsPop.style.display = 'none'; x.openbw_debug_resources(2000, 1000); };
-    $('dbg-reveal').onclick = () => { settingsPop.style.display = 'none'; x.openbw_reveal_map(); };
+    $('dbg-victory').onclick = () => { gameMenu.close(); x.openbw_debug_outcome(1); };
+    $('dbg-defeat').onclick = () => { gameMenu.close(); x.openbw_debug_outcome(2); };
+    $('dbg-resources').onclick = () => { gameMenu.close(); x.openbw_debug_resources(2000, 1000); };
+    $('dbg-reveal').onclick = () => { gameMenu.close(); x.openbw_reveal_map(); };
     // Not while spectating: a cheat mutates only the rendered replica, desyncing the shadow.
     debugResourcesPending = !session.spectate && !session.mission;
     if (session.mission) $('opt-debug').style.display = 'none';
@@ -1262,29 +1309,26 @@ async function boot(session) {
   };
   const closeChat = () => { chatInput.value = ''; chatInput.blur(); chatInput.style.display = 'none'; };
   window.addEventListener('keydown', (e) => {
-    if (interfaceOptions.open) return;
+    if (interfaceOptions.open || e.defaultPrevented) return;
     if (document.activeElement === chatInput) {
       if (e.key === 'Enter') { sendChat(chatInput.value); closeChat(); e.preventDefault(); }
       else if (e.key === 'Escape') { closeChat(); e.preventDefault(); }
       return;
     }
-    if (e.key === 'Enter') { chatInput.style.display = 'block'; chatInput.focus(); e.preventDefault(); }
   });
 
   // Resign: one confirming click (no blocking dialog), then concede via the sim.
   const resignBtn = $('opt-resign');
   let resignArmed = false;
   resignBtn.onclick = () => {
-    if (gameOverShown) { settingsPop.style.display = 'none'; toMainMenu(); return; }
+    if (gameOverShown) { gameMenu.close(); toMainMenu(); return; }
     if (!resignArmed) { resignArmed = true; resignBtn.textContent = 'Confirm — resign?'; return; }
     resignArmed = false; resignBtn.textContent = 'Resign game';
-    settingsPop.style.display = 'none';
+    gameMenu.close();
     x.openbw_resign();
     if (session.mission && paused) pauseBtn.click();
   };
   document.addEventListener('click', (e) => {
-    if (settingsPop.style.display === 'block' && e.target !== settingsBtn && !settingsPop.contains(e.target))
-      settingsPop.style.display = 'none';
     if (resignArmed && e.target !== resignBtn) { resignArmed = false; resignBtn.textContent = 'Resign game'; }
   });
 
@@ -1561,12 +1605,7 @@ async function boot(session) {
   pauseBtn.style.display = link ? 'none' : '';
   $('menu-pause').hidden = !!link;
   $('menu-pause').onclick = () => pauseBtn.click();
-  $('view-objectives').hidden = !session.mission;
-  $('view-objectives').onclick = () => {
-    settingsPop.style.display = 'none';
-    document.body.classList.add('peek-objectives');
-    $('mission-objectives').open = true;
-  };
+  interfaceOptions.setMissionActive(!!session.mission);
   // One centre banner serves every state: an explicit message (disconnect/desync) wins,
   // otherwise paused, otherwise blocked waiting on a peer's turn.
   let bannerText = null, bannerOverride = '', bannerTimer = 0;
@@ -1586,7 +1625,7 @@ async function boot(session) {
   };
   const applyPause = () => {
     pauseBtn.classList.toggle('is-paused', paused);
-    pauseBtn.title = paused ? 'Resume' : 'Pause';
+    pauseBtn.title = (paused ? 'Resume' : 'Pause') + (shortcutHint('ui:pause') ? ` (${shortcutHint('ui:pause')})` : '');
     $('menu-pause').textContent = paused ? 'Resume game' : 'Pause game';
     updateBanner();
   };
@@ -1602,10 +1641,10 @@ async function boot(session) {
   let optionsPausedGame = false;
   interfaceOptions.setGameHooks({
     open() {
-      settingsPop.style.display = 'none';
-      helpPop.style.display = 'none';
+      gameMenu.close();
       if (document.pointerLockElement) document.exitPointerLock();
       x.openbw_mouse_move(-1, -1);
+      wireInput.releaseKeys();
       optionsPausedGame = !link && !paused;
       if (optionsPausedGame) pauseBtn.click();
     },
@@ -1613,6 +1652,7 @@ async function boot(session) {
       if (optionsPausedGame && paused) pauseBtn.click();
       optionsPausedGame = false;
     },
+    shortcuts: () => wireInput.shortcuts(),
   });
 
   // Game speed lives in the settings popup; the value is the ms per sim frame.
@@ -1862,7 +1902,11 @@ async function boot(session) {
     if (t0[1]) titleHtml += `<span class="stat">${t0[1]}</span>`;
     if (t0[2]) titleHtml += `<span class="stat">${t0[2]}</span>`;
     if (t0[3]) titleHtml += `<span class="fx">${t0[3]}</span>`;   // status effects (blind, parasite, …)
-    const btnSig = mobile + '\n' + lines.slice(1).join('\n');
+    const shortcutSettings = interfaceOptions.preferences.hotkeys;
+    const live = wireInput.shortcuts();
+    const keyHints = new Map(shortcuts.activeShortcuts(live.rows, shortcutSettings, live.visible).map(row => [row.id, row.chord]));
+    const shortcutRows = shortcuts.commandShortcuts(text);
+    const btnSig = mobile + '\n' + JSON.stringify(shortcutSettings) + '\n' + lines.slice(1).join('\n');
     if (btnSig === lastBtnSig) {
       // Buttons unchanged: refresh only the title spans, leaving the .cmd nodes (and any
       // in-flight click on them) intact.
@@ -1881,19 +1925,9 @@ async function boot(session) {
       const url = id >= 0 ? iconURL(id) : '';
       const ico = mobile && f[1] === 'Confirm' ? '<i class="ico" data-lucide="check"></i>'
         : url ? `<img class="ico" src="${url}">` : '';
-      // Highlight the hotkey letter inside the label (first match — usually the first
-      // letter, else an inner letter like "Medi[c]"). Fall back to a badge if absent.
-      // Key 0x1b is Escape (Cancel, as in the original) — show it as an "Esc" badge and
-      // encode data-key as a numeric entity so the char survives in the attribute.
       const esc27 = f[0].charCodeAt(0) === 27;
       const dataKey = esc27 ? '&#27;' : f[0];
-      const key = f[0].toLowerCase(), label = f[1];
-      const k = esc27 ? -1 : label.toLowerCase().indexOf(key);
-      const labelHtml = esc27
-        ? `<b>Esc</b> ${label}`
-        : k >= 0
-          ? `${label.slice(0, k)}<b>${label[k]}</b>${label.slice(k + 1)}`
-          : `<b>${f[0].toUpperCase()}</b> ${label}`;
+      const label = f[1];
       // Resource cost: tooltip on hover, and mark red when unaffordable.
       const minC = f.length > 4 ? +f[4] : 0, gasC = f.length > 5 ? +f[5] : 0;
       const poor = f.length > 6 && f[6] === '0' ? ' poor' : '';
@@ -1916,7 +1950,13 @@ async function boot(session) {
       const active = f.length > 9 && f[9] === '1' ? ' active' : '';
       // Wrap the label in one span so the flex `gap` on .cmd spaces only the icon from
       // the label — not the highlighted <b> from the rest of the word ("B uild").
-      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-command="${esc(f[10] || '')}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${mobile ? esc(label) : labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
+      const bindingID = shortcutRows.find(row => row.command === f[10])?.id;
+      const hint = keyHints.get(bindingID);
+      const { index, badge: badgeText } = shortcuts.commandHint(label, hint, f[10]);
+      const labelHTML = index < 0 ? esc(label)
+        : `${esc(label.slice(0, index))}<b class="shortcut-character">${esc(label[index])}</b>${esc(label.slice(index + 1))}`;
+      const badge = badgeText ? `<span class="shortcut-hint">${esc(badgeText)}</span>` : '';
+      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-command="${esc(f[10] || '')}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${labelHTML}</span><span class="touch-cost">${costInner}</span>${popup}${badge}</button>`;
     }
     const scrollLeft = cardEl.querySelector('.command-grid')?.scrollLeft || 0;
     cardEl.innerHTML = `<div class="card-heading">${titleHtml}</div><div class="command-grid">${html}</div>`;
@@ -1925,12 +1965,42 @@ async function boot(session) {
     wireInput.updateHUDPlacement();
   };
   interfaceOptions.subscribe(() => {
+    gameMenu.refresh();
     applyCommandPresentation();
     wireInput.syncTouchControls();
     wireInput.updateMinimap();
     lastCard = ''; lastBtnSig = null; lastTouchCard = '';
     updateCard();
+    updateShortcutHelp();
   });
+  function updateShortcutHelp() {
+    settingsBtn.title = 'Settings' + (shortcutHint('ui:settings') ? ` (${shortcutHint('ui:settings')})` : '');
+    applyPause();
+    applyMute();
+    updateFullscreenButton();
+    $('shortcut-help').textContent = ['global:cancel', 'selection:next', 'selection:alert', 'ui:pause', 'ui:settings', 'ui:objectives']
+      .map(id => `${shortcuts.GLOBAL_SHORTCUTS.find(entry => entry.id === id).label}: ${shortcutHint(id) || 'Unbound'}`).join(' · ');
+  }
+  updateShortcutHelp();
+  wireInput.uiAction = id => {
+    if (id === 'global:cancel') {
+      if (gameMenu.isOpen) { gameMenu.back(); return true; }
+      return false;
+    }
+    if (id === 'ui:pause') { if (!link) pauseBtn.click(); }
+    else if (id === 'ui:settings') settingsBtn.click();
+    else if (id === 'ui:sound') muteBtn.click();
+    else if (id === 'ui:fullscreen') toggleFullscreen();
+    else if (id === 'ui:zoom-in') $('touch-zoom-in').click();
+    else if (id === 'ui:zoom-out') $('touch-zoom-out').click();
+    else if (id === 'ui:chat') { chatInput.style.display = 'block'; chatInput.focus(); }
+    else if (id === 'ui:objectives' && session.mission) {
+      if (interfaceOptions.preferences.objectives === 'menu') {
+        gameMenu.show('objectives');
+      } else $('mission-objectives').open = !$('mission-objectives').open;
+    }
+    return true;
+  };
 
   cardEl.addEventListener('pointerdown', event => {
     cardPointer = event.pointerId;
@@ -1963,16 +2033,15 @@ async function boot(session) {
       }
       return;
     }
-    const key = cmd.dataset.key;
-    if (!key) return;
+    const id = cmd.dataset.command;
+    if (!id) return;
     const queued = e.shiftKey || (coarsePointer() && wireInput.queue);
     x.openbw_key(queued ? 1 : 0, 0, 225);
-    const sym = key.charCodeAt(0);
-    x.openbw_key(1, sym, 0); x.openbw_key(0, sym, 0);
-    x.openbw_render(performance.now());
-    if (!e.shiftKey) {
-      x.openbw_key(0, 0, 225);
+    if (shortcuts.activateCommand(x, id) < 0) {
+      wireInput.shortcutError('Selected command is no longer available.');
     }
+    wireInput.restoreModifiers();
+    x.openbw_render(performance.now());
   });
 
   // Group wireframes: one 32x32 tile per selected unit when 2+ are selected (BW's
@@ -2225,6 +2294,7 @@ async function boot(session) {
   }
   if (session.mission && !campaignDebug) {
     $('campaign-save-controls').hidden = false;
+    $('menu-save').hidden = false;
     const saveButton = $('save-game');
     saveButton.onclick = async () => {
       saveButton.disabled = true;

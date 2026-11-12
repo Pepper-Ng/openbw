@@ -143,26 +143,39 @@
     border-top: 7px solid transparent; border-bottom: 7px solid transparent; border-left: 12px solid currentColor; }
   #settingsbtn, #helpbtn { width: 30px; }
   #helpbtn { font: 700 16px system-ui, sans-serif; }
-  #settings { position: fixed; top: 46px; left: 12px; z-index: 6; display: none; max-width: 320px;
-    padding: 12px 16px; border-radius: 10px; background: rgba(15,23,42,.96); color: #cbd5e1;
+  #settings { position: fixed; top: 52px; left: 12px; z-index: 8; display: none; flex-direction: column; overflow: hidden;
+    width: min(340px, calc(100vw - 24px)); max-height: calc(100dvh - 64px);
+    box-sizing: border-box; padding: 0; border: 1px solid #37505b; border-radius: 10px;
+    background: rgba(15,23,32,.98); color: #cbd5e1;
     font: 13px/1.5 system-ui, sans-serif; box-shadow: 0 10px 34px rgba(0,0,0,.55); }
-  #settings h3 { margin: 0 0 8px; font-size: 13px; color: #e2e8f0; }
-  #settings label { display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 6px 0; }
+  #settings *, #settings *::before, #settings *::after { box-sizing: border-box; }
+  #settings h3 { margin: 0; font-size: 15px; color: #e2e8f0; }
+  .settings-heading { display: flex; flex: 0 0 auto; align-items: center; gap: 8px;
+    padding: 4px 8px; border-bottom: 1px solid #2e444f; }
+  .settings-heading h3 { flex: 1; }
+  #settings .settings-heading button { display: grid; place-items: center; width: 44px; height: 44px;
+    margin: 0; padding: 10px; background: transparent; color: #cbd5e1; }
+  #settings svg, .settings-secondary svg, #options-back svg { width: 20px; height: 20px; flex: 0 0 auto; }
+  #settings-content { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 8px;
+    overscroll-behavior: contain; scrollbar-width: thin; }
+  .settings-actions { display: grid; gap: 2px; }
+  #settings label { display: flex; align-items: center; gap: 8px; cursor: pointer; margin: 4px 0; padding: 2px 6px; min-height: 44px; }
   #settings input { accent-color: #38bdf8; }
   #settings .keybtn { margin-left: auto; background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
     border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
   #settings .keybtn:hover { background: #334155; }
-  #settings select { margin-left: auto; background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
-    border-radius: 6px; padding: 2px 6px; font: inherit; cursor: pointer; }
-  #settings .danger { width: 100%; margin-top: 12px; background: #7a1a1a; color: #fee2e2; }
+  #settings select { min-width: 0; max-width: 100%; min-height: 40px; margin-left: auto;
+    background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 6px; padding: 2px 6px; font: inherit; cursor:pointer; }
+  #settings .danger { width: 100%; margin-top: 12px; min-height: 44px; background: #7a1a1a; color: #fee2e2; }
   #settings .danger:hover { background: #991b1b; }
-  #settings .backmenu { width: 100%; margin-top: 12px; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
-  #settings .backmenu:hover { background: #334155; }
-  #help { position: fixed; top: 46px; left: 12px; z-index: 6; display: none; max-width: 400px;
-    padding: 12px 16px; border-radius: 10px; background: rgba(15,23,42,.96); color: #cbd5e1;
-    font: 13px/1.5 system-ui, sans-serif; box-shadow: 0 10px 34px rgba(0,0,0,.55); }
-  #help h3 { margin: 0 0 8px; font-size: 13px; color: #e2e8f0; }
-  #help .row { margin: 4px 0; }
+  #campaign-save-controls { display: grid; gap: 8px; }
+  #campaign-save-controls button { display: flex; align-items: center; justify-content: center;
+    gap: 8px; margin: 0; min-height: 44px; width: 100%; }
+  #campaign-save-controls label { margin: 0; }
+  #campaign-save-controls select { margin: 0; width: 100%; }
+  #help { padding: 4px 6px; font: inherit; }
+  #help .row { margin: 6px 0; overflow-wrap: break-word; }
   #help kbd { background:#1e293b; border-radius:3px; padding:1px 5px; color:#cbd5e1; }
   .touch-help { display: none; }
   #paused { position: fixed; inset: 0; z-index: 7; display: none; align-items: center;
@@ -369,15 +382,14 @@
     #status .q { padding: 8px 10px; min-height: 28px; }
     #topbar button { height: 44px; line-height: 44px; }
     #topbar #pausebtn, #topbar #mute, #topbar #settingsbtn, #topbar #helpbtn { width: 44px; }
-    #settings, #help { font-size: 15px; top: calc(var(--touch-top) + 52px);
-      left: var(--touch-left); right: var(--touch-right); box-sizing: border-box;
-      max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom) - 60px); overflow-y: auto; }
-    #settings label { min-height: 44px; }
-    #settings .settings-tools { display: flex; gap: 8px; margin-bottom: 8px; }
+    #settings { font-size: 14px; top: calc(var(--touch-top) + 48px);
+      left: var(--touch-left); right: auto; width: min(360px, calc(100vw - var(--touch-left) - var(--touch-right)));
+      max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom) - 48px); }
+    #settings select { font-size: 16px; }
     #settings .settings-tools button { width: 44px; height: 44px; padding: 0; margin: 0; }
     #settings .desktop-setting, .desktop-help { display: none; }
     .touch-help { display: block; }
-    #touch-shortcuts { display: grid; grid-template-columns: repeat(5, 44px); gap: 4px; margin: 8px 0; }
+    #touch-shortcuts { display: grid; grid-template-columns: repeat(auto-fit, 44px); gap: 6px; margin: 0 0 8px; }
     #touch-shortcuts svg { width: 22px; height: 22px; pointer-events: none; }
     .playing #touch-controls { display: none; }
     #touch-controls button, #touch-shortcuts button { display: grid; place-items: center; width: 44px; height: 44px;
@@ -481,11 +493,10 @@
   .campaign-save-row small { color: #96a4ad; font-size: 11px; }
   .campaign-save-row button { display: grid; place-items: center; width: 38px; height: 38px; padding: 9px; margin: 0; background: #28353b; color: #dce5e9; }
   .campaign-save-row button:disabled { opacity: .4; cursor: default; }
-  #campaign-save-controls { margin-top: 12px; border-top: 1px solid #39434a; padding-top: 8px; }
+  #campaign-save-controls { margin: 0; padding: 0; }
   #campaign-save-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
   #campaign-save-controls select { box-sizing: border-box; width: 100%; max-width: 100%; padding: 6px; background: #161d22; color: #dce5e9; border: 1px solid #56616a; border-radius: 4px; font: inherit; }
   #save-status { font-size: 11px; color: #adbdc5; margin-top: 8px; overflow-wrap: anywhere; }
-  #settings:has(#campaign-save-controls:not([hidden])) { box-sizing: border-box; width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 60px); overflow-y: auto; z-index: 8; background: #111923; }
   #campaign-resume[hidden], #campaign-save-controls[hidden], #go-next[hidden], #load-fresh[hidden], #campaign-tutorial-choice[hidden], #campaign-tutorial-info[hidden] { display: none !important; }
   #load-actions { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
   #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #briefing-skip-tutorial[hidden], #load-actions button[hidden] { display: none !important; }
@@ -502,12 +513,19 @@
   .briefing-actions button { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; border-radius: 4px; }
   .briefing-actions svg { width: 18px; height: 18px; }
   #briefing-state { color: #94a3b8; font-size: 13px; margin-top: 12px; min-height: 20px; }
-  #mission-hud { position: fixed; z-index: 4; top: calc(var(--touch-top, 0px) + 52px); right: 12px; width: min(300px, calc(100vw - 24px)); font-size: 13px; }
-  #mission-objectives { padding: 8px 10px; background: rgba(4, 12, 15, .9); border: 1px solid #3b5556; border-radius: 4px; }
+  #mission-hud { position: fixed; z-index: 4; top: calc(var(--touch-top, 0px) + 52px);
+    right: max(8px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end;
+    width: max-content; max-width: calc(100vw - 24px); font-size: 13px; }
+  #hud-objectives-dock { max-width: min(270px, calc(100vw - 32px)); }
+  #mission-objectives { width: max-content; max-width: 100%; box-sizing: border-box;
+    padding: 8px 10px; background: rgba(4, 12, 15, .9); border: 1px solid #3b5556; border-radius: 4px; }
+  #hud-objectives-dock #mission-objectives[open] { min-width: min(220px, calc(100vw - 32px)); }
   #mission-objectives summary { cursor: pointer; min-height: 24px; }
-  #mission-objectives-text { white-space: pre-line; overflow-wrap: anywhere; max-height: 28svh; overflow-y: auto; line-height: 1.4; padding-top: 8px; }
-  #mission-leaderboard { margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); }
-  #mission-countdown { margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); font-variant-numeric: tabular-nums; }
+  #mission-objectives-text { white-space: pre-line; overflow-wrap: break-word; word-break: normal;
+    max-height: 28svh; overflow-y: auto; line-height: 1.45; padding-top: 8px; }
+  #mission-leaderboard, #mission-countdown { box-sizing: border-box; max-width: min(270px, calc(100vw - 32px)); overflow-wrap: break-word;
+    margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); }
+  #mission-countdown { font-variant-numeric: tabular-nums; }
   #mission-caption { position: fixed; z-index: 5; top: calc(var(--touch-top, 0px) + 108px); left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 28px)); box-sizing: border-box; background: rgba(4, 12, 15, .94); border-left: 3px solid #7bb79a; padding: 10px 12px; pointer-events: none; }
   #mission-caption-speaker { font-size: 13px; color: #b6d8c8; margin-bottom: 4px; }
   #mission-caption-text { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; max-height: 24svh; overflow-y: auto; }
@@ -530,6 +548,8 @@
   .options-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px;
     padding: 18px 22px; border-bottom: 1px solid #2e444f; }
   .options-heading h2 { margin: 0; font-size: 20px; }
+  #options-back { display: grid; place-items: center; width: 44px; height: 44px; margin: 0;
+    padding: 10px; background: transparent; color: #e2e8f0; }
   #options-close { margin: 0; background: #223742; color: #e2e8f0; min-width: 44px; min-height: 44px; padding: 8px; }
   .options-content { display: grid; grid-template-columns: 170px minmax(0, 1fr); overflow-y: auto; min-height: 0; }
   .options-tabs { padding: 16px 10px; border-right: 1px solid #2e444f; }
@@ -558,13 +578,27 @@
   #options-cancel { background: #233843; color: #dcebf1; }
   #interface-options-status { color: #fbbf24; margin: 0; padding: 0 22px; }
   #interface-options-status:not(:empty) { padding-top: 10px; padding-bottom: 10px; }
-  #interface-options [hidden], #options-notice[hidden], #settings button[hidden] { display: none !important; }
+  #interface-options [hidden], #options-notice[hidden], #settings [hidden] { display: none !important; }
   #interface-options :focus-visible, #start-header :focus-visible, #start-navigation :focus-visible {
     outline: 2px solid #7dd3fc; outline-offset: 3px; }
-  #settings .menu-action { display: block; width: 100%; margin-top: 8px; min-height: 44px;
-    background: #203b48; color: #e2e8f0; text-align: left; }
+  #settings .menu-action { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+    margin: 0; padding: 8px 10px; min-height: 44px; background: transparent; color: #e2e8f0; text-align: left; font-size: 14px; }
+  #settings .menu-action:hover, #settings .menu-action:focus-visible { background: #203b48; }
+  #settings :focus-visible { outline: 2px solid #7dd3fc; outline-offset: -2px; }
+  .settings-tools { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 4px 0; margin-top: 6px;
+    border-top: 1px solid #2e444f; }
+  #settings .settings-tools button { background: #203541; color: #dcebf1; border: 1px solid #3b5866; }
+  .settings-secondary { display: inline-flex; align-items: center; gap: 8px; min-height: 44px;
+    margin: 4px 0 0; padding: 6px 8px; background: transparent; color: #9dc6d8; font: inherit; text-align: left; }
+  .settings-secondary:hover { color: #e2f5ff; background: #203b48; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap; border: 0; }
   body[data-pause="menu"] #pausebtn { display: none !important; }
-  body[data-objectives="menu"]:not(.peek-objectives) #mission-objectives { display: none; }
+  #settings-objectives[hidden] { display: none !important; }
+  #settings-objectives { margin: 0; padding: 4px 6px; }
+  #settings-objectives #mission-objectives { width: auto; max-width: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; }
+  #settings-objectives #mission-objectives summary { display: none; }
+  #settings-objectives #mission-objectives-text { padding: 0; max-height: none; overflow: visible; font-size: 14px; line-height: 1.5; }
   #resources { top: max(4px, env(safe-area-inset-top)); right: max(4px, env(safe-area-inset-right));
     gap: 6px 8px; padding: 4px 6px; font-size: var(--resource-font, 16px);
     box-sizing: border-box; max-width: var(--resources-room, calc(100vw - 76px)); flex-wrap: wrap; justify-content: flex-end; }
@@ -576,6 +610,7 @@
     width: 36px; height: 36px; padding: 0; box-sizing: border-box; }
   #topbar button svg, #settings .settings-tools button svg { display: block; width: 20px; height: 20px; flex-shrink: 0; }
   #topbar #pausebtn::before { vertical-align: initial; }
+  #settings #opt-fullscreen { width: 44px; min-height: 44px; margin: 0; padding: 10px; }
   #sound-dock { display: contents; }
   body { --hud-headroom: calc(max(var(--resources-bottom, 56px), calc(var(--touch-top, 0px) + 52px)) + 80px); }
   #hud { bottom: var(--hud-bottom, var(--touch-bottom, 8px)); }
@@ -629,6 +664,43 @@
     #resources { gap: 3px 6px; font-size: var(--resource-font, 15px); }
     #topbar button, #settings .settings-tools button { width: 44px; height: 44px; }
   }
+  #card .cmd { position: relative; }
+  .shortcut-hint { position: absolute; top: 1px; right: 2px; padding: 1px 3px; border-radius: 3px;
+    box-sizing: border-box; max-width: calc(100% - 4px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font: 10px monospace; background: #071016e6; color: #bce6f5; pointer-events: none; }
+  #hotkey-list { display: grid; gap: 6px; margin-top: 12px; }
+  .hotkey-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 48%);
+    gap: 6px 12px; padding: 8px; background: #162832; border: 1px solid #2e444f; border-radius: 6px; }
+  .hotkey-row strong, .hotkey-row small { display: block; overflow-wrap: anywhere; }
+  .hotkey-row small { font-size: 11px; color: #a9bdc7; }
+  .hotkey-row button, .hotkey-tools button { margin: 0; min-height: 36px; padding: 6px 8px; background: #294453; color: #e2e8f0; }
+  .hotkey-row > button { overflow-wrap: anywhere; min-width: 0; }
+  .hotkey-tools { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .hotkey-row.conflict { border-color: #fbbf24; }
+  #hotkey-conflicts { white-space: pre-line; color: #fbbf24; }
+  #hotkey-search { width: 100%; box-sizing: border-box; padding: 10px; min-height: 44px;
+    font: inherit; color: #e2e8f0; background: #182b36; border: 1px solid #49616e; border-radius: 6px; }
+  #hotkey-capture { position: sticky; top: 0; z-index: 1; background: #1b3d4d; border: 1px solid #7dd3fc; padding: 12px; }
+  #hotkey-capture p { color: #e2e8f0; }
+  #hotkey-capture-error { color: #fbbf24; }
+  #interface-options button:disabled { opacity: .5; cursor: not-allowed; }
+  @media (pointer: coarse) and (any-pointer: coarse) {
+    .shortcut-hint { display: none; }
+    .hotkey-row button, .hotkey-tools button { min-height: 44px; }
+  }
+  body.keyboard-input .shortcut-hint { display: block; }
+  @media (pointer: coarse) {
+    body:not(.keyboard-input) #card .shortcut-character { color: inherit; font-weight: inherit; }
+  }
+  @media (max-width: 600px) {
+    #settings { width: min(360px, calc(100vw - 16px)); left: 8px; font-size: 14px; }
+  }
+  @media (min-width: 480px) and (max-height: 500px) {
+    .settings-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    #settings { width: min(400px, calc(100vw - 24px)); }
+    .settings-heading { padding-top: 2px; padding-bottom: 2px; }
+    #settings-content { padding: 6px; }
+  }
   @media (max-width: 600px), (pointer: coarse) and (max-height: 600px) {
     #overlay { padding-top: max(12px, env(safe-area-inset-top)); }
     #start-header { position: relative; }
@@ -644,6 +716,11 @@
         env(safe-area-inset-bottom) env(safe-area-inset-left); }
     #interface-options-form { height: 100%; max-height: 100%; }
     .options-heading, .options-panels, .options-footer { padding: 12px 16px; }
+    .options-heading h2 { flex: 1; font-size: 18px; }
+    #tab-hotkeys { display: none; }
+    #interface-options[data-page="hotkeys"] .options-tabs { display: none; }
+    #interface-options[data-page="hotkeys"] #options-back { display: grid !important; }
+    #interface-options[data-page="hotkeys"] .options-heading { padding-top: 4px; padding-bottom: 4px; }
     .options-content { display: flex; flex-direction: column; }
     .options-tabs { display: flex; flex-shrink: 0; padding: 8px; gap: 4px; border-right: 0;
       border-bottom: 1px solid #2e444f; }
@@ -661,15 +738,32 @@
   <button id="pausebtn" title="Pause"></button>
   <button id="settingsbtn" title="Settings" aria-label="Settings"><i data-lucide="settings"></i></button>
 </div>
-<div id="settings">
-  <h3>Settings</h3>
-  <button type="button" class="menu-action" data-options-open>Customize interface</button>
-  <button type="button" id="menu-pause" class="menu-action">Pause game</button>
-  <button type="button" id="view-objectives" class="menu-action" hidden>Objectives</button>
-  <div class="settings-tools">
-    <span id="sound-dock"><button id="mute" title="Mute sound" aria-label="Mute sound"><i data-lucide="volume-2"></i></button></span>
-    <button id="helpbtn" title="Controls" aria-label="Controls">?</button>
+<section id="settings" role="dialog" aria-labelledby="settings-title" tabindex="-1">
+  <header class="settings-heading">
+    <button type="button" id="settings-back" aria-label="Back to game menu" hidden><i data-lucide="arrow-left"></i></button>
+    <h3 id="settings-title">Game menu</h3>
+    <button type="button" id="settings-close" aria-label="Close game menu"><i data-lucide="x"></i></button>
+  </header>
+  <div id="settings-content">
+  <div id="settings-page-root" data-menu-page="root">
+    <nav class="settings-actions" aria-label="Game menu">
+      <button type="button" id="menu-pause" class="menu-action">Pause game</button>
+      <button type="button" id="menu-objectives" class="menu-action" data-menu-open="objectives" hidden><i data-lucide="list-checks"></i>Objectives</button>
+      <button type="button" id="menu-save" class="menu-action" data-menu-open="save" hidden><i data-lucide="save"></i>Save game</button>
+      <button type="button" class="menu-action" data-options-open><i data-lucide="sliders-horizontal"></i>Options</button>
+      <button type="button" class="menu-action" data-menu-open="controls"><i data-lucide="hand"></i>Controls</button>
+      <button type="button" class="menu-action" data-menu-open="more"><i data-lucide="ellipsis"></i>More</button>
+    </nav>
+    <div class="settings-tools" role="group" aria-label="Quick settings">
+      <span id="sound-dock"><button id="mute" title="Mute sound" aria-label="Mute sound"><i data-lucide="volume-2"></i></button></span>
+      <button id="opt-fullscreen" type="button" title="Fullscreen" aria-label="Fullscreen"><i data-lucide="maximize"></i><span class="sr-only" id="fullscreen-label">Fullscreen</span></button>
+      <button id="helpbtn" type="button" data-menu-open="controls" title="Controls help" aria-label="Controls help"><i data-lucide="circle-help"></i></button>
+    </div>
   </div>
+  <section id="settings-page-objectives" data-menu-page="objectives" hidden>
+    <div id="settings-objectives" hidden></div>
+  </section>
+  <section id="settings-page-controls" data-menu-page="controls" hidden>
   <div id="touch-shortcuts" role="group" aria-label="Control groups and zoom">
     <button type="button" id="touch-queue" aria-label="Queue orders" title="Queue orders" aria-pressed="false"><i data-lucide="list-plus"></i></button>
     <button type="button" id="touch-info" aria-label="Command details" title="Command details" aria-pressed="false"><i data-lucide="info"></i></button>
@@ -679,6 +773,24 @@
     <button type="button" id="touch-zoom-out" aria-label="Zoom out" title="Zoom out"><i data-lucide="zoom-out"></i></button>
     <button type="button" id="touch-zoom-in" aria-label="Zoom in" title="Zoom in"><i data-lucide="zoom-in"></i></button>
   </div>
+  <div id="help">
+    <div class="desktop-help">
+      <div class="row"><kbd>Click</kbd> / drag to select; double-click selects a type. Shift-click adds to the selection.</div>
+      <div class="row"><kbd>Right-click</kbd> to move, attack or gather.</div>
+      <div class="row">Use buttons or configured shortcuts for other commands. Shift queues orders.</div>
+      <div class="row">Pan with the screen edge, configured camera keys, scroll or the minimap.</div>
+      <div class="row" id="shortcut-help"></div>
+    </div>
+    <div class="touch-help">
+      <div class="row">Tap to select or give an order. Hold and drag to select a group.</div>
+      <div class="row">Two fingers: pan and zoom.</div>
+      <div class="row">Queue: append orders. Details: inspect a command.</div>
+      <div class="row">Groups: tap to recall, hold to save.</div>
+    </div>
+  </div>
+  <button id="edit-hotkeys" type="button" class="settings-secondary"><i data-lucide="keyboard"></i>Keyboard shortcuts…</button>
+  </section>
+  <section id="settings-page-more" data-menu-page="more" hidden>
   <label><input type="checkbox" id="opt-lines"> Show order &amp; rally lines</label>
   <label>Game speed
     <select id="opt-speed">
@@ -691,11 +803,16 @@
       <option value="42">Fastest</option>
     </select>
   </label>
-  <label class="desktop-setting" title="A second key that acts like Esc (cancel). Click, then press the key you want; press Esc to clear.">Alt. Esc key
-    <button id="opt-altesc" class="keybtn">none</button>
-  </label>
   <label class="desktop-setting" title="Capture the mouse inside the window (click the game to engage; Esc releases it). Edge-scrolling always works while locked."><input type="checkbox" id="opt-mouselock"> Lock mouse to window</label>
-  <button id="opt-fullscreen" class="backmenu">Fullscreen</button>
+  <div id="opt-debug" style="display:none">
+    <button id="dbg-victory">Debug: force Victory</button>
+    <button id="dbg-defeat">Debug: force Defeat</button>
+    <button id="dbg-resources">Debug: 2000 / 1000 resources</button>
+    <button id="dbg-reveal">Debug: reveal map</button>
+  </div>
+  <button id="opt-resign" type="button" class="danger">Resign game</button>
+  </section>
+  <section id="settings-page-save" data-menu-page="save" hidden>
   <div id="campaign-save-controls" hidden>
     <label for="save-slot">Save Game</label>
     <select id="save-slot" aria-label="Save slot">
@@ -707,36 +824,14 @@
     <button id="campaign-menu" type="button"><i data-lucide="arrow-left"></i>Campaign Menu</button>
     <div id="save-status" role="status" aria-live="polite"></div>
   </div>
-  <div id="opt-debug" style="display:none">
-    <button id="dbg-victory">Debug: force Victory</button>
-    <button id="dbg-defeat">Debug: force Defeat</button>
-    <button id="dbg-resources">Debug: 2000 / 1000 resources</button>
-    <button id="dbg-reveal">Debug: reveal map</button>
+  </section>
   </div>
-  <button id="opt-resign" class="danger">Resign game</button>
-</div>
-<div id="help">
-  <h3>Controls</h3>
-  <div class="desktop-help">
-  <div class="row"><kbd>Click</kbd> / drag to select · double-click picks all of a type · <kbd>Shift</kbd>-click adds</div>
-  <div class="row"><kbd>Right-click</kbd> to move / attack / gather</div>
-  <div class="row">Command-card letters (or clicking them) build &amp; train · <kbd>Shift</kbd> queues</div>
-  <div class="row"><kbd>Ctrl</kbd>+<kbd>#</kbd> sets a control group · <kbd>#</kbd> recalls (again centers)</div>
-  <div class="row">Pan with the screen edge, arrow keys, scroll, or the minimap</div>
-  <div class="row"><kbd>Esc</kbd> cancels targeting / building placement</div>
-  </div>
-  <div class="touch-help">
-    <div class="row">Tap a friendly unit to select; tap ground, resources, or enemies to give an order.</div>
-    <div class="row">Hold and drag to select a group. Two fingers: pan and zoom.</div>
-    <div class="row">Queue: append orders. Details: inspect a command.</div>
-    <div class="row">Groups: tap to recall, hold to save.</div>
-  </div>
-</div>
+</section>
 <div id="hud"><div id="status"></div><div id="wires"></div><div id="card"></div></div>
 <div id="toast"></div>
 <div id="messages"></div>
 <aside id="mission-hud" hidden>
-  <details id="mission-objectives"><summary>Objectives</summary><div id="mission-objectives-text"></div></details>
+  <div id="hud-objectives-dock"><details id="mission-objectives"><summary>Objectives</summary><div id="mission-objectives-text"></div></details></div>
   <div id="mission-leaderboard" hidden></div>
   <div id="mission-countdown" role="timer" aria-label="Time remaining" hidden></div>
 </aside>
@@ -971,12 +1066,13 @@
      with a fresh timestamp instead so local edits always take. -->
 <dialog id="interface-options" aria-labelledby="interface-options-title">
   <form id="interface-options-form">
-    <header class="options-heading"><h2 id="interface-options-title">Interface Options</h2><button id="options-close" type="button" aria-label="Close Options">Close</button></header>
+    <header class="options-heading"><button id="options-back" type="button" aria-label="Back to Controls" hidden><i data-lucide="arrow-left"></i></button><h2 id="interface-options-title">Interface Options</h2><button id="options-close" type="button" aria-label="Close Options">Close</button></header>
     <div class="options-content">
       <nav class="options-tabs" role="tablist" aria-label="Options categories">
         <button id="tab-controls" type="button" role="tab" data-options-tab="controls" aria-selected="true" aria-controls="options-controls">Controls</button>
         <button id="tab-actions" type="button" role="tab" data-options-tab="actions" aria-selected="false" aria-controls="options-actions" tabindex="-1">Actions</button>
         <button id="tab-hud" type="button" role="tab" data-options-tab="hud" aria-selected="false" aria-controls="options-hud" tabindex="-1">HUD</button>
+        <button id="tab-hotkeys" type="button" role="tab" data-options-tab="hotkeys" aria-selected="false" aria-controls="options-hotkeys" tabindex="-1">Hotkeys</button>
       </nav>
       <div class="options-panels">
         <section id="options-controls" role="tabpanel" aria-labelledby="tab-controls">
@@ -984,7 +1080,7 @@
           <label>Controls<select data-preference="input"><option value="auto">Automatic</option><option value="touch">Touch</option><option value="mouse">Mouse &amp; keyboard</option></select></label>
           <p>Automatic follows the active input device. Switching devices never changes your action-menu preferences.</p>
           <p>Touch controls keep contextual taps. Mouse controls keep contextual right-clicks for movement, gathering, combat and repair.</p>
-          <p>Keyboard commands retain their classic bindings. Full keyboard remapping is planned for the next increment.</p>
+          <button type="button" id="options-keyboard" class="settings-secondary"><i data-lucide="keyboard"></i>Keyboard shortcuts…</button>
         </section>
         <section id="options-actions" role="tabpanel" aria-labelledby="tab-actions" hidden>
           <h3>Action buttons</h3>
@@ -1001,16 +1097,27 @@
           <div class="options-presets"><button type="button" data-scale="75">Small</button><button type="button" data-scale="100">Medium</button><button type="button" data-scale="125">Large</button></div>
           <label>Minimap size <output id="minimap-scale-value">100%</output></label>
           <input type="range" min="50" max="200" step="1" value="100" data-preference="minimap" aria-label="Minimap size">
-          <label>Objectives<select data-preference="objectives"><option value="expanded">Expanded on screen</option><option value="collapsed">Collapsed on screen</option><option value="menu">In game menu</option></select></label>
+          <label>Objectives location<select data-preference="objectives"><option value="expanded">On screen: expanded</option><option value="collapsed">On screen: collapsed</option><option value="menu">Settings menu only</option></select></label>
           <label>Pause button<select data-preference="pause"><option value="auto">Default (on screen)</option><option value="pinned">Pinned on screen</option><option value="menu">In game menu</option></select></label>
           <label>Sound button<select data-preference="sound"><option value="menu">In game menu</option><option value="pinned">Pinned on screen</option></select></label>
           <p>UI size scales action buttons and gently scales resources. The minimap has its own size and stays independent of world zoom. Sizes adapt to available space. Mission timers and counters remain visible.</p>
           <div id="options-preview" aria-label="Button size preview"><span><i data-lucide="swords"></i>Attack</span><span><i data-lucide="hammer"></i>Build</span></div>
         </section>
+        <section id="options-hotkeys" role="tabpanel" aria-labelledby="tab-hotkeys" hidden>
+          <h3>Keyboard shortcuts</h3>
+          <label>Base profile<select id="hotkey-profile"><option value="classic">Classic</option><option value="grid">Grid (QWE / ASD / ZXC)</option></select></label>
+          <p>Bindings use physical key positions. Shift still queues ordinary actions. Custom bindings override the base profile; Grid assigns unused keys to other commands. Browser and system shortcuts cannot all be captured.</p>
+          <label>Category<select id="hotkey-category"><option value="all">All commands</option><option value="General">General</option><option value="Terran">Terran</option><option value="Zerg">Zerg</option><option value="Protoss">Protoss</option><option value="Selected">Other selected commands</option></select></label>
+          <input id="hotkey-search" type="search" placeholder="Search: Marine, Barracks, Repair…" aria-label="Search keyboard shortcuts">
+          <button id="hotkey-reset-all" type="button">Reset keyboard shortcuts</button>
+          <div id="hotkey-capture" hidden><p id="hotkey-capture-label"></p><p id="hotkey-capture-error" role="alert"></p><button id="hotkey-bind-escape" type="button">Use Escape</button><button id="hotkey-capture-cancel" type="button">Cancel capture</button></div>
+          <p id="hotkey-conflicts" role="alert"></p>
+          <div id="hotkey-list"></div>
+        </section>
       </div>
     </div>
     <p id="interface-options-status" role="alert"></p>
-    <footer class="options-footer"><button id="options-reset" type="button">Reset defaults</button><button id="options-cancel" type="button">Cancel</button><button type="submit">Apply</button></footer>
+    <footer class="options-footer"><button id="options-reset" type="button">Reset defaults</button><button id="options-cancel" type="button">Cancel</button><button id="options-apply" type="submit">Apply</button></footer>
   </form>
 </dialog>
 <script src="./vendor/lucide.min.js"></script>

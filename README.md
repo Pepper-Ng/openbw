@@ -81,7 +81,7 @@ Weave is bundled under CC BY 4.0; see [map attribution](web/maps/ATTRIBUTION.md)
 
 - Click a friendly unit to select it; drag to box-select. Shift-click adds to the selection.
 - Right-click ground, resources, or another unit for a contextual order.
-- Use command-card buttons or their highlighted hotkeys for other actions.
+- Use command-card buttons or their configured shortcuts for other actions. A matching letter is highlighted in the name; other keys use a small badge.
 - Hold Shift to queue movement and supported commands, including tank transformations.
 - Esc cancels placement, targeting, or a submenu first. Otherwise, it cancels the last queued production item, or the item in progress if it is the only one.
 - Ctrl + a number assigns a control group; the number recalls it.
@@ -94,14 +94,16 @@ Landscape is the primary layout; portrait is supported with less room for the ma
 - Tap a friendly unit to select it. With a unit selected, tap ground, resources, or enemies for a contextual order.
 - Hold, then drag to box-select. Use two fingers to pan and pinch to zoom.
 - Action buttons show a name below the icon. Building-strip choices show icons and costs; split grids also show building names.
-- Settings contains queue mode, command details, zoom, and control groups. Hold a group button to assign it; tap to recall it.
+- **Settings > Controls** contains queue mode, command details, zoom, and control groups. Hold a group button to assign it; tap to recall it.
 - With Touch controls, tap or drag to preview a building location, then select Confirm. Cancel abandons placement.
 
 On iPhone, a normal Safari tab may not support fullscreen. Use Safari's **Add to Home Screen** option and launch the app from its icon for a standalone window.
 
 ### Interface Options
 
-Open **Options** in the start menu, or **Settings > Customize interface** during play. On narrow screens, the start-menu navigation is behind the menu button.
+Open **Options** in the start menu, or **Settings > Options** during play. On narrow screens, the start-menu navigation is behind the menu button.
+
+The in-game menu keeps common actions on its first page. Objectives, Save game, Controls and More open separate views. Back returns to the first page; Close returns to play. Headers remain accessible while long content scrolls inside the panel. Short landscape screens use two columns for common actions.
 
 - Select Automatic, Touch, or Mouse & Keyboard input independently of the visible action buttons.
 - Choose contextual essentials or full actions. Contextual SCV orders remain available in either mode.
@@ -110,13 +112,33 @@ Open **Options** in the start menu, or **Settings > Customize interface** during
 - Hide locked units/buildings or show them disabled.
 - Adjust UI size from 75% to 150%, with Small, Medium and Large presets. Resources scale gently with this setting and the screen width.
 - Set minimap size independently from 50% to 200%. Its on-screen size stays independent of world zoom.
-- Keep objectives expanded, collapsed, or in the game menu. Mission timers and counters remain visible.
+- Choose **Objectives location**: expanded/collapsed on screen, or **Settings menu only**. The live objectives appear in exactly one location; mission timers and counters stay on screen. Menu objectives use their own readable page without the standalone overlay decoration.
 - Pin Pause on screen or keep it in the game menu. Multiplayer cannot be paused.
 - Pin the sound button beside Settings or keep it in the game menu.
 
 Options preview immediately. **Apply** saves them in this browser; **Cancel** restores the previous settings. Opening Interface Options pauses a running single-player game and restores its previous pause state on close.
 
-Automatic menu defaults follow the screen's pointer profile, not the most recent mouse or touch event. Switching devices therefore does not change explicitly configured menus. Keyboard remapping and per-unit custom button sets are not yet exposed.
+Automatic menu defaults follow the screen's pointer profile, not the most recent mouse or touch event. Switching devices therefore does not change explicitly configured menus.
+
+### Keyboard Customization
+
+On desktop, open **Options > Hotkeys** before a game or during play. On mobile, use the smaller **Keyboard shortcuts…** entry under **Options > Controls** or **Settings > Controls**; the Hotkeys tab does not occupy the mobile navigation. It remains available for external keyboards.
+
+Search by unit, producer, ability or action. Select a binding and press a key or chord; use **Unbind** or **Reset** for an individual action.
+
+- Classic uses the engine's original shortcuts. Grid assigns QWE / ASD / ZXC, then additional unused letters, in command-card order.
+- Custom bindings override either base profile. For example, assign **A** to **Train Terran Marine** instead of M.
+- Bindings use physical key positions, including function, arrow, punctuation and numpad keys. Ctrl, Alt, Shift and Meta can be part of a chord; modifier keys alone remain available for selection and queuing.
+- Shift queues ordinary commands unless an explicit Shift shortcut matches. Control groups, camera movement, Cancel and interface actions are also reassignable.
+- Conflicting shortcuts in the same context must be resolved before Apply. Different production buildings can reuse a key. New runtime conflicts produce a visible message instead of executing an ambiguous command.
+- Escape cancels key capture; **Use Escape** assigns Escape. Escape always closes Options even when the game's Cancel binding changes.
+- Browser and operating-system shortcuts cannot all be captured. Common reserved combinations are rejected.
+- Button hints and Controls help reflect the current bindings. Matching single-letter keys highlight the character in the name; other keys use a badge. Escape is displayed as **Esc**, numpad digits as **#7**, for example. The implicit Esc shortcut on Cancel/Back is omitted. Modifier chords retain their full hint.
+- Hiding an action button does not disable its keyboard command, and unbinding a key does not disable its button.
+
+Apply persists keyboard settings with the interface preferences. Cancel discards the edits. Existing alternate-Escape preferences migrate to the **Alternate Cancel / Back** binding.
+
+Per-unit custom button sets are not yet exposed.
 
 ## Optional Computer Opponents
 
@@ -152,9 +174,12 @@ After rebuilding the browser module, use Node.js 20 or newer to run the headless
 ```sh
 node web/run-wasm-node.mjs --test-commands
 node web/run-wasm-node.mjs --test-interface
+node web/run-wasm-node.mjs --test-hotkeys
 ```
 
 The runner loads the local MPQs and bundled Weave map. It checks queued input, control groups, Esc cancellation, refunds, and tank-mode transitions against the real WebAssembly engine.
+
+The interface and hotkey checks also run without game archives. After changing native shortcut tables, regenerate their pre-game catalog with `node web/generate-hotkey-catalog.mjs`. The hotkey checks verify that the committed catalog matches the native sources.
 
 To render a headless framebuffer image instead:
 

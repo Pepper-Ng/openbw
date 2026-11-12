@@ -318,6 +318,20 @@ OPENBW_EXPORT(openbw_card) const char* openbw_card() {
 	return g_ui ? g_ui->card_text.c_str() : "";
 }
 
+OPENBW_EXPORT(openbw_shortcut_card) const char* openbw_shortcut_card() {
+	static a_string text;
+	text.clear();
+	if (!g_ui) return "";
+	g_ui->refresh_card(true);
+	auto* unit = g_ui->primary_selected();
+	text = format("%d\t%d\t%d\n", unit ? (int)unit->unit_type->id : -1,
+	              g_ui->menu, unit ? (int)g_ui->unit_race(unit) : -1);
+	size_t start = g_ui->card_text.find('\n');
+	if (start != a_string::npos) text += g_ui->card_text.substr(start + 1);
+	g_ui->refresh_card();
+	return text.c_str();
+}
+
 // Producer status "<progress%>\t<name>…" (empty if not training) — rebuilt per call.
 OPENBW_EXPORT(openbw_status) const char* openbw_status() {
 	return g_ui ? g_ui->build_status() : "";
@@ -483,6 +497,15 @@ OPENBW_EXPORT(openbw_in_ptr) uint8_t* openbw_in_ptr(int len) {
 	if (len < 0) len = 0;
 	g_inbuf.resize((size_t)len);
 	return g_inbuf.empty() ? nullptr : g_inbuf.data();
+}
+
+OPENBW_EXPORT(openbw_activate_command) int openbw_activate_command(int len) {
+	if (len < 1 || len > 160 || (size_t)len > g_inbuf.size()) error("invalid interface command identity");
+	if (!g_ui || g_ui->paused || (g_ui->mission_mode &&
+	    (!g_ui->mission_started || g_ui->outcome || g_ui->st.scripted_pause))) return 0;
+	a_string id((const char*)g_inbuf.data(), (size_t)len);
+	g_ui->refresh_card();
+	return g_ui->run_command(0, id) ? 1 : -1;
 }
 
 // Post a chat/system line (bytes in the openbw_in_ptr scratch buffer) to the message log.

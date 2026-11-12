@@ -1475,7 +1475,7 @@ struct play_ui : ui_functions {
 	}
 
 	// Rebuild the context command card for the current selection (all three races).
-	void refresh_card() {
+	void refresh_card(bool include_hidden = false) {
 		card.clear();
 		card_text.clear();
 		unit_t* u = primary_selected();          // own unit — drives the action buttons
@@ -1592,12 +1592,12 @@ struct play_ui : ui_functions {
 		card_text += '\t'; if (!placing) card_text += fx.c_str();
 		for (auto& c : card) {
 			// Visibility does not remove keyboard commands from the active card.
-			if (contextual_commands() &&
+			if (!include_hidden && contextual_commands() &&
 			    ((c.act == C_PATROL && (!u || ut_worker(u) ||
 			      (!unit_can_attack(u) && !unit_is_carrier(u) && !unit_is_reaver(u)))) ||
 			     c.act == C_GATHER || c.act == C_REPAIR || c.act == C_RETURN ||
 			     (c.act == C_HOLD && u && ut_worker(u)))) continue;
-			if (combined_build_menu() && c.act == C_ADVMENU) continue;
+			if (!include_hidden && combined_build_menu() && c.act == C_ADVMENU) continue;
 			// Command GRP frames share unit IDs; orders and abilities use separate frames.
 			int icon = (c.ut != UnitTypes::None) ? (int)c.ut : -1;
 			switch (c.act) {
@@ -2074,9 +2074,9 @@ struct play_ui : ui_functions {
 
 	// Execute the command bound to `key` in the current card. Returns false if
 	// the key isn't a command (so base key handling can run).
-	bool run_command(char key) {
+	bool run_command(char key, const a_string& id = a_string()) {
 		for (auto& c : card) {
-			if (c.key != key) continue;
+			if (id.empty() ? c.key != key : command_id(c) != id) continue;
 			if (!c.enabled) {
 				// Grayed spells are only ever blocked on energy — say so, don't fail silent.
 				if (c.act == C_SPELL) raise_error(E_ENERGY);

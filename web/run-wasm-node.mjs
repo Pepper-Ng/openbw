@@ -11,6 +11,76 @@ import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 import { campaignPackMissions, readPlainMissionPack, auditScenario } from './prepare-campaign.mjs';
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
+import { activateCommand, commandShortcuts } from './hotkeys.js';
+
+if (process.argv[2] === '--test-hotkeys') {
+  const { default: catalog } = await import('./hotkey-catalog.js');
+  const { generateHotkeyCatalog } = await import('./generate-hotkey-catalog.mjs');
+  const { commandShortcuts, resolveShortcut, activeShortcuts, validateChord, validateHotkeys, shortcutConflicts,
+    formatChord, commandHint } = await import('./hotkeys.js');
+  assert.deepEqual(commandHint('Marine', 'KeyA', 'train:0:44:61:0'), { index: 1, badge: '' });
+  assert.deepEqual(commandHint('Marine', 'KeyM', 'train:0:44:61:0'), { index: 0, badge: '' });
+  assert.deepEqual(commandHint('Marine', 'KeyZ', 'train:0:44:61:0'), { index: -1, badge: 'Z' });
+  assert.deepEqual(commandHint('Marine', 'Numpad7'), { index: -1, badge: '#7' });
+  assert.deepEqual(commandHint('Marine', 'Ctrl+KeyA'), { index: -1, badge: 'Ctrl + A' },
+    'Modifier chords must not masquerade as single-letter shortcuts');
+  assert.deepEqual(commandHint('Cancel', 'Escape', 'cancel:228:44:61:32'), { index: -1, badge: '' });
+  assert.deepEqual(commandHint('Cancel', 'F6', 'back:228:44:61:0'), { index: -1, badge: 'F6' });
+  assert.deepEqual(commandHint('Cancel', 'KeyC', 'back:228:44:61:0'), { index: 0, badge: '' });
+  assert.deepEqual(commandHint('Halt Construction', 'Escape', 'stop:228:44:61:0'), { index: -1, badge: '' });
+  assert.deepEqual(commandHint('Move', 'Escape', 'move:228:44:61:0'), { index: -1, badge: 'Esc' });
+  assert.deepEqual(commandHint('Marine', null), { index: -1, badge: '' });
+  assert.equal(formatChord('Ctrl+Numpad7'), 'Ctrl + #7');
+  const { readUIOptions, writeUIOptions, UI_OPTIONS_KEY } = await import('./ui-options.js');
+  assert.deepEqual(catalog, generateHotkeyCatalog(), 'Committed hotkey catalog must match native definitions');
+  assert.ok(catalog.length > 150);
+  const marine = catalog.find(entry => entry.id === 'train:0:44:61:0');
+  assert.equal(marine.key, 'm');
+  assert.ok(marine.context.includes('Barracks'));
+  const rows = commandShortcuts('Barracks\nm\tMarine\t1\t0\t50\t0\t1\t\t\t0\ttrain:0:44:61:0\ng\tGhost\t1\t1\t25\t75\t1\t\t\t0\ttrain:1:44:61:0');
+  const key = (code, extra = {}) => ({ code, ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...extra });
+  const settings = { profile: 'classic', bindings: { [marine.id]: 'KeyA' } };
+  assert.equal(resolveShortcut(key('KeyA'), rows, settings)[0].command, marine.id);
+  assert.equal(resolveShortcut(key('KeyM'), rows, settings).length, 0, 'Remapping disables the old shortcut');
+  assert.equal(resolveShortcut(key('KeyA', { shiftKey: true }), rows, settings)[0].command, marine.id, 'Shift retains queued actions');
+  assert.equal(resolveShortcut(key('KeyA', { key: 'ф' }), rows, settings)[0].command, marine.id, 'Physical positions work across keyboard layouts');
+  for (const chord of ['F6', 'F24', 'Numpad7', 'NumpadParenLeft', 'Lang1', 'Semicolon', 'Alt+KeyA', 'Ctrl+Shift+KeyA']) {
+    const [code] = chord.split('+').slice(-1);
+    const custom = { bindings: { [marine.id]: chord } };
+    const event = key(code, { ctrlKey: chord.includes('Ctrl+'), shiftKey: chord.includes('Shift+'), altKey: chord.includes('Alt+') });
+    assert.equal(resolveShortcut(event, rows, custom)[0].command, marine.id);
+  }
+  assert.equal(resolveShortcut(key('KeyM'), rows, { bindings: { [marine.id]: null } }).length, 0);
+  assert.ok(shortcutConflicts({ bindings: { [marine.id]: 'KeyG' } }).some(c => c.second.id === marine.id || c.first.id === marine.id));
+  assert.equal(shortcutConflicts(settings).length, 0, 'Barracks A does not conflict with mobile Attack');
+  assert.ok(shortcutConflicts({ bindings: { [marine.id]: 'Tab' } }).length, 'Global shortcuts conflict in every context');
+  assert.equal(shortcutConflicts({ bindings: { [marine.id]: 'Tab', 'selection:next': 'F6' } }).length, 0);
+  const mutalisk = catalog.find(entry => entry.label === 'Morph Zerg Mutalisk');
+  assert.equal(shortcutConflicts({ bindings: { [marine.id]: 'KeyV', [mutalisk.id]: 'KeyV' } }).length, 0,
+    'Different producers can reuse a key');
+  const grid = activeShortcuts(rows, { profile: 'grid', bindings: { [marine.id]: 'KeyA' } });
+  assert.equal(grid.find(entry => entry.id === marine.id).chord, 'KeyA');
+  assert.equal(grid.find(entry => entry.id === rows[1].id).chord, 'KeyQ');
+  assert.equal(activeShortcuts([rows[1]], { profile: 'grid', bindings: { [marine.id]: 'KeyQ' } }).find(entry => entry.id === rows[1].id).chord,
+    'KeyQ', 'Overrides in other contexts do not consume grid keys');
+  const conflicting = { bindings: { [marine.id]: 'KeyG' } };
+  assert.equal(resolveShortcut(key('KeyG'), rows, conflicting).length, 2, 'Ambiguous keys are not silently resolved');
+  for (const chord of ['Ctrl+KeyR', 'Meta+KeyW', 'ControlLeft', 'Unidentified', 'Ctrl+Ctrl+KeyA', 'KeyA+Shift'])
+    assert.throws(() => validateChord(chord));
+  for (const value of [null, [], { profile: 'unknown' }, { bindings: null }, { bindings: { ['__proto__']: 'KeyA' } },
+    { bindings: { 'unknown:0:44:61:0': 'KeyA' } }])
+    assert.throws(() => validateHotkeys(value));
+  const records = new Map(), storage = { getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value) };
+  records.set('openbw-alt-esc', 'CapsLock');
+  assert.equal(readUIOptions(storage).hotkeys.bindings['global:alternate-cancel'], 'CapsLock');
+  writeUIOptions(storage, { hotkeys: settings });
+  assert.deepEqual(readUIOptions(storage).hotkeys, settings);
+  const saved = records.get(UI_OPTIONS_KEY);
+  const draft = readUIOptions(storage); draft.hotkeys.bindings[marine.id] = 'KeyZ';
+  assert.equal(records.get(UI_OPTIONS_KEY), saved, 'Editing a draft does not mutate saved bindings');
+  console.log(`Hotkey catalog (${catalog.length} commands), context conflicts, remapping, unbinding, grid, chords and persistence passed.`);
+  process.exit(0);
+}
 
 if (process.argv[2] === '--test-interface') {
   const { DEFAULT_UI_OPTIONS, UI_OPTIONS_KEY, validateUIOptions, resolveUIOptions,
@@ -3092,6 +3162,39 @@ function testCommands(groupMines = false) {
     }
   }
   x.openbw_set_minimap_size(0);
+  const barracksUnit = units().find(unit => unit[1] === 'Barracks');
+  x.openbw_debug_select(Number(barracksUnit[0]), 0);
+  x.openbw_debug_resources(10000, 10000);
+  x.openbw_out_clear();
+  const marineCommand = commandShortcuts(read(x.openbw_shortcut_card())).find(row => row.label === 'Marine');
+  assert.equal(marineCommand.id, 'train:0:44:61:0');
+  assert.equal(activateCommand(x, marineCommand.command), 1);
+  assert.ok(records().some(record => record[0] === 31 && record[1] === 0), 'Command identity dispatch produces the normal training packet');
+  apply();
+  assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 9950, 'Remapped production uses normal paid training');
+  x.openbw_debug_select(Number(worker[0]), 0);
+  x.openbw_set_command_presentation(1, 1, 1);
+  const hiddenRepair = commandShortcuts(read(x.openbw_shortcut_card())).find(row => row.label === 'Repair');
+  assert.ok(hiddenRepair, 'Shortcut card retains commands hidden from the HUD');
+  assert.doesNotMatch(read(x.openbw_card()), /\tRepair\t/, 'Reading keyboard commands must restore the filtered HUD');
+  assert.equal(activateCommand(x, hiddenRepair.command), 1);
+  assert.equal(x.openbw_cursor(), 1);
+  press(0, 41); x.openbw_render(0);
+  x.openbw_out_clear();
+  x.openbw_key(1, 0, 225);
+  const attackCommand = commandShortcuts(read(x.openbw_shortcut_card())).find(row => row.label === 'Attack');
+  activateCommand(x, attackCommand.command);
+  x.openbw_mouse_button(1, 1, 1000, 200, 1);
+  x.openbw_mouse_button(0, 1, 1000, 200, 1);
+  x.openbw_render(0);
+  assert.equal(records().find(record => record[0] === 21)[10], 1, 'Identity dispatch retains Shift-queued targeting');
+  x.openbw_key(0, 0, 225); x.openbw_render(0); x.openbw_out_clear();
+  x.openbw_set_paused(1);
+  assert.equal(activateCommand(x, attackCommand.command), 0);
+  assert.equal(x.openbw_out_len(), 0, 'Paused identity dispatch cannot issue orders');
+  x.openbw_set_paused(0);
+  assert.equal(activateCommand(x, 'train:227:44:61:0'), -1, 'Unavailable identities are rejected without substituting a command');
+  console.log('Command identity dispatch, paid Marine training, hidden commands, Shift queueing and pause guards passed.');
   console.log('Independent minimap sizing and native contextual-order coordinates passed at four scales.');
   console.log('Independent command visibility, building menus, stable identities and hidden keyboard actions passed.');
   console.log('Command checks passed: actual nuclear targeting/launch, placement, selection, smart orders, queues, tank modes and Vulture mines.');
