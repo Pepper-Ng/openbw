@@ -1560,7 +1560,12 @@ struct ui_functions: ui_util_functions {
 		} else if (game_st.map_height < game_st.map_width) {
 			minimap_height = minimap_height * minimap_height * game_st.map_tile_height / (minimap_width* game_st.map_tile_width);
 		}
-		if (minimap_scale > 1) {
+		if (minimap_target_size > 0) {
+			size_t longest = std::max(minimap_width, minimap_height);
+			size_t target = std::min(minimap_target_size, std::max(1, (int)std::min(screen_width, screen_height) - 8));
+			minimap_width = std::max<size_t>(1, (minimap_width * target + longest / 2) / longest);
+			minimap_height = std::max<size_t>(1, (minimap_height * target + longest / 2) / longest);
+		} else if (minimap_scale > 1) {
 			minimap_width = (size_t)(minimap_width / minimap_scale + 0.5);
 			minimap_height = (size_t)(minimap_height / minimap_scale + 0.5);
 		}
@@ -1578,6 +1583,7 @@ struct ui_functions: ui_util_functions {
 	// minimap is drawn at 1/scale to come out at a constant on-screen size. The
 	// click mappings (move_minimap etc.) are ratio-based and adapt automatically.
 	double minimap_scale = 1;
+	int minimap_target_size = 0;
 
 	virtual void draw_minimap(uint8_t* data, size_t data_pitch) {
 		auto area = get_minimap_area();

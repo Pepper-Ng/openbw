@@ -93,11 +93,30 @@ Landscape is the primary layout; portrait is supported with less room for the ma
 
 - Tap a friendly unit to select it. With a unit selected, tap ground, resources, or enemies for a contextual order.
 - Hold, then drag to box-select. Use two fingers to pan and pinch to zoom.
-- Action buttons show a name below the icon. Building choices show an icon and cost without a name.
+- Action buttons show a name below the icon. Building-strip choices show icons and costs; split grids also show building names.
 - Settings contains queue mode, command details, zoom, and control groups. Hold a group button to assign it; tap to recall it.
-- Building placement currently uses a tap to confirm. Drag-preview placement is not implemented.
+- With Touch controls, tap or drag to preview a building location, then select Confirm. Cancel abandons placement.
 
 On iPhone, a normal Safari tab may not support fullscreen. Use Safari's **Add to Home Screen** option and launch the app from its icon for a standalone window.
+
+### Interface Options
+
+Open **Options** in the start menu, or **Settings > Customize interface** during play. On narrow screens, the start-menu navigation is behind the menu button.
+
+- Select Automatic, Touch, or Mouse & Keyboard input independently of the visible action buttons.
+- Choose contextual essentials or full actions. Contextual SCV orders remain available in either mode.
+- Use an adaptive layout or a three-column grid. Grids scroll beyond nine commands.
+- Choose a combined building strip or separate Basic and Advanced grids.
+- Hide locked units/buildings or show them disabled.
+- Adjust UI size from 75% to 150%, with Small, Medium and Large presets. Resources scale gently with this setting and the screen width.
+- Set minimap size independently from 50% to 200%. Its on-screen size stays independent of world zoom.
+- Keep objectives expanded, collapsed, or in the game menu. Mission timers and counters remain visible.
+- Pin Pause on screen or keep it in the game menu. Multiplayer cannot be paused.
+- Pin the sound button beside Settings or keep it in the game menu.
+
+Options preview immediately. **Apply** saves them in this browser; **Cancel** restores the previous settings. Opening Interface Options pauses a running single-player game and restores its previous pause state on close.
+
+Automatic menu defaults follow the screen's pointer profile, not the most recent mouse or touch event. Switching devices therefore does not change explicitly configured menus. Keyboard remapping and per-unit custom button sets are not yet exposed.
 
 ## Optional Computer Opponents
 
@@ -132,6 +151,7 @@ After rebuilding the browser module, use Node.js 20 or newer to run the headless
 
 ```sh
 node web/run-wasm-node.mjs --test-commands
+node web/run-wasm-node.mjs --test-interface
 ```
 
 The runner loads the local MPQs and bundled Weave map. It checks queued input, control groups, Esc cancellation, refunds, and tank-mode transitions against the real WebAssembly engine.

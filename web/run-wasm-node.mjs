@@ -12,6 +12,78 @@ import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
 import { campaignPackMissions, readPlainMissionPack, auditScenario } from './prepare-campaign.mjs';
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 
+if (process.argv[2] === '--test-interface') {
+  const { DEFAULT_UI_OPTIONS, UI_OPTIONS_KEY, validateUIOptions, resolveUIOptions,
+    readUIOptions, writeUIOptions, actionButtonSize, resourceFontSize, minimapSize } = await import('./ui-options.js');
+  const records = new Map();
+  const storage = { getItem: key => records.get(key) ?? null, setItem: (key, value) => records.set(key, value) };
+  assert.deepEqual(readUIOptions(storage), DEFAULT_UI_OPTIONS);
+  assert.equal(resolveUIOptions({}, true).commands, 'contextual');
+  assert.equal(resolveUIOptions({}, false).commands, 'full');
+  assert.equal(resolveUIOptions({}, true).pause, 'pinned', 'Pause stays visible by default; sound stays in the menu');
+  assert.equal(resolveUIOptions({}, true).sound, 'menu');
+  records.set(UI_OPTIONS_KEY, JSON.stringify({ version: 1, options: { scale: 125 } }));
+  assert.equal(readUIOptions(storage).sound, 'menu', 'Older preferences receive the sound placement default');
+  assert.equal(readUIOptions(storage).minimap, 100, 'Older preferences receive independent minimap sizing');
+  assert.equal(resolveUIOptions({ commands: 'full', input: 'touch' }, true).commands, 'full');
+  assert.equal(resolveUIOptions({ commands: 'contextual', input: 'mouse' }, false).commands, 'contextual');
+  assert.equal(resolveUIOptions({ buildings: 'split', input: 'touch' }, true).buildings, 'split');
+  assert.equal(resolveUIOptions({ buildings: 'strip', input: 'mouse' }, false).buildings, 'strip');
+  const custom = validateUIOptions({ input: 'mouse', commands: 'full', buildings: 'split', scale: 137,
+    objectives: 'menu', pause: 'pinned', sound: 'pinned', minimap: 175, unavailable: 'show', layout: 'grid' });
+  writeUIOptions(storage, custom);
+  assert.deepEqual(readUIOptions(storage), custom);
+  for (const invalid of [null, [], { input: 'unknown' }, { scale: 74 }, { scale: 151 }, { scale: 100.5 },
+    { scale: '100' }, { minimap: 49 }, { minimap: 201 }, { minimap: 100.5 }, { sound: 'unknown' }])
+    assert.throws(() => validateUIOptions(invalid));
+  records.set(UI_OPTIONS_KEY, '{bad');
+  assert.throws(() => readUIOptions(storage));
+  records.set(UI_OPTIONS_KEY, JSON.stringify({ version: 2, options: {} }));
+  assert.throws(() => readUIOptions(storage), /version/);
+  assert.throws(() => writeUIOptions({ setItem() { throw new Error('Storage blocked'); } }, custom), /Storage blocked/);
+  for (const width of [320, 375, 390, 844, 1440]) {
+    for (const scale of [75, 100, 150]) {
+      const options = resolveUIOptions({ scale, layout: 'grid' }, true);
+      const size = actionButtonSize(options, true, width);
+      assert.ok(size >= 44, 'Touch targets must remain at least 44 CSS pixels');
+      assert.ok(size * 3 + 48 <= width, 'Three columns must fit at every supported width and scale');
+      const font = resourceFontSize(options, width);
+      assert.ok(font >= 12 && font <= 20, 'Resources must stay readable without growing excessively');
+      assert.equal(minimapSize(options, true, width, 844), minimapSize({ ...options, scale: 100 }, true, width, 844),
+        'Minimap size must be independent from UI scale');
+    }
+    assert.ok(resourceFontSize({ scale: 100 }, width) > resourceFontSize({ scale: 75 }, width));
+    for (const height of [390, 844]) for (const coarse of [false, true]) {
+      const small = minimapSize({ minimap: 50 }, coarse, width, height);
+      const normal = minimapSize({ minimap: 100 }, coarse, width, height);
+      const large = minimapSize({ minimap: 200 }, coarse, width, height);
+      assert.ok(small >= 48 && small < normal && normal < large);
+      assert.ok(large <= Math.round(Math.min(width, height) * .45));
+    }
+  }
+  const source = readFileSync('web/openbw.js', 'utf8');
+  const start = source.indexOf('function wireInput(canvas, x) {');
+  const end = source.indexOf('  const xy = (e)', start);
+  assert.ok(start >= 0 && end > start);
+  const setup = source.slice(start + 'function wireInput(canvas, x) {'.length, end);
+  for (const input of ['auto', 'touch', 'mouse']) {
+    const callbacks = new Map(), modes = [];
+    const window = {
+      matchMedia: query => ({ matches: query === '(pointer: coarse)', addEventListener() {} }),
+      addEventListener: (event, callback) => callbacks.set(event, callback),
+    };
+    const preferences = { input, commands: 'contextual' };
+    new Function('window', 'x', 'interfaceOptions', 'wireInput', setup)(window,
+      { openbw_set_touch_controls: value => modes.push(value) }, { preferences }, {});
+    callbacks.get('pointermove')({ pointerType: 'mouse' });
+    callbacks.get('pointerdown')({ pointerType: 'touch' });
+    assert.deepEqual(modes, input === 'auto' ? [1, 0, 1] : input === 'touch' ? [1] : [0]);
+    assert.equal(preferences.commands, 'contextual', 'Device switching cannot change menu complexity');
+  }
+  console.log('Interface validation, persistence, input overrides, resource sizing and independent minimap/touch-target limits passed.');
+  process.exit(0);
+}
+
 if (process.argv[2] === '--test-network') {
   const { PeerMesh, Lockstep, PeerDepartures } = await import('./net.js');
   const controls = [], turns = [], closed = [];
@@ -2960,5 +3032,67 @@ function testCommands(groupMines = false) {
   }
   assert.ok(ghostMovedForStrike, 'Ghost must approach an out-of-range strike location');
   assert.ok(nuclearLaunchSeen, 'A ready missile must launch after the Ghost paints the target');
+  x.openbw_debug_select(Number(worker[0]), 0);
+  x.openbw_set_command_presentation(2, 2, 2);
+  const presentationRows = () => read(x.openbw_card()).split('\n').slice(1).map(row => row.split('\t'));
+  const fullCommands = presentationRows().map(row => [row[1], row[10]]);
+  for (const label of ['Gather', 'Repair', 'Hold', 'Patrol', 'Advanced'])
+    assert.ok(fullCommands.some(row => row[0] === label), `Full actions must expose ${label}`);
+  assert.ok(fullCommands.every(row => /^[a-z-]+:\d+:\d+:\d+:\d+$/.test(row[1])), 'Commands have stable, parameterized identities');
+  for (const touch of [0, 1, 0, 1]) {
+    x.openbw_set_touch_controls(touch);
+    assert.deepEqual(presentationRows().map(row => [row[1], row[10]]), fullCommands,
+      'Explicit presentation must not change when the input device changes');
+  }
+  x.openbw_set_command_presentation(1, 2, 1);
+  for (const label of ['Gather', 'Repair', 'Hold', 'Patrol'])
+    assert.equal(presentationRows().some(row => row[1] === label), false, `Contextual actions must hide ${label}`);
+  assert.ok(presentationRows().some(row => row[1] === 'Advanced'), 'Split build menus remain available with contextual actions');
+  press(114);
+  x.openbw_render(0);
+  assert.equal(x.openbw_cursor(), 1, 'Hidden Repair remains available through its keyboard command');
+  press(0, 41);
+  x.openbw_render(0);
+  x.openbw_set_command_presentation(2, 1, 2);
+  assert.equal(presentationRows().some(row => row[1] === 'Advanced'), false, 'Combined building presentation hides only the redundant submenu');
+  press(98);
+  x.openbw_render(0);
+  assert.ok(presentationRows().some(row => row[1] === 'Science Facility'), 'Combined menu includes advanced buildings');
+  press(0, 41);
+  x.openbw_render(0);
+  x.openbw_set_command_presentation(2, 2, 2);
+  press(98);
+  x.openbw_render(0);
+  assert.equal(presentationRows().some(row => row[1] === 'Science Facility'), false, 'Split Basic menu excludes advanced buildings');
+  press(0, 41);
+  x.openbw_render(0);
+  press(118);
+  x.openbw_render(0);
+  assert.ok(presentationRows().some(row => row[1] === 'Science Facility'), 'Split Advanced menu includes advanced buildings');
+  press(0, 41);
+  x.openbw_render(0);
+  x.openbw_set_touch_controls(1);
+  for (const size of [48, 96, 192, 384]) {
+    x.openbw_set_minimap_size(size);
+    assert.equal(x.openbw_minimap_bounds(2), size, 'Square map uses the configured minimap width');
+    assert.equal(x.openbw_minimap_bounds(3), size, 'Square map uses the configured minimap height');
+    for (const fraction of [.25, .5, .75]) {
+      x.openbw_debug_select(Number(worker[0]), 0);
+      x.openbw_out_clear();
+      const point = [x.openbw_minimap_bounds(0) + Math.floor(size * fraction),
+        x.openbw_minimap_bounds(1) + Math.floor(size * fraction)];
+      x.openbw_mouse_button(1, 3, ...point, 1);
+      x.openbw_mouse_button(0, 3, ...point, 1);
+      x.openbw_render(0);
+      const order = records().find(record => record[0] === 20 || record[0] === 21);
+      assert.ok(order, 'Scaled minimap accepts contextual orders');
+      const expected = Math.floor(Math.floor(size * fraction) * x.openbw_map_w() / size) * 32 + 16;
+      assert.equal(order[1] | order[2] << 8, expected, 'Minimap order X follows the rendered scale');
+      assert.equal(order[3] | order[4] << 8, expected, 'Minimap order Y follows the rendered scale');
+    }
+  }
+  x.openbw_set_minimap_size(0);
+  console.log('Independent minimap sizing and native contextual-order coordinates passed at four scales.');
+  console.log('Independent command visibility, building menus, stable identities and hidden keyboard actions passed.');
   console.log('Command checks passed: actual nuclear targeting/launch, placement, selection, smart orders, queues, tank modes and Vulture mines.');
 }

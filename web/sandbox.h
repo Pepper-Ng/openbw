@@ -259,6 +259,13 @@ struct play_ui : ui_functions {
 	bool targeting = false;                       // an order awaiting a target click
 	bool paused = false;                          // frozen: ignore game input (camera still ok)
 	bool touch_controls = false;
+	// Native hosts retain touch-derived defaults until presentation is configured.
+	int command_presentation = 0;
+	int building_presentation = 0;
+	int unavailable_presentation = 0;
+	bool contextual_commands() const { return command_presentation ? command_presentation == 1 : touch_controls; }
+	bool combined_build_menu() const { return building_presentation ? building_presentation == 1 : touch_controls; }
+	bool hide_unavailable_commands() const { return unavailable_presentation ? unavailable_presentation == 1 : touch_controls; }
 	bool touch_placement_ready = false;
 	xy touch_placement_position;
 	unit_id deselect_tap;
@@ -298,6 +305,49 @@ struct play_ui : ui_functions {
 	               uint16_t unit = 0;          // target unit id (C_UNLOAD)
 	               UnitTypes req = UnitTypes::None; };   // grayed: the missing prerequisite to show
 	a_vector<cmd_t> card;
+	static a_string command_id(const cmd_t& command) {
+		const char* name = nullptr;
+		switch (command.act) {
+		case C_MOVE: name = "move"; break;
+		case C_STOP: name = "stop"; break;
+		case C_ATTACK: name = "attack"; break;
+		case C_GATHER: name = "gather"; break;
+		case C_HOLD: name = "hold"; break;
+		case C_PATROL: name = "patrol"; break;
+		case C_BUILDMENU: name = "build-menu"; break;
+		case C_ADVMENU: name = "advanced-menu"; break;
+		case C_BUILD: name = "build"; break;
+		case C_TRAIN: name = "train"; break;
+		case C_MORPH: name = "morph"; break;
+		case C_MORPHBLDG: name = "morph-building"; break;
+		case C_STIM: name = "stim"; break;
+		case C_SIEGE: name = "siege"; break;
+		case C_UNSIEGE: name = "unsiege"; break;
+		case C_REPAIR: name = "repair"; break;
+		case C_SELECT: name = "select"; break;
+		case C_RALLY: name = "rally"; break;
+		case C_RESEARCH: name = "research"; break;
+		case C_UPGRADE: name = "upgrade"; break;
+		case C_LIFT: name = "lift"; break;
+		case C_LAND: name = "land"; break;
+		case C_UNLOAD: name = "unload"; break;
+		case C_UNLOADALL: name = "unload-all"; break;
+		case C_RETURN: name = "return-cargo"; break;
+		case C_BURROW: name = "burrow"; break;
+		case C_UNBURROW: name = "unburrow"; break;
+		case C_CLOAK: name = "cloak"; break;
+		case C_DECLOAK: name = "decloak"; break;
+		case C_FIGHTER: name = "fighter"; break;
+		case C_ARCHON: name = "archon"; break;
+		case C_DARCHON: name = "dark-archon"; break;
+		case C_SPELL: name = "spell"; break;
+		case C_CANCEL: name = "cancel"; break;
+		case C_BACK: name = "back"; break;
+		case C_CONFIRM: name = "confirm"; break;
+		}
+		if (!name) error("unknown interface command");
+		return format("%s:%d:%d:%d:%d", name, (int)command.ut, (int)command.tech, (int)command.upg, command.unit);
+	}
 	a_string card_text;                           // "title\nKEY\tLabel\tEN\n…" for the JS overlay
 	a_string status_text;                         // producer queue + progress, rebuilt per frame
 	a_string resources_text;                      // minerals/gas/supply HUD, rebuilt per frame
@@ -1226,7 +1276,7 @@ struct play_ui : ui_functions {
 			if (buildings_only ? (!tb || addon) : (tb && !addon)) continue;
 			if (cat && tb && bw_build_advanced(id) != (cat == 2)) continue;
 			bool can = unit_can_build(u, t);
-			if (touch_controls && !can) continue;
+			if (hide_unavailable_commands() && !can) continue;
 			UnitTypes req = UnitTypes::None;
 			if (!can) {
 				// Not buildable yet: keep it, grayed with its missing prereq, for the lists BW
@@ -1435,32 +1485,25 @@ struct play_ui : ui_functions {
 		int active_act = u ? order_active_act(u->order_type->id) : -1;   // highlight the current mode
 
 		const char* title;
-		if (u && menu == 1) { title = "Build"; add_producible(u, true, touch_controls ? 0 : 1); }
+		if (u && menu == 1) { title = "Build"; add_producible(u, true, combined_build_menu() ? 0 : 1); }
 		else if (u && menu == 2) { title = "Advanced Build"; add_producible(u, true, 2); }
 		else if (u) title = card_for_unit(u, u->unit_type->id);
 		else { title = unit_name(sel->unit_type->id); menu = 0; }   // neutral/enemy: name only, no actions
 
-		if (touch_controls && u && (pending_build || targeting || menu)) {
-			if (pending_build) {
+		if (u && (pending_build || targeting || menu)) {
+			if (touch_controls && pending_build) {
 				card.clear();
 				title = unit_name((pending_addon ? pending_addon : pending_build)->id);
 				int tile_x = 0, tile_y = 0;
 				if (touch_placement_ready) placement_tile(touch_placement_position, tile_x, tile_y);
 				card.push_back({'c', "Confirm", C_CONFIRM, UnitTypes::None,
 				                touch_placement_ready && placement_valid(tile_x, tile_y)});
-			} else if (targeting) card.clear();
+			} else if (touch_controls && targeting) card.clear();
 			if (std::none_of(card.begin(), card.end(), [](const cmd_t& command) { return command.key == '\x1b'; }))
 				card.push_back({'\x1b', "Cancel", C_BACK, UnitTypes::None, true});
 		}
 
-		if (touch_controls) {
-			card.erase(std::remove_if(card.begin(), card.end(), [&](const cmd_t& command) {
-				return (command.act == C_PATROL && (!u || ut_worker(u) ||
-				        (!unit_can_attack(u) && !unit_is_carrier(u) && !unit_is_reaver(u)))) ||
-				       command.act == C_GATHER || command.act == C_REPAIR ||
-				       command.act == C_RETURN || command.act == C_ADVMENU ||
-				       (command.act == C_HOLD && u && ut_worker(u));
-			}), card.end());
+		if (contextual_commands()) {
 			auto slot = [](const cmd_t& command) {
 				switch (command.act) {
 				case C_MOVE: return 0;
@@ -1483,7 +1526,7 @@ struct play_ui : ui_functions {
 			case C_CONFIRM: break;
 			case C_STOP:
 				c.enabled = true;
-				if (touch_controls && c.key != '\x1b') {
+				if (contextual_commands() && c.key != '\x1b') {
 					c.enabled = false;
 					for (auto selected_id : current_selection) {
 						unit_t* selected = get_unit(selected_id);
@@ -1548,6 +1591,13 @@ struct play_ui : ui_functions {
 		fx_add(sel->parasite_flags,               "Parasited");
 		card_text += '\t'; if (!placing) card_text += fx.c_str();
 		for (auto& c : card) {
+			// Visibility does not remove keyboard commands from the active card.
+			if (contextual_commands() &&
+			    ((c.act == C_PATROL && (!u || ut_worker(u) ||
+			      (!unit_can_attack(u) && !unit_is_carrier(u) && !unit_is_reaver(u)))) ||
+			     c.act == C_GATHER || c.act == C_REPAIR || c.act == C_RETURN ||
+			     (c.act == C_HOLD && u && ut_worker(u)))) continue;
+			if (combined_build_menu() && c.act == C_ADVMENU) continue;
 			// Command GRP frames share unit IDs; orders and abilities use separate frames.
 			int icon = (c.ut != UnitTypes::None) ? (int)c.ut : -1;
 			switch (c.act) {
@@ -1608,6 +1658,7 @@ struct play_ui : ui_functions {
 			card_text += '\t'; card_text += (c.req != UnitTypes::None) ? unit_name(c.req) : "";
 			card_text += '\t'; card_text += desc;
 			card_text += '\t'; card_text += (active_act >= 0 && (int)c.act == active_act) ? '1' : '0';
+			card_text += '\t'; card_text += command_id(c);
 		}
 	}
 

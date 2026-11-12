@@ -16,6 +16,7 @@ const campaignSaves = () => campaignSaveModule ||= import('./campaign-saves.js?v
 // GLOBAL sed of the placeholder, which also rewrites comparisons that spell it out —
 // so test for the placeholder's underscores instead of matching it literally.
 const DEV = BUILD.startsWith('__') || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+const { createInterfaceOptions } = await import('./ui-options.js?v=' + (DEV ? Date.now() : BUILD));
 const { campaignVariants, resolveCampaignMission } = await import('./campaign-variants.js?v=' + (DEV ? Date.now() : BUILD));
 
 // Dev builds swap the favicon to the classic SC icon (prod keeps BW.ICO from the
@@ -105,6 +106,7 @@ async function mapHash(file) {
 }
 
 const $ = (id) => document.getElementById(id);
+const interfaceOptions = createInterfaceOptions();
 const setBar = (f) => { $('bar').firstElementChild.style.width = (f * 100).toFixed(1) + '%'; };
 const setMsg = (m) => { $('msg').textContent = m; };
 
@@ -334,11 +336,15 @@ function wireInput(canvas, x) {
   const mouseMedia = window.matchMedia('(any-pointer: fine) and (any-hover: hover)');
   let touchControls;
   const useTouchControls = (touch) => {
+    const preference = interfaceOptions.preferences.input;
+    if (preference !== 'auto') touch = preference === 'touch';
     if (touchControls === touch) return;
     touchControls = touch;
+    wireInput.touch = touch;
     x.openbw_set_touch_controls?.(touch ? 1 : 0);
   };
   const syncTouchControls = () => useTouchControls(touchMedia.matches && !mouseMedia.matches);
+  wireInput.syncTouchControls = syncTouchControls;
   syncTouchControls();
   touchMedia.addEventListener('change', syncTouchControls);
   mouseMedia.addEventListener('change', syncTouchControls);
@@ -410,11 +416,13 @@ function wireInput(canvas, x) {
   // Park the cursor off-screen when it leaves the canvas so edge-scrolling stops.
   canvas.addEventListener('mouseleave', () => { if (!locked()) x.openbw_mouse_move(-1, -1); });
   canvas.addEventListener('mousedown', (e) => {
+    if (interfaceOptions.open) return;
     domDownEl = domUnderCursor();
     if (domDownEl) return;   // press belongs to the DOM UI, not the game
     syncMods(e); const [px, py] = pos(e); x.openbw_mouse_button(1, sdlButton(e.button), px, py, e.detail || 1);
   });
   window.addEventListener('mouseup', (e) => {
+    if (interfaceOptions.open || e.target.closest?.('#interface-options')) return;
     if (e.target.closest?.('#touch-shortcuts')) return;
     if (coarsePointer() && e.target.closest?.('#card')) return;
     if (domDownEl) {
@@ -444,7 +452,11 @@ function wireInput(canvas, x) {
   // engine can track held state (for select-all, shift-queue, group assign).
   const MOD_SC = new Set([224, 225, 228, 229]);
   const key = (down) => (e) => {
-    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;   // typing in chat
+    if (interfaceOptions.open || e.target.closest?.('#settings, #help') ||
+        document.activeElement?.matches('input, select, textarea, [contenteditable="true"]')) {
+      if (!down) x.openbw_key(0, 0, SCANCODE[e.code] || 0);
+      return;
+    }
     if (altEsc && e.code === altEsc) {
       // Fire a complete Esc press. Caps Lock is a lock key — macOS delivers keydown when
       // the lock turns on but only keyup when it turns off — so accept either edge for it;
@@ -476,16 +488,29 @@ function wireInput(canvas, x) {
   const updateZoomButtons = () => {
     $('touch-zoom-out').disabled = zoom <= 1;
     $('touch-zoom-in').disabled = zoom >= zoomMax();
-    if (coarsePointer()) {
-      const bounds = canvas.getBoundingClientRect();
-      const scaleX = bounds.width / x.openbw_framebuffer_width();
-      const scaleY = bounds.height / x.openbw_framebuffer_height();
-      const mapWidth = Math.round(x.openbw_map_w() / zoom);
-      const mapHeight = Math.round(x.openbw_map_h() / zoom);
-      document.body.style.setProperty('--minimap-edge', (bounds.left + (mapWidth + 4) * scaleX + 8) + 'px');
-      document.body.style.setProperty('--touch-rows', mapHeight * scaleY >= 90 ? '2' : '1');
-    }
+    const bounds = canvas.getBoundingClientRect();
+    const scaleX = bounds.width / x.openbw_framebuffer_width();
+    const scaleY = bounds.height / x.openbw_framebuffer_height();
+    x.openbw_set_minimap_size(Math.round(interfaceOptions.minimapSize / scaleX));
+    const mapRight = x.openbw_minimap_bounds(0) + x.openbw_minimap_bounds(2);
+    const mapHeight = x.openbw_minimap_bounds(3);
+    document.body.style.setProperty('--minimap-edge', (bounds.left + mapRight * scaleX + 8) + 'px');
+    document.body.style.setProperty('--touch-rows', mapHeight * scaleY >= 90 ? '2' : '1');
+    updateHUDPlacement();
   };
+  function updateHUDPlacement() {
+    const canvasBounds = canvas.getBoundingClientRect();
+    const scaleX = canvasBounds.width / x.openbw_framebuffer_width();
+    const scaleY = canvasBounds.height / x.openbw_framebuffer_height();
+    const mapRight = canvasBounds.left + (x.openbw_minimap_bounds(0) + x.openbw_minimap_bounds(2)) * scaleX;
+    const hud = $('hud').getBoundingClientRect();
+    const strip = document.body.classList.contains('touch-building-menu');
+    const bottom = !strip && hud.width && hud.left < mapRight + 8
+      ? `${innerHeight - canvasBounds.top - x.openbw_minimap_bounds(1) * scaleY + 8}px` : 'var(--touch-bottom, 8px)';
+    document.body.style.setProperty('--hud-bottom', bottom);
+  }
+  wireInput.updateHUDPlacement = updateHUDPlacement;
+  wireInput.updateMinimap = updateZoomButtons;
   const applyZoom = () => {
     zoomTimer = 0;
     lastZoomApply = performance.now();
@@ -632,7 +657,7 @@ function wireInput(canvas, x) {
     if (tt) return;
     const t = e.changedTouches[0];
     const [px, py] = xy(t);
-    if (x.openbw_cursor() === 2 && x.openbw_preview_placement) {
+    if (touchControls && x.openbw_cursor() === 2 && x.openbw_preview_placement) {
       tt = { id: t.identifier, mode: 'placement', x: px, y: py };
       previewPlacement(t);
       return;
@@ -709,7 +734,7 @@ function wireInput(canvas, x) {
     } else if (tt.mode === 'pending') {
       const cursor = x.openbw_cursor();
       const targeting = cursor === 1 || cursor === 2 || cursor === 4;
-      const button = targeting ? 1 : tt.armed ? 3
+      const button = targeting ? 1 : tt.armed ? 3 : !touchControls ? 1
         : x.openbw_touch_button ? x.openbw_touch_button(px | 0, py | 0) : 1;
       const now = performance.now();
       const selectionTap = button === 1 && !targeting && !tt.armed;
@@ -818,7 +843,8 @@ async function boot(session) {
   const muteBtn = $('mute');
   const applyMute = () => {
     if (masterGain) masterGain.gain.value = muted ? 0 : 1;
-    muteBtn.textContent = muted ? '🔇' : '🔊';
+    muteBtn.innerHTML = `<i data-lucide="${muted ? 'volume-x' : 'volume-2'}"></i>`;
+    window.lucide?.createIcons();
     muteBtn.title = muted ? 'Unmute sound' : 'Mute sound';
     muteBtn.setAttribute('aria-label', muteBtn.title);
   };
@@ -991,6 +1017,12 @@ async function boot(session) {
     shadow = await makeBotReplica(assets, session.bot2.module, slots, session.bot2.slot, ...winSize());
     bot2 = { slot: session.bot2.slot };
   }
+  const applyCommandPresentation = () => {
+    const options = interfaceOptions.resolved;
+    x.openbw_set_command_presentation(options.commands === 'contextual' ? 1 : 2,
+      options.buildings === 'strip' ? 1 : 2, options.unavailable === 'hide' ? 1 : 2);
+  };
+  applyCommandPresentation();
   wireInput(canvas, x);
   // View zoom + native cursor overlay (feature-detected: a stale module falls back
   // to the engine-drawn cursor and a zoom-scaled minimap).
@@ -1070,6 +1102,7 @@ async function boot(session) {
   // Alt-Enter (the classic PC-game convention) / F11 toggle fullscreen. The game's
   // own key handler hands modified keys back to the browser, so no game binds shadowed.
   window.addEventListener('keydown', (e) => {
+    if (interfaceOptions.open) return;
     const combo = e.key === 'F11'
       || (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === 'Enter');
     if (!combo || e.repeat) return;
@@ -1229,6 +1262,7 @@ async function boot(session) {
   };
   const closeChat = () => { chatInput.value = ''; chatInput.blur(); chatInput.style.display = 'none'; };
   window.addEventListener('keydown', (e) => {
+    if (interfaceOptions.open) return;
     if (document.activeElement === chatInput) {
       if (e.key === 'Enter') { sendChat(chatInput.value); closeChat(); e.preventDefault(); }
       else if (e.key === 'Escape') { closeChat(); e.preventDefault(); }
@@ -1525,6 +1559,14 @@ async function boot(session) {
   // stalls the opponent, who sees "Waiting for opponent" until you resume. Hiding it
   // reflows the flex row, so the remaining icons shift left rather than leaving a gap.
   pauseBtn.style.display = link ? 'none' : '';
+  $('menu-pause').hidden = !!link;
+  $('menu-pause').onclick = () => pauseBtn.click();
+  $('view-objectives').hidden = !session.mission;
+  $('view-objectives').onclick = () => {
+    settingsPop.style.display = 'none';
+    document.body.classList.add('peek-objectives');
+    $('mission-objectives').open = true;
+  };
   // One centre banner serves every state: an explicit message (disconnect/desync) wins,
   // otherwise paused, otherwise blocked waiting on a peer's turn.
   let bannerText = null, bannerOverride = '', bannerTimer = 0;
@@ -1545,6 +1587,7 @@ async function boot(session) {
   const applyPause = () => {
     pauseBtn.classList.toggle('is-paused', paused);
     pauseBtn.title = paused ? 'Resume' : 'Pause';
+    $('menu-pause').textContent = paused ? 'Resume game' : 'Pause game';
     updateBanner();
   };
   pauseBtn.onclick = () => {
@@ -1556,6 +1599,21 @@ async function boot(session) {
     x.openbw_set_paused?.(paused ? 1 : 0);   // freeze game input in the sim too
   };
   applyPause();
+  let optionsPausedGame = false;
+  interfaceOptions.setGameHooks({
+    open() {
+      settingsPop.style.display = 'none';
+      helpPop.style.display = 'none';
+      if (document.pointerLockElement) document.exitPointerLock();
+      x.openbw_mouse_move(-1, -1);
+      optionsPausedGame = !link && !paused;
+      if (optionsPausedGame) pauseBtn.click();
+    },
+    close() {
+      if (optionsPausedGame && paused) pauseBtn.click();
+      optionsPausedGame = false;
+    },
+  });
 
   // Game speed lives in the settings popup; the value is the ms per sim frame.
   const optSpeed = $('opt-speed');
@@ -1754,6 +1812,7 @@ async function boot(session) {
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
     const mobile = coarsePointer();
+    const strip = interfaceOptions.resolved.buildings === 'strip';
     const cursor = x.openbw_cursor();
     const targeting = cursor === 1 || cursor === 2 || cursor === 4;
     const touchCard = text + '\n' + cursor;
@@ -1763,7 +1822,6 @@ async function boot(session) {
       const title = rows.shift().split('\t')[0];
       const commands = rows.map(row => row.split('\t'));
       const buildMenu = title === 'Build' || title === 'Advanced Build';
-      document.body.classList.toggle('touch-building-menu', buildMenu);
       const canMove = commands.some(command => command[1] === 'Move');
       const hasDetails = commands.some(command => +command[4] || +command[5] || command[7] || command[8]);
       $('touch-queue').hidden = !canMove || buildMenu;
@@ -1774,14 +1832,16 @@ async function boot(session) {
         $('touch-info').setAttribute('aria-pressed', 'false');
       }
     }
-    if (!mobile) document.body.classList.remove('touch-building-menu', 'touch-targeting');
-    const presentation = mobile + '\n' + text;
+    if (!mobile) document.body.classList.remove('touch-targeting');
+    document.body.classList.toggle('touch-building-menu', strip &&
+      ['Build', 'Advanced Build'].includes(text.split('\n')[0].split('\t')[0]));
+    const presentation = mobile + '\n' + strip + '\n' + text;
     if (presentation === lastCard) return;
     lastCard = presentation;
     if (!text) { cardEl.innerHTML = ''; lastBtnSig = null; return; }
     const lines = text.split('\n');
     const buildMenu = lines[0].split('\t')[0] === 'Build';
-    if (mobile && buildMenu) {
+    if (strip && buildMenu) {
       const commands = lines.slice(1);
       const ids = commands.map(command => command.split('\t')[3]);
       touchBuildOrder = touchBuildOrder.filter(id => ids.includes(id));
@@ -1856,13 +1916,21 @@ async function boot(session) {
       const active = f.length > 9 && f[9] === '1' ? ' active' : '';
       // Wrap the label in one span so the flex `gap` on .cmd spaces only the icon from
       // the label — not the highlighted <b> from the rest of the word ("B uild").
-      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${mobile ? esc(label) : labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
+      html += `<button type="button" class="cmd${off}${poor}${active}" data-key="${dataKey}" data-command="${esc(f[10] || '')}" data-building="${building}" aria-label="${esc(label)}" aria-disabled="${!!off}" aria-expanded="false">${ico}<span class="lbl">${mobile ? esc(label) : labelHtml}</span><span class="touch-cost">${costInner}</span>${popup}</button>`;
     }
     const scrollLeft = cardEl.querySelector('.command-grid')?.scrollLeft || 0;
     cardEl.innerHTML = `<div class="card-heading">${titleHtml}</div><div class="command-grid">${html}</div>`;
     if (mobile && window.lucide) window.lucide.createIcons();
-    if (mobile && buildMenu) cardEl.querySelector('.command-grid').scrollLeft = scrollLeft;
+    if (strip && buildMenu) cardEl.querySelector('.command-grid').scrollLeft = scrollLeft;
+    wireInput.updateHUDPlacement();
   };
+  interfaceOptions.subscribe(() => {
+    applyCommandPresentation();
+    wireInput.syncTouchControls();
+    wireInput.updateMinimap();
+    lastCard = ''; lastBtnSig = null; lastTouchCard = '';
+    updateCard();
+  });
 
   cardEl.addEventListener('pointerdown', event => {
     cardPointer = event.pointerId;
@@ -2033,6 +2101,7 @@ async function boot(session) {
       `<span class="r min">${ico(ri[0], 'min')}${min}</span>` +
       `<span class="r gas">${ico(ri[1], 'gas')}${gas}</span>` +
       `<span class="r sup">${ico(ri[2], 'sup')}<span class="${cap}">${used}/${max}</span></span>`;
+    interfaceOptions.refreshHUD();
   };
 
   // Blocked-command toast: openbw_error() returns "seq\tmessage"; flash the message

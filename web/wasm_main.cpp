@@ -340,6 +340,19 @@ OPENBW_EXPORT(openbw_set_touch_controls) void openbw_set_touch_controls(int enab
 	g_ui->refresh_card();
 }
 
+OPENBW_EXPORT(openbw_set_command_presentation) void openbw_set_command_presentation(int commands, int buildings, int unavailable) {
+	if (commands < 1 || commands > 2 || buildings < 1 || buildings > 2 || unavailable < 1 || unavailable > 2)
+		error("invalid interface presentation");
+	if (!g_ui) return;
+	if (g_ui->command_presentation == commands && g_ui->building_presentation == buildings &&
+	    g_ui->unavailable_presentation == unavailable) return;
+	if (g_ui->building_presentation != buildings) g_ui->menu = 0;
+	g_ui->command_presentation = commands;
+	g_ui->building_presentation = buildings;
+	g_ui->unavailable_presentation = unavailable;
+	g_ui->refresh_card();
+}
+
 OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mouse_y) {
 	if (!g_ui || g_ui->pending_build || g_ui->targeting || !g_ui->primary_selected()) return 1;
 	xy minimap_position;
@@ -413,6 +426,17 @@ OPENBW_EXPORT(openbw_cursor_rgba) const uint8_t* openbw_cursor_rgba() { return g
 OPENBW_EXPORT(openbw_cursor_box) int openbw_cursor_box() { return g_ui ? (int)g_ui->cursor_box() : 128; }
 OPENBW_EXPORT(openbw_set_external_cursor) void openbw_set_external_cursor(int on) { if (g_ui) g_ui->external_cursor = on != 0; }
 OPENBW_EXPORT(openbw_set_view_scale) void openbw_set_view_scale(double s) { if (g_ui) g_ui->minimap_scale = s >= 1 ? s : 1; }
+OPENBW_EXPORT(openbw_set_minimap_size) void openbw_set_minimap_size(int pixels) {
+	if (pixels < 0 || pixels > 1024) error("invalid minimap size");
+	if (g_ui) g_ui->minimap_target_size = pixels;
+}
+OPENBW_EXPORT(openbw_minimap_bounds) int openbw_minimap_bounds(int field) {
+	if (field < 0 || field > 3) error("invalid minimap bounds field");
+	if (!g_ui) return 0;
+	auto area = g_ui->get_minimap_area();
+	return field == 0 ? area.from.x : field == 1 ? area.from.y :
+	       field == 2 ? area.to.x - area.from.x : area.to.y - area.from.y;
+}
 
 // Debug JS API for console/automation testing: list units, select by id (see sandbox.h).
 OPENBW_EXPORT(openbw_debug_units) const char* openbw_debug_units() { return g_ui ? g_ui->debug_units() : ""; }

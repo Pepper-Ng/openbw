@@ -290,7 +290,7 @@
       --touch-bottom: max(8px, env(safe-area-inset-bottom));
       --touch-left: max(8px, env(safe-area-inset-left));
       --command-columns: 2;
-      --command-width: calc(var(--command-columns) * 64px + (var(--command-columns) - 1) * 4px + 4px);
+      --command-width: calc(var(--command-columns) * var(--action-size, 64px) + (var(--command-columns) - 1) * 4px + 4px);
     }
     #wrap { inset: env(safe-area-inset-top) auto auto env(safe-area-inset-left);
       width: calc(100dvw - env(safe-area-inset-left) - env(safe-area-inset-right));
@@ -315,12 +315,13 @@
       width: 100%; box-sizing: border-box; padding: 2px; gap: 2px; }
     #card .card-heading { display: flex; flex-wrap: wrap; gap: 0 4px;
       font-size: 11px; line-height: 16px; }
-    #card .command-grid { display: grid; grid-template-columns: repeat(var(--command-columns), 64px);
-      grid-auto-rows: 64px; gap: 4px; max-height: calc(100dvh - var(--touch-top) - var(--touch-bottom) - 128px);
+    #card .command-grid { display: grid; grid-template-columns: repeat(var(--command-columns), var(--action-size, 64px));
+      grid-auto-rows: var(--action-size, 64px); gap: 4px;
+      max-height: calc(100dvh - var(--hud-bottom, var(--touch-bottom)) - var(--hud-headroom, 128px));
       overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; pointer-events: none; }
     #card .cmd { display: grid; grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: 34px 12px 12px; gap: 0; min-width: 0;
-      width: 64px; height: 64px; box-sizing: border-box; padding: 3px; font-size: 11px;
+      grid-template-rows: minmax(0, 1fr) 12px 12px; gap: 0; min-width: 0;
+      width: var(--action-size, 64px); height: var(--action-size, 64px); box-sizing: border-box; padding: 3px; font-size: 11px;
       background: #151719; }
     #card .cmd.active { background: #183c4b; }
     #card .cmd.off { opacity: 1; background: #1b1d1f; }
@@ -328,9 +329,9 @@
     #card .cmd.off .touch-cost { opacity: .7; }
     #card .cmd.poor .ico { opacity: .55; }
     #card .cmd.poor .touch-cost b { color: #f87171; }
-    #card .cmd[aria-label="Move"] { display: none; }
-    #card:not(.building-menu) .cmd[aria-label="Stop"].off { display: none; }
-    #card .cmd .ico { display: block; width: 36px; height: 34px; grid-column: 1; grid-row: 1;
+    body[data-commands="contextual"] #card .cmd[aria-label="Move"] { display: none; }
+    body[data-commands="contextual"] #card:not(.building-menu) .cmd[aria-label="Stop"].off { display: none; }
+    #card .cmd .ico { display: block; width: var(--action-icon, 36px); height: var(--action-icon, 34px); grid-column: 1; grid-row: 1;
       justify-self: center; align-self: center; }
     #card .cmd .lbl { display: block; grid-column: 1; grid-row: 2 / span 2; line-height: 11px; text-align: center;
       font-size: 10px; white-space: normal; overflow-wrap: anywhere;
@@ -345,11 +346,11 @@
     #card .touch-cost .cico { height: 10px; width: auto; }
     body.touch-building-menu #hud { left: var(--minimap-edge, 144px);
       right: var(--touch-right); bottom: var(--touch-bottom); width: auto; max-width: none; }
-    #card.building-menu .command-grid { display: flex; width: 100%; min-width: 0; box-sizing: border-box;
+    body[data-buildings="strip"] #card.building-menu .command-grid { display: flex; width: 100%; min-width: 0; box-sizing: border-box;
       max-height: none; overflow-x: auto; overflow-y: hidden;
       padding-bottom: 6px; touch-action: pan-x; scroll-snap-type: x proximity; scrollbar-width: thin;
       pointer-events: auto; }
-    #card.building-menu .cmd { flex: 0 0 64px; scroll-snap-align: start; }
+    #card.building-menu .cmd { flex: 0 0 var(--action-size, 64px); scroll-snap-align: start; }
     #card.building-menu .cmd[aria-label="Cancel"] { order: -1; position: sticky; left: 0; z-index: 1; }
     #card.building-menu .touch-cost { grid-row: 2 / span 2; align-self: center; }
     #card .cmd:hover .cost, #card .cmd:hover .req { display: none; }
@@ -513,18 +514,160 @@
   #go-progress { font-size: 13px; color: #b6d8c8; margin: 12px 0; }
   @media (max-height: 500px) { #mission-briefing { padding: 12px 20px; } #briefing-title { font-size: 18px; } #briefing-speaker-row { min-height: 36px; margin: 4px 0; } #briefing-portrait { width: 36px; height: 36px; } #briefing-text { min-height: 44px; } .briefing-actions { margin-top: 10px; } }
 </style>
+<style>
+  #start-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  #start-header h1 { margin: 0; }
+  #start-menu-toggle { display: none; }
+  #start-navigation { display: flex; gap: 6px; justify-content: center; margin: 12px 0; }
+  #start-navigation button, #start-menu-toggle { margin: 0; background: #182b36; color: #dcebf1;
+    border: 1px solid #37505b; }
+  #options-notice { color: #fbbf24; font-size: 12px; }
+  #interface-options { color: #dcebf1; background: #101b23; border: 1px solid #3b5866;
+    border-radius: 14px; padding: 0; width: min(840px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px); box-sizing: border-box; box-shadow: 0 24px 80px #000b; }
+  #interface-options::backdrop { background: #000b; }
+  #interface-options-form { display: flex; flex-direction: column; max-height: calc(100dvh - 36px); }
+  .options-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 18px 22px; border-bottom: 1px solid #2e444f; }
+  .options-heading h2 { margin: 0; font-size: 20px; }
+  #options-close { margin: 0; background: #223742; color: #e2e8f0; min-width: 44px; min-height: 44px; padding: 8px; }
+  .options-content { display: grid; grid-template-columns: 170px minmax(0, 1fr); overflow-y: auto; min-height: 0; }
+  .options-tabs { padding: 16px 10px; border-right: 1px solid #2e444f; }
+  .options-tabs button { display: block; width: 100%; margin: 0 0 6px; text-align: left;
+    background: transparent; color: #b7cbd4; min-height: 44px; }
+  .options-tabs button[aria-selected="true"] { background: #214456; color: #bdefff; }
+  .options-panels { min-width: 0; padding: 18px 22px; }
+  .options-panels h3 { margin: 0 0 14px; color: #f0f9ff; }
+  .options-panels label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 48%);
+    align-items: center; gap: 12px; margin: 14px 0; }
+  .options-panels select { min-width: 0; width: 100%; min-height: 44px; padding: 6px;
+    font: inherit; background: #1a2c37; color: #edf7fc; border: 1px solid #49616e; border-radius: 6px; }
+  .options-panels p { color: #a9bdc7; font-size: 13px; }
+  .options-panels input[type="range"] { width: 100%; accent-color: #38bdf8; min-height: 32px; }
+  .options-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .options-presets button { margin: 0; background: #243d4a; color: #e2e8f0; min-height: 44px; }
+  #options-preview { display: flex; align-items: flex-start; gap: 4px; padding: 14px; margin-top: 16px;
+    background: #071016; border: 1px solid #2e444f; border-radius: 8px; }
+  #options-preview span { display: grid; place-content: center; text-align: center;
+    width: var(--action-size); height: var(--action-size); font-size: 11px; background: #1d3844; border-radius: 5px; }
+  #options-preview svg { width: var(--action-icon); height: var(--action-icon); margin: auto; }
+  .options-footer { border-top: 1px solid #2e444f; padding: 12px 22px; display: flex; flex-wrap: wrap;
+    align-items: center; gap: 8px; }
+  .options-footer button { margin: 0; min-height: 44px; }
+  #options-reset { margin-right: auto; background: #233843; color: #dcebf1; }
+  #options-cancel { background: #233843; color: #dcebf1; }
+  #interface-options-status { color: #fbbf24; margin: 0; padding: 0 22px; }
+  #interface-options-status:not(:empty) { padding-top: 10px; padding-bottom: 10px; }
+  #interface-options [hidden], #options-notice[hidden], #settings button[hidden] { display: none !important; }
+  #interface-options :focus-visible, #start-header :focus-visible, #start-navigation :focus-visible {
+    outline: 2px solid #7dd3fc; outline-offset: 3px; }
+  #settings .menu-action { display: block; width: 100%; margin-top: 8px; min-height: 44px;
+    background: #203b48; color: #e2e8f0; text-align: left; }
+  body[data-pause="menu"] #pausebtn { display: none !important; }
+  body[data-objectives="menu"]:not(.peek-objectives) #mission-objectives { display: none; }
+  #resources { top: max(4px, env(safe-area-inset-top)); right: max(4px, env(safe-area-inset-right));
+    gap: 6px 8px; padding: 4px 6px; font-size: var(--resource-font, 16px);
+    box-sizing: border-box; max-width: var(--resources-room, calc(100vw - 76px)); flex-wrap: wrap; justify-content: flex-end; }
+  #resources .r { gap: 3px; flex-shrink: 0; white-space: nowrap; }
+  #resources .rico { height: calc(var(--resource-font, 16px) * 1.3); max-width: calc(var(--resource-font, 16px) * 1.6); }
+  #resources .min .rico, #resources .gas .rico { height: var(--resource-font, 16px); }
+  #topbar button, #settings .settings-tools button {
+    display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+    width: 36px; height: 36px; padding: 0; box-sizing: border-box; }
+  #topbar button svg, #settings .settings-tools button svg { display: block; width: 20px; height: 20px; flex-shrink: 0; }
+  #topbar #pausebtn::before { vertical-align: initial; }
+  #sound-dock { display: contents; }
+  body { --hud-headroom: calc(max(var(--resources-bottom, 56px), calc(var(--touch-top, 0px) + 52px)) + 80px); }
+  #hud { bottom: var(--hud-bottom, var(--touch-bottom, 8px)); }
+  #mission-hud { top: max(calc(var(--touch-top, 0px) + 52px), var(--resources-bottom, 56px)); }
+  body[data-command-layout="grid"] #hud, body[data-buildings="split"].touch-building-menu #hud {
+    width: calc(3 * var(--action-size) + 12px); max-width: calc(100vw - 16px); }
+  body[data-buildings="split"] #hud:has(#card.building-menu) {
+    width: calc(3 * var(--action-size) + 12px); max-width: calc(100vw - 16px); }
+  body[data-command-layout="grid"] #card, body[data-buildings="split"] #card.building-menu {
+    display: flex; flex-direction: column; align-items: stretch; width: 100%; box-sizing: border-box; padding: 2px; gap: 2px; }
+  body[data-command-layout="grid"] #card .command-grid,
+  body[data-buildings="split"] #card.building-menu .command-grid {
+    display: grid; grid-template-columns: repeat(3, var(--action-size)); grid-auto-rows: var(--action-size);
+    gap: 4px; overflow-x: hidden; overflow-y: auto;
+    max-height: min(calc(3 * var(--action-size) + 8px), calc(100dvh - var(--hud-bottom, 8px) - var(--hud-headroom, 128px)));
+    touch-action: pan-y; overscroll-behavior: contain; }
+  body[data-command-layout="grid"] #card .card-heading { display: flex; flex-wrap: wrap; gap: 4px; }
+  body[data-command-layout="grid"] #card .cmd,
+  body[data-buildings="split"] #card.building-menu .cmd,
+  body[data-buildings="strip"] #card.building-menu .cmd {
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto;
+    width: var(--action-size); height: var(--action-size); min-width: 0; box-sizing: border-box;
+    gap: 0; padding: 3px; margin: 0; text-align: center; }
+  body[data-command-layout="grid"] #card .cmd .ico,
+  #card.building-menu .cmd .ico { width: var(--action-icon); height: var(--action-icon); margin: auto; }
+  body[data-command-layout="grid"] #card .cmd .lbl,
+  body[data-buildings="split"] #card.building-menu .cmd .lbl {
+    font-size: 10px; line-height: 12px; white-space: normal; overflow-wrap: anywhere; }
+  body[data-buildings="split"] #card.building-menu .command-grid { width: calc(3 * var(--action-size) + 8px); }
+  body[data-buildings="split"] #card.building-menu .cmd[aria-label="Cancel"] {
+    order: -1; position: sticky; top: 0; z-index: 1; background: #192e39; }
+  body[data-buildings="strip"].touch-building-menu #hud {
+    left: var(--minimap-edge, 144px); right: max(8px, env(safe-area-inset-right)); width: auto; max-width: none; }
+  body[data-buildings="strip"] #card.building-menu { display: flex; flex-direction: column; width: 100%; box-sizing: border-box; }
+  body[data-buildings="strip"] #card.building-menu .command-grid {
+    display: flex; max-height: none; gap: 4px; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px;
+    touch-action: pan-x; overscroll-behavior: contain; pointer-events: auto; }
+  body[data-buildings="strip"] #card.building-menu .cmd { flex: 0 0 var(--action-size); }
+  body[data-buildings="strip"] #card.building-menu .cmd[aria-label="Cancel"] { order: -1; position: sticky; left: 0; z-index: 1; }
+  body[data-buildings="strip"] #card.building-menu .cmd .lbl { display: none; }
+  body[data-buildings="strip"] #card.building-menu .touch-cost { display: flex; justify-content: center; font-size: 10px; }
+  body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd { font-size: calc(13px * var(--ui-scale)); }
+  body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd .ico {
+    width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); }
+  body[data-commands="contextual"] #card .cmd[aria-label="Move"] { display: none; }
+  @media (pointer: coarse) {
+    body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd { font-size: 11px; }
+    body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd .ico {
+      width: var(--action-icon); height: var(--action-icon); }
+    body[data-buildings="split"] #card.building-menu .cmd[data-building="true"] .lbl { display: block; }
+    #resources { gap: 3px 6px; font-size: var(--resource-font, 15px); }
+    #topbar button, #settings .settings-tools button { width: 44px; height: 44px; }
+  }
+  @media (max-width: 600px), (pointer: coarse) and (max-height: 600px) {
+    #overlay { padding-top: max(12px, env(safe-area-inset-top)); }
+    #start-header { position: relative; }
+    #start-menu-toggle { display: grid; place-items: center; width: 44px; height: 44px; padding: 8px; }
+    #start-navigation { display: none; }
+    #start-navigation.is-open { position: absolute; z-index: 2; right: 12px; top: 62px; display: flex;
+      flex-direction: column; min-width: 180px; margin: 0; padding: 10px; background: #101f28;
+      border: 1px solid #37505b; border-radius: 10px; box-shadow: 0 12px 40px #000a; }
+    #start-navigation button { text-align: left; min-height: 44px; }
+    #mobilewarn { font-size: 12px; margin: 8px 0; padding: 6px 10px; }
+    #interface-options { width: 100%; max-width: none; height: 100dvh; max-height: 100dvh;
+      margin: 0; border: 0; border-radius: 0; padding: env(safe-area-inset-top) env(safe-area-inset-right)
+        env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    #interface-options-form { height: 100%; max-height: 100%; }
+    .options-heading, .options-panels, .options-footer { padding: 12px 16px; }
+    .options-content { display: flex; flex-direction: column; }
+    .options-tabs { display: flex; flex-shrink: 0; padding: 8px; gap: 4px; border-right: 0;
+      border-bottom: 1px solid #2e444f; }
+    .options-tabs button { width: auto; flex: 1; padding: 8px; margin: 0; text-align: center; }
+    .options-panels label { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+    .options-panels select { font-size: 16px; }
+    .options-footer { margin-top: auto; }
+  }
+</style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="1280" height="800"></canvas></div>
 <div id="resources"></div>
 <div id="topbar">
   <button id="pausebtn" title="Pause"></button>
-  <button id="settingsbtn" title="Settings">⚙️</button>
+  <button id="settingsbtn" title="Settings" aria-label="Settings"><i data-lucide="settings"></i></button>
 </div>
 <div id="settings">
   <h3>Settings</h3>
+  <button type="button" class="menu-action" data-options-open>Customize interface</button>
+  <button type="button" id="menu-pause" class="menu-action">Pause game</button>
+  <button type="button" id="view-objectives" class="menu-action" hidden>Objectives</button>
   <div class="settings-tools">
-    <button id="mute" title="Mute sound" aria-label="Mute sound">🔊</button>
+    <span id="sound-dock"><button id="mute" title="Mute sound" aria-label="Mute sound"><i data-lucide="volume-2"></i></button></span>
     <button id="helpbtn" title="Controls" aria-label="Controls">?</button>
   </div>
   <div id="touch-shortcuts" role="group" aria-label="Control groups and zoom">
@@ -634,7 +777,16 @@
 </div>
 
 <div id="overlay"><div class="card">
-  <h1><a id="home" href="./" title="Start over on a clean URL">OpenBW Web</a></h1>
+  <header id="start-header">
+    <h1><a id="home" href="./" title="Start over on a clean URL">OpenBW Web</a></h1>
+    <button id="start-menu-toggle" type="button" aria-label="Open menu" aria-controls="start-navigation" aria-expanded="false"><i data-lucide="menu"></i></button>
+  </header>
+  <nav id="start-navigation" aria-label="Main menu">
+    <button type="button" data-start-mode="campaign">Campaign</button>
+    <button type="button" data-start-mode="sandbox">Sandbox</button>
+    <button type="button" data-options-open>Options</button>
+  </nav>
+  <p id="options-notice" role="status" hidden>Interface options could not be loaded. Open Options for details.</p>
   <div id="bar"><i></i></div>
   <div id="msg">Preparing…</div>
   <div id="load-actions" hidden>
@@ -644,9 +796,8 @@
     <button id="load-fresh" type="button" hidden><i data-lucide="rotate-ccw"></i>Start Fresh</button>
   </div>
   <div id="mobilewarn">
-    📱 Touch controls: <b>tap</b> to select, <b>drag</b> to pan, <b>long-press</b> to
-    command (move/attack), <b>long-press&nbsp;+&nbsp;drag</b> to box-select. Best in
-    landscape. First run downloads ~90&nbsp;MB of game data.
+    Touch: <b>tap</b> to select or command, <b>hold and drag</b> to box-select,
+    <b>two fingers</b> to pan or zoom. Customize controls in <b>Options</b>.
   </div>
   <div id="controls" style="display:none">
     <div id="play-modes" role="tablist" aria-label="Game mode">
@@ -818,6 +969,50 @@
 <!-- In prod, __BUILD__ is the commit SHA (cache-busts per deploy). In dev it stays the
      literal "__BUILD__", so the browser would serve a stale openbw.js forever — load it
      with a fresh timestamp instead so local edits always take. -->
+<dialog id="interface-options" aria-labelledby="interface-options-title">
+  <form id="interface-options-form">
+    <header class="options-heading"><h2 id="interface-options-title">Interface Options</h2><button id="options-close" type="button" aria-label="Close Options">Close</button></header>
+    <div class="options-content">
+      <nav class="options-tabs" role="tablist" aria-label="Options categories">
+        <button id="tab-controls" type="button" role="tab" data-options-tab="controls" aria-selected="true" aria-controls="options-controls">Controls</button>
+        <button id="tab-actions" type="button" role="tab" data-options-tab="actions" aria-selected="false" aria-controls="options-actions" tabindex="-1">Actions</button>
+        <button id="tab-hud" type="button" role="tab" data-options-tab="hud" aria-selected="false" aria-controls="options-hud" tabindex="-1">HUD</button>
+      </nav>
+      <div class="options-panels">
+        <section id="options-controls" role="tabpanel" aria-labelledby="tab-controls">
+          <h3>Input method</h3>
+          <label>Controls<select data-preference="input"><option value="auto">Automatic</option><option value="touch">Touch</option><option value="mouse">Mouse &amp; keyboard</option></select></label>
+          <p>Automatic follows the active input device. Switching devices never changes your action-menu preferences.</p>
+          <p>Touch controls keep contextual taps. Mouse controls keep contextual right-clicks for movement, gathering, combat and repair.</p>
+          <p>Keyboard commands retain their classic bindings. Full keyboard remapping is planned for the next increment.</p>
+        </section>
+        <section id="options-actions" role="tabpanel" aria-labelledby="tab-actions" hidden>
+          <h3>Action buttons</h3>
+          <label>Visible actions<select data-preference="commands"><option value="auto">Automatic layout default</option><option value="contextual">Contextual essentials</option><option value="full">Full actions</option></select></label>
+          <label>Arrangement<select data-preference="layout"><option value="adaptive">Adaptive</option><option value="grid">Three-column grid</option></select></label>
+          <label>Building choices<select data-preference="buildings"><option value="auto">Automatic layout default</option><option value="strip">Combined bottom strip</option><option value="split">Basic / Advanced grids</option></select></label>
+          <label>Locked units/buildings<select data-preference="unavailable"><option value="auto">Automatic layout default</option><option value="hide">Hide</option><option value="show">Show disabled</option></select></label>
+          <p>Contextual essentials hides redundant worker actions. Full actions restores explicit buttons without changing contextual orders. Grids scroll when more than nine choices exist.</p>
+        </section>
+        <section id="options-hud" role="tabpanel" aria-labelledby="tab-hud" hidden>
+          <h3>Size and visibility</h3>
+          <label>UI size <output id="ui-scale-value">100%</output></label>
+          <input type="range" min="75" max="150" step="1" value="100" data-preference="scale" aria-label="UI size">
+          <div class="options-presets"><button type="button" data-scale="75">Small</button><button type="button" data-scale="100">Medium</button><button type="button" data-scale="125">Large</button></div>
+          <label>Minimap size <output id="minimap-scale-value">100%</output></label>
+          <input type="range" min="50" max="200" step="1" value="100" data-preference="minimap" aria-label="Minimap size">
+          <label>Objectives<select data-preference="objectives"><option value="expanded">Expanded on screen</option><option value="collapsed">Collapsed on screen</option><option value="menu">In game menu</option></select></label>
+          <label>Pause button<select data-preference="pause"><option value="auto">Default (on screen)</option><option value="pinned">Pinned on screen</option><option value="menu">In game menu</option></select></label>
+          <label>Sound button<select data-preference="sound"><option value="menu">In game menu</option><option value="pinned">Pinned on screen</option></select></label>
+          <p>UI size scales action buttons and gently scales resources. The minimap has its own size and stays independent of world zoom. Sizes adapt to available space. Mission timers and counters remain visible.</p>
+          <div id="options-preview" aria-label="Button size preview"><span><i data-lucide="swords"></i>Attack</span><span><i data-lucide="hammer"></i>Build</span></div>
+        </section>
+      </div>
+    </div>
+    <p id="interface-options-status" role="alert"></p>
+    <footer class="options-footer"><button id="options-reset" type="button">Reset defaults</button><button id="options-cancel" type="button">Cancel</button><button type="submit">Apply</button></footer>
+  </form>
+</dialog>
 <script src="./vendor/lucide.min.js"></script>
 <script type="module">
   const build = '__BUILD__';
