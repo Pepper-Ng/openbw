@@ -17,6 +17,7 @@ const campaignSaves = () => campaignSaveModule ||= import('./campaign-saves.js?v
 // so test for the placeholder's underscores instead of matching it literally.
 const DEV = BUILD.startsWith('__') || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const { createInterfaceOptions, createGameMenu, shortcuts } = await import('./ui-options.js?v=' + (DEV ? Date.now() : BUILD));
+const { compactCommandsEnabled, createCompactCommands, createObjectiveUpdates } = await import('./gameplay-ui.js?v=' + (DEV ? Date.now() : BUILD));
 const { campaignVariants, resolveCampaignMission } = await import('./campaign-variants.js?v=' + (DEV ? Date.now() : BUILD));
 
 // Dev builds swap the favicon to the classic SC icon (prod keeps BW.ICO from the
@@ -470,12 +471,13 @@ function wireInput(canvas, x) {
     return new TextDecoder().decode(bytes.subarray(pointer, end));
   };
   wireInput.shortcuts = () => {
-    const rows = shortcuts.commandShortcuts(readShortcutText(x.openbw_shortcut_card()));
+    const text = readShortcutText(x.openbw_shortcut_card());
+    const rows = shortcuts.commandShortcuts(text);
     const contextual = interfaceOptions.resolved.commands === 'contextual';
     const visible = shortcuts.commandShortcuts(readShortcutText(x.openbw_card()))
       .filter(row => !contextual || (row.label !== 'Move' && !(row.label === 'Stop' && row.fields[2] === '0')))
       .map(row => row.command);
-    return { rows, visible };
+    return { rows, visible, context: text.split('\n')[0] };
   };
   const shortcutError = text => {
     const bytes = new TextEncoder().encode(text), pointer = x.openbw_in_ptr(bytes.length);
@@ -1704,6 +1706,33 @@ async function boot(session) {
     return missionDecoder.decode(bytes.subarray(pointer, end)).replace(/[\x01-\x09\x0b-\x1f\x7f]/g, '');
   };
   const missionString = index => index ? missionText(x.openbw_mission_string(index)) : '';
+  const objectiveUpdates = createObjectiveUpdates();
+  let objectiveNoticeUntil = 0;
+  const objectivesViewed = () => !document.hidden && !briefingActive && !interfaceOptions.open &&
+    (interfaceOptions.preferences.objectives === 'menu'
+      ? gameMenu.isOpen && gameMenu.page === 'objectives'
+      : !gameMenu.isOpen && $('mission-objectives').open);
+  const updateObjectives = text => {
+    const state = objectiveUpdates.update(text, { viewed: objectivesViewed(), recovering });
+    if ($('mission-objectives-text').textContent !== text) $('mission-objectives-text').textContent = text;
+    if (state.announce) {
+      objectiveNoticeUntil = performance.now() + 5000;
+      $('objective-update-announcement').replaceChildren(document.createTextNode('Objectives updated. Open Objectives to review.'));
+    }
+    if (!state.unread) objectiveNoticeUntil = 0;
+    $('objective-update').hidden = !state.unread || performance.now() >= objectiveNoticeUntil;
+    const inMenu = interfaceOptions.preferences.objectives === 'menu';
+    $('settingsbtn').classList.toggle('objectives-unread', state.unread && inMenu);
+    $('menu-objectives').classList.toggle('objectives-unread', state.unread);
+    $('objective-unread-badge').hidden = !state.unread;
+    if (state.unread && inMenu) $('settingsbtn').setAttribute('aria-describedby', 'objective-update-announcement');
+    else $('settingsbtn').removeAttribute('aria-describedby');
+  };
+  $('objective-update').onclick = () => {
+    if (interfaceOptions.preferences.objectives === 'menu') gameMenu.show('objectives');
+    else $('mission-objectives').open = true;
+    updateObjectives(missionText(x.openbw_mission_objectives()));
+  };
   const narratorName = type => type === 106 ? 'Adjutant' : type === 23 ? 'Edmund Duke' : type === 19 ? 'Jim Raynor' : missionText(x.openbw_mission_unit_name(type));
   const narrationChannel = 63;
   let captionUntil = 0;
@@ -1729,18 +1758,20 @@ async function boot(session) {
       if (type === 7 || type === 8) playNarration(sound, type === 8 ? narrationChannel - 1 : narrationChannel);
       if (!recovering && (type === 7 || type === 9)) {
         $('mission-caption-text').textContent = missionString(text);
+        $('mission-caption-text').scrollTop = 0;
+        $('mission-caption').scrollTop = 0;
         $('mission-caption-speaker').textContent = type === 7 ? narratorName(unit) : '';
         $('mission-caption').hidden = false;
         const duration = type === 7 ? x.openbw_mission_transmission_time(time, adjustment, modifier) : 7000;
         captionUntil = missionTicks + Math.ceil(Math.max(3000, duration) / 42);
       }
-      if (type === 12) $('mission-objectives-text').textContent = missionString(text);
+      if (type === 12) updateObjectives(missionString(text));
     }
     x.openbw_mission_ack(lastMissionSequence);
   }
   function updateMissionHud() {
     if (!session.mission || briefingActive) return;
-    $('mission-objectives-text').textContent = missionText(x.openbw_mission_objectives());
+    updateObjectives(missionText(x.openbw_mission_objectives()));
     const remaining = x.openbw_mission_countdown();
     $('mission-countdown').hidden = remaining < 0;
     if (remaining >= 0) $('mission-countdown').textContent = `Time Left: ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
@@ -1759,16 +1790,32 @@ async function boot(session) {
       caption.style.width = '';
       caption.style.top = '';
       caption.style.transform = '';
+      caption.style.maxHeight = '';
+      const viewport = canvas.getBoundingClientRect();
+      const leftLimit = Math.max(12, viewport.left + 8);
+      const rightLimit = Math.min(innerWidth - 12, viewport.right - 8);
+      const topLimit = Math.max(8, viewport.top + 8);
+      const bottomLimit = Math.min(innerHeight - 8, viewport.bottom - 8);
+      caption.style.maxHeight = `${Math.max(44, bottomLimit - topLimit)}px`;
       const bounds = caption.getBoundingClientRect();
       const objectives = $('mission-hud').getBoundingClientRect();
       if (bounds.left < objectives.right && bounds.right > objectives.left && bounds.top < objectives.bottom && bounds.bottom > objectives.top) {
-        const available = objectives.left - 28;
+        const available = objectives.left - leftLimit - 8;
         if (available >= 280) {
-          caption.style.left = '14px';
-          caption.style.width = `${Math.min(520, available)}px`;
+          caption.style.left = `${leftLimit}px`;
+          caption.style.width = `${Math.min(bounds.width, available)}px`;
           caption.style.transform = 'none';
         } else caption.style.top = `${objectives.bottom + 8}px`;
       }
+      let placed = caption.getBoundingClientRect();
+      if (placed.left < leftLimit || placed.right > rightLimit) {
+        caption.style.left = `${leftLimit}px`;
+        caption.style.width = `${Math.min(placed.width, rightLimit - leftLimit)}px`;
+        caption.style.transform = 'none';
+        placed = caption.getBoundingClientRect();
+      }
+      if (placed.bottom > bottomLimit || placed.top < topLimit)
+        caption.style.top = `${Math.max(topLimit, Math.min(placed.top, bottomLimit - placed.height))}px`;
     }
   }
   let briefingPlaying = false, briefingIndex = 0, briefingClock = 0, briefingUntil = 0, briefingLast = 0;
@@ -1790,7 +1837,10 @@ async function boot(session) {
       const [type, text, sound, time, slot, amount, modifier, unit] = briefingActions[briefingIndex++];
       if (type === 1) briefingUntil = briefingClock + Math.max(0, time);
       if (type === 2 || type === 8) playNarration(sound, type === 2 ? narrationChannel - 1 : narrationChannel);
-      if (type === 3 || type === 8) $('briefing-text').textContent = missionString(text);
+      if (type === 3 || type === 8) {
+        $('briefing-text').textContent = missionString(text);
+        $('briefing-text').scrollTop = 0;
+      }
       if (type === 4) $('briefing-objectives').textContent = missionString(text);
       if (type === 5) { briefingPortraits.set(slot, unit); showBriefingPortrait(slot); }
       if (type === 6) { briefingPortraits.delete(slot); showBriefingPortrait(slot); }
@@ -1846,15 +1896,31 @@ async function boot(session) {
     $('briefing-return').onclick = returnToStartup;
   }
 
-  let cardPointer = null;
+  let cardPointer = null, moreCommands = false, moreContext = '';
+  const compactCommands = createCompactCommands();
   const updateCard = () => {
     if (cardPointer !== null) return;
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
     const mobile = coarsePointer();
     const strip = interfaceOptions.resolved.buildings === 'strip';
+    const live = wireInput.shortcuts();
     const cursor = x.openbw_cursor();
     const targeting = cursor === 1 || cursor === 2 || cursor === 4;
+    const compact = compactCommandsEnabled(interfaceOptions.resolved, mobile, cursor, live.context)
+      ? compactCommands(live.rows.filter(row => !strip || !row.command.startsWith('advanced-menu:')), live.context) : null;
+    const selection = compact ? readCString(x.openbw_wires()).split('\n').filter(Boolean).map(row => row.split('\t')[0]).join(',') : '';
+    const context = compact ? `${live.context}|${selection}` : '';
+    if (context !== moreContext || !compact) moreCommands = false;
+    moreContext = context;
+    cardEl.classList.toggle('compact-card', !!compact);
+    cardEl.classList.toggle('compact-more', !!compact && moreCommands);
+    document.body.classList.toggle('compact-commands', !!compact);
+    if (compact) {
+      const columns = compact.worker ? 2 : innerWidth > innerHeight || innerHeight < 430 ? 3 : 2;
+      document.body.style.setProperty('--compact-columns', columns);
+      document.body.style.setProperty('--compact-rows', Math.ceil(compact.primary.length / columns));
+    }
     const touchCard = text + '\n' + cursor;
     if (mobile && touchCard !== lastTouchCard) {
       lastTouchCard = touchCard;
@@ -1875,11 +1941,20 @@ async function boot(session) {
     if (!mobile) document.body.classList.remove('touch-targeting');
     document.body.classList.toggle('touch-building-menu', strip &&
       ['Build', 'Advanced Build'].includes(text.split('\n')[0].split('\t')[0]));
-    const presentation = mobile + '\n' + strip + '\n' + text;
+    const presentation = mobile + '\n' + strip + '\n' + moreCommands + '\n' + context + '\n' +
+      (compact ? live.rows.map(row => row.fields.join('\t')).join('\n') : '') + '\n' + text;
     if (presentation === lastCard) return;
     lastCard = presentation;
     if (!text) { cardEl.innerHTML = ''; lastBtnSig = null; return; }
     const lines = text.split('\n');
+    if (compact) {
+      const synthetic = (id, label) => ['', label, '1', '-1', '0', '0', '1', '', '', '0', id].join('\t');
+      const commands = moreCommands
+        ? [synthetic('ui-back', 'Back'), ...compact.secondary.map(row => row.fields.join('\t'))]
+        : compact.primary.map((row, index) => row ? row.fields.join('\t') : index === compact.primary.length - 1
+          ? synthetic('ui-more', 'More') : synthetic('ui-slot', ''));
+      lines.splice(1, lines.length - 1, ...commands);
+    }
     const buildMenu = lines[0].split('\t')[0] === 'Build';
     if (strip && buildMenu) {
       const commands = lines.slice(1);
@@ -1903,10 +1978,9 @@ async function boot(session) {
     if (t0[2]) titleHtml += `<span class="stat">${t0[2]}</span>`;
     if (t0[3]) titleHtml += `<span class="fx">${t0[3]}</span>`;   // status effects (blind, parasite, …)
     const shortcutSettings = interfaceOptions.preferences.hotkeys;
-    const live = wireInput.shortcuts();
     const keyHints = new Map(shortcuts.activeShortcuts(live.rows, shortcutSettings, live.visible).map(row => [row.id, row.chord]));
     const shortcutRows = shortcuts.commandShortcuts(text);
-    const btnSig = mobile + '\n' + JSON.stringify(shortcutSettings) + '\n' + lines.slice(1).join('\n');
+    const btnSig = mobile + '\n' + moreCommands + '\n' + JSON.stringify(shortcutSettings) + '\n' + lines.slice(1).join('\n');
     if (btnSig === lastBtnSig) {
       // Buttons unchanged: refresh only the title spans, leaving the .cmd nodes (and any
       // in-flight click on them) intact.
@@ -1919,11 +1993,14 @@ async function boot(session) {
     for (let i = 1; i < lines.length; i++) {
       const f = lines[i].split('\t');   // KEY, Label, enabled(1/0), iconUnitId(-1 = none)
       if (f.length < 2) continue;
+      if (f[10] === 'ui-slot') { html += '<span class="command-slot" aria-hidden="true"></span>'; continue; }
       const off = f[2] === '0' ? ' off' : '';
       const id = f.length > 3 ? parseInt(f[3], 10) : -1;
       const building = id >= 106 && id <= 173;
       const url = id >= 0 ? iconURL(id) : '';
-      const ico = mobile && f[1] === 'Confirm' ? '<i class="ico" data-lucide="check"></i>'
+      const ico = f[10] === 'ui-more' ? '<i class="ico" data-lucide="ellipsis"></i>'
+        : f[10] === 'ui-back' ? '<i class="ico" data-lucide="arrow-left"></i>'
+        : mobile && f[1] === 'Confirm' ? '<i class="ico" data-lucide="check"></i>'
         : url ? `<img class="ico" src="${url}">` : '';
       const esc27 = f[0].charCodeAt(0) === 27;
       const dataKey = esc27 ? '&#27;' : f[0];
@@ -1985,6 +2062,7 @@ async function boot(session) {
   wireInput.uiAction = id => {
     if (id === 'global:cancel') {
       if (gameMenu.isOpen) { gameMenu.back(); return true; }
+      if (moreCommands) { moreCommands = false; lastCard = ''; updateCard(); return true; }
       return false;
     }
     if (id === 'ui:pause') { if (!link) pauseBtn.click(); }
@@ -2024,6 +2102,14 @@ async function boot(session) {
   cardEl.addEventListener('click', (e) => {
     const cmd = e.target.closest('.cmd');
     if (!cmd) return;
+    if (cmd.dataset.command === 'ui-more' || cmd.dataset.command === 'ui-back') {
+      moreCommands = cmd.dataset.command === 'ui-more';
+      lastCard = ''; lastBtnSig = null;
+      updateCard();
+      const focus = cardEl.querySelector(`[data-command="${moreCommands ? 'ui-back' : 'ui-more'}"]`);
+      focus?.focus({ preventScroll: true });
+      return;
+    }
     if (coarsePointer() && cardEl.classList.contains('building-menu') && buildDragged && e.detail > 0) return;
     if (coarsePointer() && wireInput.inspect) {
       const expanded = !cmd.classList.contains('inspect');
@@ -2035,6 +2121,8 @@ async function boot(session) {
     }
     const id = cmd.dataset.command;
     if (!id) return;
+    moreCommands = false;
+    lastCard = '';
     const queued = e.shiftKey || (coarsePointer() && wireInput.queue);
     x.openbw_key(queued ? 1 : 0, 0, 225);
     if (shortcuts.activateCommand(x, id) < 0) {

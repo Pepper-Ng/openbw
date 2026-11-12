@@ -13,6 +13,66 @@ import { campaignPackMissions, readPlainMissionPack, auditScenario } from './pre
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 import { activateCommand, commandShortcuts } from './hotkeys.js';
 
+if (process.argv[2] === '--test-gameplay-ui') {
+  const { compactCommandsEnabled, createCompactCommands, createObjectiveUpdates } = await import('./gameplay-ui.js');
+  const compactOptions = { commands: 'contextual', layout: 'adaptive' };
+  for (const cursor of [0, 3]) assert.equal(compactCommandsEnabled(compactOptions, true, cursor, '0\t0\t1'), true,
+    'Hovering a unit must not change the command layout');
+  for (const cursor of [1, 2, 4]) assert.equal(compactCommandsEnabled(compactOptions, true, cursor, '0\t0\t1'), false,
+    'Targeting and construction retain their native command cards');
+  assert.equal(compactCommandsEnabled(compactOptions, false, 0, '0\t0\t1'), false);
+  assert.equal(compactCommandsEnabled({ ...compactOptions, commands: 'full' }, true, 0, '0\t0\t1'), false);
+  assert.equal(compactCommandsEnabled({ ...compactOptions, layout: 'grid' }, true, 0, '0\t0\t1'), false);
+  assert.equal(compactCommandsEnabled(compactOptions, true, 0, '0\t1\t1'), false);
+  const row = (action, enabled = '1', extra = '') => ({ command: `${action}:${extra || '228:44:61:0'}`,
+    fields: ['', action, enabled, '-1', '0', '0', '1', '', '', '0', `${action}:${extra || '228:44:61:0'}`] });
+  const base = [row('move'), row('attack'), row('hold'), row('stop', '0'), row('patrol')];
+  const plan = createCompactCommands();
+  const worker = [...base, row('gather'), row('repair'), row('build-menu'), row('advanced-menu')];
+  const first = plan(worker, 'scv');
+  assert.equal(first.primary.length, 4, 'Workers use four fixed cells instead of a forced 3x3 card');
+  assert.deepEqual(first.primary.map(row => row?.command.split(':')[0] ?? null), ['attack', 'build-menu', 'stop', null]);
+  const moving = plan(worker.map(command => command.command.startsWith('stop:') ? row('stop') : command), 'scv');
+  assert.deepEqual(first.primary.map(row => row?.command), moving.primary.map(row => row?.command), 'Idle Stop remains in its slot');
+  assert.ok(first.secondary.some(row => row.command.startsWith('repair:')), 'Explicit Repair remains available under More');
+  const caster = [...base, row('spell', '0', '228:19:61:0')];
+  const spells = plan(caster, 'templar');
+  assert.equal(spells.primary.length, 6);
+  assert.equal(spells.primary[3].command, 'spell:228:19:61:0');
+  const added = plan([...caster, row('spell', '1', '228:20:61:0')], 'templar');
+  assert.equal(added.primary[3].command, spells.primary[3].command, 'New abilities fill empty cells without shifting existing spells');
+  const removed = plan([...base, row('spell', '1', '228:20:61:0')], 'templar');
+  assert.equal(removed.primary[3], null, 'A disappearing ability reserves its old cell');
+  assert.equal(removed.primary[4].command, 'spell:228:20:61:0');
+  const additional = plan([...caster, row('spell', '1', '228:20:61:0'), row('archon')], 'templar');
+  assert.ok(additional.secondary.some(row => row.command.startsWith('archon:')), 'Less common abilities use More once primary slots are occupied');
+  for (const [before, after, context] of [['cloak', 'decloak', 'ghost'], ['burrow', 'unburrow', 'zerg'], ['siege', 'unsiege', 'tank']]) {
+    const a = plan([...base, row(before)], context), b = plan([...base, row(after)], context);
+    assert.equal(a.primary.findIndex(row => row?.command.startsWith(`${before}:`)),
+      b.primary.findIndex(row => row?.command.startsWith(`${after}:`)), 'Toggle abilities share one slot');
+  }
+  for (const commands of [worker, caster, [...base, row('unload-all'), row('unload', '1', '0:44:61:1234')]]) {
+    const result = plan(commands, 'coverage');
+    assert.deepEqual([...result.primary.filter(Boolean), ...result.secondary].map(row => row.command).sort(),
+      commands.map(row => row.command).sort(), 'Every native action remains accessible exactly once');
+  }
+  for (const commands of [[], [row('build')], [row('train')], [row('morph')], [row('back')], [row('confirm'), row('back')]])
+    assert.equal(plan(commands, 'other'), null, 'Construction, production and targeting retain their original presentation');
+  const objectives = createObjectiveUpdates();
+  assert.deepEqual(objectives.update(''), { changed: false, unread: false, announce: false });
+  assert.deepEqual(objectives.update('Initial objectives'), { changed: false, unread: false, announce: false });
+  assert.deepEqual(objectives.update('New objectives'), { changed: true, unread: true, announce: true });
+  assert.deepEqual(objectives.update('New objectives'), { changed: false, unread: true, announce: false }, 'Repeated frames never repeat announcements');
+  objectives.acknowledge();
+  assert.equal(objectives.unread, false);
+  assert.deepEqual(objectives.update('Another objective', { viewed: true }), { changed: true, unread: false, announce: false });
+  objectives.update('Historical objectives', { recovering: true });
+  assert.deepEqual(objectives.update('Restored objectives', { recovering: true }), { changed: true, unread: false, announce: false });
+  assert.equal(objectives.update('Restored objectives').unread, false, 'Recovery history does not create stale unread badges');
+  console.log('Stable worker/combat/caster slots, toggle families, complete More coverage and objective update/recovery state passed.');
+  process.exit(0);
+}
+
 if (process.argv[2] === '--test-hotkeys') {
   const { default: catalog } = await import('./hotkey-catalog.js');
   const { generateHotkeyCatalog } = await import('./generate-hotkey-catalog.mjs');

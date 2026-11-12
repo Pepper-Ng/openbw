@@ -178,6 +178,7 @@
   #help .row { margin: 6px 0; overflow-wrap: break-word; }
   #help kbd { background:#1e293b; border-radius:3px; padding:1px 5px; color:#cbd5e1; }
   .touch-help { display: none; }
+  #controls-guide { display: none; }
   #paused { position: fixed; inset: 0; z-index: 7; display: none; align-items: center;
     justify-content: center; pointer-events: none; }
   #paused span { font: 800 clamp(32px, 7vw, 68px) system-ui, sans-serif; letter-spacing: 3px;
@@ -342,8 +343,8 @@
     #card .cmd.off .touch-cost { opacity: .7; }
     #card .cmd.poor .ico { opacity: .55; }
     #card .cmd.poor .touch-cost b { color: #f87171; }
-    body[data-commands="contextual"] #card .cmd[aria-label="Move"] { display: none; }
-    body[data-commands="contextual"] #card:not(.building-menu) .cmd[aria-label="Stop"].off { display: none; }
+    body[data-commands="contextual"] #card:not(.compact-card) .cmd[aria-label="Move"] { display: none; }
+    body[data-commands="contextual"] #card:not(.building-menu):not(.compact-card) .cmd[aria-label="Stop"].off { display: none; }
     #card .cmd .ico { display: block; width: var(--action-icon, 36px); height: var(--action-icon, 34px); grid-column: 1; grid-row: 1;
       justify-self: center; align-self: center; }
     #card .cmd .lbl { display: block; grid-column: 1; grid-row: 2 / span 2; line-height: 11px; text-align: center;
@@ -389,10 +390,32 @@
     #settings .settings-tools button { width: 44px; height: 44px; padding: 0; margin: 0; }
     #settings .desktop-setting, .desktop-help { display: none; }
     .touch-help { display: block; }
-    #touch-shortcuts { display: grid; grid-template-columns: repeat(auto-fit, 44px); gap: 6px; margin: 0 0 8px; }
+    #touch-shortcuts { display: grid; gap: 4px; margin: 0; }
     #touch-shortcuts svg { width: 22px; height: 22px; pointer-events: none; }
+    #settings-page-controls #help { display: none; }
+    .control-order-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+    .control-order-actions:has(button[hidden]) { grid-template-columns: 1fr; }
+    .control-order-actions:has(#touch-queue[hidden]):has(#touch-info[hidden]) { display: none; }
+    #settings .control-order-actions button { min-width: 0; touch-action: manipulation; }
+    #settings .control-order-actions button[aria-pressed="true"] { background: #153747; color: #7dd3fc; box-shadow: inset 0 0 0 1px #38bdf8; }
+    .control-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      min-height: 44px; padding: 0 6px; }
+    .control-row-label { font-size: 13px; }
+    .control-row-label small { display: block; font-size: 11px; color: #94a3b8; }
+    .control-buttons { display: flex; flex: 0 0 auto; gap: 4px; }
+    #touch-shortcuts .control-buttons button { display: grid; place-items: center; width: 44px; height: 44px;
+      margin: 0; padding: 9px; background: #203541; color: #dcebf1; border: 1px solid #3b5866;
+      touch-action: manipulation; }
+    .controls-footer { display: flex; align-items: center; justify-content: space-between; gap: 4px;
+      margin-top: 6px; border-top: 1px solid #2e444f; }
+    #settings .controls-footer .settings-secondary { margin-top: 0; }
+    #controls-guide { display: inline-flex; }
+    #edit-hotkeys .keyboard-link-label { display: none; }
+    #edit-hotkeys { justify-content: center; flex: 0 0 44px; height: 44px; padding: 10px; }
+    #settings-page-gestures { padding: 0 6px; }
+    #settings-page-gestures .row { margin: 6px 0; overflow-wrap: break-word; }
     .playing #touch-controls { display: none; }
-    #touch-controls button, #touch-shortcuts button { display: grid; place-items: center; width: 44px; height: 44px;
+    #touch-controls button { display: grid; place-items: center; width: 44px; height: 44px;
       padding: 0; margin: 0; background: rgba(0,0,0,.78); color: #e2e8f0;
       border: 1px solid #475569; font-size: 16px; touch-action: manipulation; pointer-events: auto; }
     #touch-controls button[hidden], #touch-shortcuts button[hidden] { display: none; }
@@ -500,19 +523,34 @@
   #campaign-resume[hidden], #campaign-save-controls[hidden], #go-next[hidden], #load-fresh[hidden], #campaign-tutorial-choice[hidden], #campaign-tutorial-info[hidden] { display: none !important; }
   #load-actions { display: flex; gap: 8px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
   #mission-briefing[hidden], #mission-hud[hidden], #mission-caption[hidden], #go-retry[hidden], #go-replay[hidden], #briefing-skip-tutorial[hidden], #load-actions button[hidden] { display: none !important; }
-  #mission-briefing { position: fixed; inset: 0; z-index: 15; display: grid; align-content: center; overflow: auto; padding: 24px; box-sizing: border-box; background: rgba(5, 12, 16, .96); color: #e2e8f0; }
-  .briefing-content { width: min(100%, 720px); margin: auto; min-width: 0; }
-  #briefing-title { font-size: 24px; margin: 0 0 12px; }
-  #briefing-speaker-row { display: flex; gap: 12px; align-items: center; min-height: 64px; margin: 12px 0; }
-  #briefing-portrait { width: 64px; height: 64px; object-fit: contain; image-rendering: pixelated; }
-  #briefing-speaker { font-size: 16px; }
-  #briefing-text, #briefing-objectives { white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; }
-  #briefing-text { min-height: 96px; max-height: 32svh; overflow-y: auto; margin: 12px 0; }
-  #briefing-objectives { border-top: 1px solid #334155; padding-top: 12px; max-height: 22svh; overflow-y: auto; color: #b6d8c8; }
-  .briefing-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
-  .briefing-actions button { display: inline-flex; gap: 8px; align-items: center; min-height: 44px; border-radius: 4px; }
-  .briefing-actions svg { width: 18px; height: 18px; }
-  #briefing-state { color: #94a3b8; font-size: 13px; margin-top: 12px; min-height: 20px; }
+  body { --dialogue-scale: calc(.85 * var(--ui-scale, 1)); }
+  #mission-briefing, #mission-caption { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  #mission-briefing { position: fixed; inset: 0; z-index: 15; display: flex; flex-direction: column; overflow: auto;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    box-sizing: border-box; background: rgba(5, 12, 16, .96); color: #e2e8f0; }
+  .briefing-content { width: min(100%, calc(720px * var(--dialogue-scale)), calc((100vw - 48px) * var(--dialogue-scale)));
+    margin: auto; min-width: 0; flex: 0 0 auto; }
+  #briefing-title { font-size: clamp(17px, calc(24px * var(--dialogue-scale)), 32px); margin: 0 0 calc(12px * var(--dialogue-scale)); }
+  #briefing-speaker-row { display: flex; gap: calc(12px * var(--dialogue-scale)); align-items: center;
+    min-height: calc(64px * var(--dialogue-scale)); margin: calc(12px * var(--dialogue-scale)) 0; }
+  #briefing-portrait { width: calc(64px * var(--dialogue-scale)); height: calc(64px * var(--dialogue-scale));
+    object-fit: contain; image-rendering: pixelated; }
+  #briefing-speaker { min-width: 0; overflow-wrap: break-word; font-size: clamp(12px, calc(16px * var(--dialogue-scale)), 24px); }
+  #briefing-text, #briefing-objectives { white-space: pre-line; overflow-wrap: break-word; word-break: normal;
+    font-size: clamp(11px, calc(14px * var(--dialogue-scale)), 22px); line-height: 1.5;
+    max-width: 100%; overflow-x: hidden; overscroll-behavior: contain; }
+  #briefing-text { min-height: calc(96px * var(--dialogue-scale)); max-height: calc(32svh * var(--dialogue-scale));
+    overflow-y: auto; margin: calc(12px * var(--dialogue-scale)) 0; }
+  #briefing-objectives { border-top: 1px solid #334155; padding-top: calc(12px * var(--dialogue-scale));
+    max-height: calc(22svh * var(--dialogue-scale)); overflow-y: auto; color: #b6d8c8; }
+  .briefing-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: calc(20px * var(--dialogue-scale)); }
+  .briefing-actions button { display: inline-flex; gap: 6px; align-items: center; min-height: 44px; border-radius: 4px;
+    max-width: 100%; box-sizing: border-box; font-size: clamp(12px, calc(14px * var(--dialogue-scale)), 20px); }
+  .briefing-actions svg { width: clamp(14px, calc(18px * var(--dialogue-scale)), 24px);
+    height: clamp(14px, calc(18px * var(--dialogue-scale)), 24px); flex-shrink: 0; }
+  #briefing-state { color: #94a3b8; font-size: clamp(11px, calc(13px * var(--dialogue-scale)), 20px);
+    margin-top: calc(12px * var(--dialogue-scale)); min-height: calc(20px * var(--dialogue-scale)); }
   #mission-hud { position: fixed; z-index: 4; top: calc(var(--touch-top, 0px) + 52px);
     right: max(8px, env(safe-area-inset-right)); display: flex; flex-direction: column; align-items: flex-end;
     width: max-content; max-width: calc(100vw - 24px); font-size: 13px; }
@@ -526,11 +564,29 @@
   #mission-leaderboard, #mission-countdown { box-sizing: border-box; max-width: min(270px, calc(100vw - 32px)); overflow-wrap: break-word;
     margin-top: 6px; padding: 4px 8px; background: rgba(4, 12, 15, .85); }
   #mission-countdown { font-variant-numeric: tabular-nums; }
-  #mission-caption { position: fixed; z-index: 5; top: calc(var(--touch-top, 0px) + 108px); left: 50%; transform: translateX(-50%); width: min(520px, calc(100vw - 28px)); box-sizing: border-box; background: rgba(4, 12, 15, .94); border-left: 3px solid #7bb79a; padding: 10px 12px; pointer-events: none; }
-  #mission-caption-speaker { font-size: 13px; color: #b6d8c8; margin-bottom: 4px; }
-  #mission-caption-text { white-space: pre-line; overflow-wrap: anywhere; font-size: 14px; line-height: 1.4; max-height: 24svh; overflow-y: auto; }
+  #mission-caption { position: fixed; z-index: 5; top: calc(var(--touch-top, 0px) + 108px); left: 50%; transform: translateX(-50%);
+    width: min(calc(520px * var(--dialogue-scale)),
+      calc((100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 28px) * var(--dialogue-scale)),
+      calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right) - 28px));
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+    box-sizing: border-box; background: rgba(4, 12, 15, .94); border-left: 3px solid #7bb79a;
+    padding: calc(10px * var(--dialogue-scale)) calc(12px * var(--dialogue-scale));
+    overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; pointer-events: auto; }
+  #mission-caption-speaker { font-size: clamp(10.5px, calc(13px * var(--dialogue-scale)), 21px); color: #b6d8c8;
+    margin-bottom: calc(4px * var(--dialogue-scale)); overflow-wrap: break-word; }
+  #mission-caption-text { white-space: pre-line; overflow-wrap: break-word; word-break: normal;
+    font-size: clamp(11px, calc(14px * var(--dialogue-scale)), 22px); line-height: 1.4;
+    max-width: 100%; max-height: calc(24svh * var(--dialogue-scale)); overflow-x: hidden; overflow-y: auto; }
   #go-progress { font-size: 13px; color: #b6d8c8; margin: 12px 0; }
-  @media (max-height: 500px) { #mission-briefing { padding: 12px 20px; } #briefing-title { font-size: 18px; } #briefing-speaker-row { min-height: 36px; margin: 4px 0; } #briefing-portrait { width: 36px; height: 36px; } #briefing-text { min-height: 44px; } .briefing-actions { margin-top: 10px; } }
+  @media (max-height: 500px) {
+    #mission-briefing { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .briefing-content { margin-top: 0; margin-bottom: 0; }
+    #briefing-title { font-size: clamp(15px, calc(18px * var(--dialogue-scale)), 25px); }
+    #briefing-speaker-row { min-height: calc(36px * var(--dialogue-scale)); margin: calc(4px * var(--dialogue-scale)) 0; }
+    #briefing-portrait { width: calc(36px * var(--dialogue-scale)); height: calc(36px * var(--dialogue-scale)); }
+    #briefing-text { min-height: 44px; }
+    .briefing-actions { margin-top: calc(10px * var(--dialogue-scale)); }
+  }
 </style>
 <style>
   #start-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -655,7 +711,7 @@
   body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd { font-size: calc(13px * var(--ui-scale)); }
   body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd .ico {
     width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); }
-  body[data-commands="contextual"] #card .cmd[aria-label="Move"] { display: none; }
+  body[data-commands="contextual"] #card:not(.compact-card) .cmd[aria-label="Move"] { display: none; }
   @media (pointer: coarse) {
     body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd { font-size: 11px; }
     body[data-command-layout="adaptive"] #card:not(.building-menu) .cmd .ico {
@@ -675,6 +731,7 @@
   .hotkey-row small { font-size: 11px; color: #a9bdc7; }
   .hotkey-row button, .hotkey-tools button { margin: 0; min-height: 36px; padding: 6px 8px; background: #294453; color: #e2e8f0; }
   .hotkey-row > button { overflow-wrap: anywhere; min-width: 0; }
+  .hotkey-row > button.custom-binding { box-shadow: inset 0 0 0 1px #38bdf8; }
   .hotkey-tools { grid-column: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
   .hotkey-row.conflict { border-color: #fbbf24; }
   #hotkey-conflicts { white-space: pre-line; color: #fbbf24; }
@@ -689,6 +746,16 @@
     .hotkey-row button, .hotkey-tools button { min-height: 44px; }
   }
   body.keyboard-input .shortcut-hint { display: block; }
+  @media (min-width: 700px) {
+    #hotkey-list { gap: 4px; }
+    .hotkey-row { grid-template-columns: minmax(0, 1fr) max-content max-content; align-items: center; gap: 8px; padding: 5px 8px; }
+    .hotkey-row button { min-height: 30px; padding: 4px 7px; font-size: 12px; }
+    .hotkey-row > button { min-width: 52px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .hotkey-tools { grid-column: auto; flex-wrap: nowrap; }
+  }
+  @media (min-width: 700px) and (pointer: coarse) {
+    .hotkey-row button { min-height: 44px; }
+  }
   @media (pointer: coarse) {
     body:not(.keyboard-input) #card .shortcut-character { color: inherit; font-weight: inherit; }
   }
@@ -730,6 +797,42 @@
     .options-footer { margin-top: auto; }
   }
 </style>
+<style>
+  body.compact-commands {
+    --compact-size: max(44px, min(var(--action-size),
+      calc((100vw - var(--minimap-edge, 144px) - var(--touch-right, 8px) - 12px - (var(--compact-columns) - 1) * 4px) / var(--compact-columns)),
+      calc((100dvh - var(--hud-bottom, 8px) - var(--hud-headroom, 128px) - (var(--compact-rows) - 1) * 4px) / var(--compact-rows))));
+  }
+  body.compact-commands #hud {
+    width: calc(var(--compact-columns) * var(--compact-size) + (var(--compact-columns) - 1) * 4px + 4px);
+  }
+  #card.compact-card .command-grid {
+    grid-template-columns: repeat(var(--compact-columns), var(--compact-size));
+    grid-auto-rows: var(--compact-size); max-height: none; overflow: hidden;
+  }
+  #card.compact-card .cmd { width: var(--compact-size); height: var(--compact-size); }
+  body.compact-commands #card .cmd .ico {
+    width: min(var(--action-icon), calc(var(--compact-size) * .55));
+    height: min(var(--action-icon), calc(var(--compact-size) * .55));
+  }
+  .command-slot { pointer-events: auto; border-radius: 4px; background: rgba(15, 23, 28, .4); }
+  #card.compact-more .command-grid {
+    max-height: calc(100dvh - var(--hud-bottom, 8px) - var(--hud-headroom, 128px));
+    overflow-y: auto; touch-action: pan-y;
+  }
+  #card.compact-more .cmd[data-command="ui-back"] { position: sticky; top: 0; z-index: 1; background: #192e39; }
+  #settingsbtn { position: relative; }
+  #settingsbtn.objectives-unread::after { content: ''; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px;
+    background: #fbbf24; border: 1px solid #111923; border-radius: 50%; }
+  #menu-objectives.objectives-unread::after, #objective-unread-badge {
+    content: 'Updated'; margin-left: auto; padding: 1px 5px; border-radius: 4px; background: #634b16; color: #ffe8ad;
+    font: 11px/1.5 system-ui, sans-serif;
+  }
+  #objective-unread-badge { margin-left: 6px; }
+  #objective-update { margin: 0 0 6px; padding: 6px 10px; min-height: 44px; border: 1px solid #6d642d; border-radius: 6px;
+    background: #263023; color: #ffe8ad; font: 13px system-ui, sans-serif; max-width: min(230px, calc(100vw - 24px)); }
+  #objective-update[hidden], #objective-unread-badge[hidden] { display: none; }
+</style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="1280" height="800"></canvas></div>
@@ -765,13 +868,25 @@
   </section>
   <section id="settings-page-controls" data-menu-page="controls" hidden>
   <div id="touch-shortcuts" role="group" aria-label="Control groups and zoom">
-    <button type="button" id="touch-queue" aria-label="Queue orders" title="Queue orders" aria-pressed="false"><i data-lucide="list-plus"></i></button>
-    <button type="button" id="touch-info" aria-label="Command details" title="Command details" aria-pressed="false"><i data-lucide="info"></i></button>
-    <button type="button" data-touch-group="1" aria-label="Group 1" title="Group 1: tap to recall, hold to save">1</button>
-    <button type="button" data-touch-group="2" aria-label="Group 2" title="Group 2: tap to recall, hold to save">2</button>
-    <button type="button" data-touch-group="3" aria-label="Group 3" title="Group 3: tap to recall, hold to save">3</button>
-    <button type="button" id="touch-zoom-out" aria-label="Zoom out" title="Zoom out"><i data-lucide="zoom-out"></i></button>
-    <button type="button" id="touch-zoom-in" aria-label="Zoom in" title="Zoom in"><i data-lucide="zoom-in"></i></button>
+    <div class="control-order-actions">
+      <button type="button" id="touch-queue" class="menu-action" aria-label="Queue orders" title="Queue orders" aria-pressed="false"><i data-lucide="list-plus"></i><span>Queue orders</span></button>
+      <button type="button" id="touch-info" class="menu-action" aria-label="Command details" title="Command details" aria-pressed="false"><i data-lucide="info"></i><span>Details</span></button>
+    </div>
+    <div class="control-row">
+      <span class="control-row-label">Groups<small>Hold to save</small></span>
+      <div class="control-buttons" role="group" aria-label="Control groups">
+        <button type="button" data-touch-group="1" aria-label="Group 1" title="Group 1: tap to recall, hold to save">1</button>
+        <button type="button" data-touch-group="2" aria-label="Group 2" title="Group 2: tap to recall, hold to save">2</button>
+        <button type="button" data-touch-group="3" aria-label="Group 3" title="Group 3: tap to recall, hold to save">3</button>
+      </div>
+    </div>
+    <div class="control-row">
+      <span class="control-row-label">View zoom</span>
+      <div class="control-buttons" role="group" aria-label="View zoom">
+        <button type="button" id="touch-zoom-out" aria-label="Zoom out" title="Zoom out"><i data-lucide="zoom-out"></i></button>
+        <button type="button" id="touch-zoom-in" aria-label="Zoom in" title="Zoom in"><i data-lucide="zoom-in"></i></button>
+      </div>
+    </div>
   </div>
   <div id="help">
     <div class="desktop-help">
@@ -781,14 +896,20 @@
       <div class="row">Pan with the screen edge, configured camera keys, scroll or the minimap.</div>
       <div class="row" id="shortcut-help"></div>
     </div>
+  </div>
+  <div class="controls-footer">
+    <button id="controls-guide" type="button" class="settings-secondary" data-menu-open="gestures"><i data-lucide="circle-help"></i>Gesture guide</button>
+    <button id="edit-hotkeys" type="button" class="settings-secondary" aria-label="Keyboard shortcuts" title="Keyboard shortcuts"><i data-lucide="keyboard"></i><span class="keyboard-link-label">Keyboard shortcuts…</span></button>
+  </div>
+  </section>
+  <section id="settings-page-gestures" data-menu-page="gestures" hidden>
     <div class="touch-help">
       <div class="row">Tap to select or give an order. Hold and drag to select a group.</div>
       <div class="row">Two fingers: pan and zoom.</div>
-      <div class="row">Queue: append orders. Details: inspect a command.</div>
-      <div class="row">Groups: tap to recall, hold to save.</div>
+      <div class="row">Queue orders appends supported commands instead of replacing existing orders.</div>
+      <div class="row">Details lets you inspect a command without activating it.</div>
+      <div class="row">Tap a group to recall it. Hold a group to save the current selection.</div>
     </div>
-  </div>
-  <button id="edit-hotkeys" type="button" class="settings-secondary"><i data-lucide="keyboard"></i>Keyboard shortcuts…</button>
   </section>
   <section id="settings-page-more" data-menu-page="more" hidden>
   <label><input type="checkbox" id="opt-lines"> Show order &amp; rally lines</label>
@@ -831,10 +952,12 @@
 <div id="toast"></div>
 <div id="messages"></div>
 <aside id="mission-hud" hidden>
-  <div id="hud-objectives-dock"><details id="mission-objectives"><summary>Objectives</summary><div id="mission-objectives-text"></div></details></div>
+  <button type="button" id="objective-update" aria-label="View updated objectives" hidden>Objectives updated</button>
+  <div id="hud-objectives-dock"><details id="mission-objectives"><summary>Objectives<span id="objective-unread-badge" hidden>Updated</span></summary><div id="mission-objectives-text"></div></details></div>
   <div id="mission-leaderboard" hidden></div>
   <div id="mission-countdown" role="timer" aria-label="Time remaining" hidden></div>
 </aside>
+<div id="objective-update-announcement" class="sr-only" role="status" aria-live="polite"></div>
 <div id="mission-caption" role="status" aria-live="polite" hidden>
   <div id="mission-caption-speaker"></div><div id="mission-caption-text"></div>
 </div>
@@ -1088,7 +1211,7 @@
           <label>Arrangement<select data-preference="layout"><option value="adaptive">Adaptive</option><option value="grid">Three-column grid</option></select></label>
           <label>Building choices<select data-preference="buildings"><option value="auto">Automatic layout default</option><option value="strip">Combined bottom strip</option><option value="split">Basic / Advanced grids</option></select></label>
           <label>Locked units/buildings<select data-preference="unavailable"><option value="auto">Automatic layout default</option><option value="hide">Hide</option><option value="show">Show disabled</option></select></label>
-          <p>Contextual essentials hides redundant worker actions. Full actions restores explicit buttons without changing contextual orders. Grids scroll when more than nine choices exist.</p>
+          <p>On touch screens, Adaptive with Contextual essentials uses stable worker and combat slots. More holds secondary actions; construction keeps its own layout. Full actions and the three-column grid retain the complete card.</p>
         </section>
         <section id="options-hud" role="tabpanel" aria-labelledby="tab-hud" hidden>
           <h3>Size and visibility</h3>

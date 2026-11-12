@@ -89,7 +89,7 @@ export function minimapSize(options, coarse, width, height) {
 export function createGameMenu(onShow = () => {}) {
   const $ = id => document.getElementById(id);
   const panel = $('settings'), opener = $('settingsbtn'), content = $('settings-content');
-  const titles = { root: 'Game menu', objectives: 'Objectives', save: 'Save game', controls: 'Controls', more: 'More settings' };
+  const titles = { root: 'Game menu', objectives: 'Objectives', save: 'Save game', controls: 'Controls', gestures: 'Touch controls', more: 'More settings' };
   let page = 'root';
   const close = (restoreFocus = false) => {
     panel.style.display = 'none';
@@ -115,7 +115,7 @@ export function createGameMenu(onShow = () => {}) {
     if (page === 'root') close(true);
     else {
       const previous = page;
-      show();
+      show(previous === 'gestures' ? 'controls' : 'root');
       panel.querySelector(`[data-menu-open="${previous}"]:not([hidden])`)?.focus({ preventScroll: true });
     }
   };

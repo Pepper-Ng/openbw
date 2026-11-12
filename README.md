@@ -94,7 +94,10 @@ Landscape is the primary layout; portrait is supported with less room for the ma
 - Tap a friendly unit to select it. With a unit selected, tap ground, resources, or enemies for a contextual order.
 - Hold, then drag to box-select. Use two fingers to pan and pinch to zoom.
 - Action buttons show a name below the icon. Building-strip choices show icons and costs; split grids also show building names.
+- Adaptive + Contextual essentials keeps mobile worker commands in four reserved cells, and combat/caster commands in six. Stop remains in place while idle; common abilities retain their cells when unavailable or toggled.
+- **More** shows secondary commands such as explicit movement, worker repair/gathering and less common abilities. Back returns to the primary card. Native hotkeys remain available on either page.
 - **Settings > Controls** contains queue mode, command details, zoom, and control groups. Hold a group button to assign it; tap to recall it.
+- On touch screens, Controls uses labelled order toggles and compact group/zoom rows. **Gesture guide** opens the instructions separately; Back returns to Controls.
 - With Touch controls, tap or drag to preview a building location, then select Confirm. Cancel abandons placement.
 
 On iPhone, a normal Safari tab may not support fullscreen. Use Safari's **Add to Home Screen** option and launch the app from its icon for a standalone window.
@@ -111,8 +114,10 @@ The in-game menu keeps common actions on its first page. Objectives, Save game, 
 - Choose a combined building strip or separate Basic and Advanced grids.
 - Hide locked units/buildings or show them disabled.
 - Adjust UI size from 75% to 150%, with Small, Medium and Large presets. Resources scale gently with this setting and the screen width.
+- Campaign speech and briefings start about 15% smaller than the original interface and scale with UI size, including text, portraits and spacing. Readability minimums and viewport bounds limit the smallest/largest sizes; long text scrolls inside its block.
 - Set minimap size independently from 50% to 200%. Its on-screen size stays independent of world zoom.
 - Choose **Objectives location**: expanded/collapsed on screen, or **Settings menu only**. The live objectives appear in exactly one location; mission timers and counters stay on screen. Menu objectives use their own readable page without the standalone overlay decoration.
+- When hidden objectives change, a brief **Objectives updated** button opens them. An unread marker remains until viewed. Initial objectives and save-recovery history do not generate notifications.
 - Pin Pause on screen or keep it in the game menu. Multiplayer cannot be paused.
 - Pin the sound button beside Settings or keep it in the game menu.
 
@@ -125,6 +130,8 @@ Automatic menu defaults follow the screen's pointer profile, not the most recent
 On desktop, open **Options > Hotkeys** before a game or during play. On mobile, use the smaller **Keyboard shortcuts…** entry under **Options > Controls** or **Settings > Controls**; the Hotkeys tab does not occupy the mobile navigation. It remains available for external keyboards.
 
 Search by unit, producer, ability or action. Select a binding and press a key or chord; use **Unbind** or **Reset** for an individual action.
+
+On wider screens, the command, key and Unbind/Reset tools share one compact row. The key button's tooltip identifies default/custom bindings; custom bindings also have a highlighted outline.
 
 - Classic uses the engine's original shortcuts. Grid assigns QWE / ASD / ZXC, then additional unused letters, in command-card order.
 - Custom bindings override either base profile. For example, assign **A** to **Train Terran Marine** instead of M.
@@ -175,6 +182,7 @@ After rebuilding the browser module, use Node.js 20 or newer to run the headless
 node web/run-wasm-node.mjs --test-commands
 node web/run-wasm-node.mjs --test-interface
 node web/run-wasm-node.mjs --test-hotkeys
+node web/run-wasm-node.mjs --test-gameplay-ui
 ```
 
 The runner loads the local MPQs and bundled Weave map. It checks queued input, control groups, Esc cancellation, refunds, and tank-mode transitions against the real WebAssembly engine.

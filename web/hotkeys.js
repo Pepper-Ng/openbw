@@ -181,9 +181,12 @@ export function createHotkeyEditor({ dialog, getSettings, setSettings, getLive }
       description.append(label, context);
       const bind = document.createElement('button'); bind.type = 'button'; bind.dataset.shortcut = entry.id;
       const custom = Object.hasOwn(settings.bindings, entry.id);
-      bind.textContent = custom ? formatChord(settings.bindings[entry.id])
-        : `Default: ${active.has(entry.id) ? formatChord(active.get(entry.id)) : settings.profile === 'grid' &&
-          !GLOBAL_SHORTCUTS.includes(entry) ? 'Grid position' : formatChord(classicChord(entry.key) || entry.key)}`;
+      const binding = custom ? formatChord(settings.bindings[entry.id])
+        : active.has(entry.id) ? formatChord(active.get(entry.id)) : settings.profile === 'grid' &&
+          !GLOBAL_SHORTCUTS.includes(entry) ? 'Grid' : formatChord(classicChord(entry.key) || entry.key);
+      bind.textContent = binding;
+      bind.title = `${custom ? 'Custom' : 'Default'} shortcut: ${binding}`;
+      bind.classList.toggle('custom-binding', custom);
       bind.setAttribute('aria-label', `Change shortcut for ${entry.label}`);
       bind.onclick = () => {
         capturing = entry.id; $('hotkey-capture').hidden = false;
