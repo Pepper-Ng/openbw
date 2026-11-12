@@ -127,7 +127,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const output = `// Generated from native shortcut tables by generate-hotkey-catalog.mjs.\nexport default ${JSON.stringify(generateHotkeyCatalog(), null, 2)};\n`;
   const target = new URL('./hotkey-catalog.js', import.meta.url);
   if (process.argv.includes('--check')) {
-    if (readFileSync(target, 'utf8') !== output) throw new Error('Hotkey catalog is stale. Run node web/generate-hotkey-catalog.mjs.');
+    if (readFileSync(target, 'utf8').replace(/\r\n/g, '\n') !== output) throw new Error('Hotkey catalog is stale. Run node web/generate-hotkey-catalog.mjs.');
     console.log('Native shortcut catalog is current.');
   } else {
     writeFileSync(target, output);
