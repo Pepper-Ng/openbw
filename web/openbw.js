@@ -579,16 +579,58 @@ function wireInput(canvas, x) {
     document.body.style.setProperty('--touch-rows', mapHeight * scaleY >= 90 ? '2' : '1');
     updateHUDPlacement();
   };
+  let lastHUDLayout = '';
   function updateHUDPlacement() {
     const canvasBounds = canvas.getBoundingClientRect();
     const scaleX = canvasBounds.width / x.openbw_framebuffer_width();
     const scaleY = canvasBounds.height / x.openbw_framebuffer_height();
     const mapRight = canvasBounds.left + (x.openbw_minimap_bounds(0) + x.openbw_minimap_bounds(2)) * scaleX;
-    const hud = $('hud').getBoundingClientRect();
+    const mapTop = canvasBounds.top + x.openbw_minimap_bounds(1) * scaleY;
+    const mapHeight = x.openbw_minimap_bounds(3) * scaleY;
+    const card = $('card'), status = $('status'), wires = $('wires');
+    const heading = card.querySelector('.card-heading');
+    const cardBounds = card.getBoundingClientRect();
+    const mission = $('mission-hud'), objectives = $('mission-objectives-text');
+    const missionBounds = mission.getBoundingClientRect();
+    const signature = [innerWidth, innerHeight, mapRight, mapTop, mapHeight, cardBounds.left,
+      cardBounds.width, cardBounds.height, status.offsetHeight, wires.offsetHeight, heading?.offsetHeight,
+      missionBounds.top, missionBounds.height, $('resources').offsetHeight, $('topbar').offsetHeight,
+      card.className, card.closest('#hud') ? 1 : 0, $('mission-objectives').open].join(':');
+    if (signature === lastHUDLayout) return;
+    lastHUDLayout = signature;
+    const info = !!heading && !!card.closest('#hud') && !card.classList.contains('building-menu');
+    const gapLeft = mapRight + 8, gapRight = cardBounds.left - 8;
+    const stacked = info && gapRight - gapLeft < (innerWidth > innerHeight ? 96 : 160);
+    document.body.classList.toggle('stacked-selection', stacked);
+    const width = stacked ? Math.max(96, innerWidth - gapLeft - 8) : Math.max(96, Math.min(360, gapRight - gapLeft));
+    const left = stacked ? gapLeft : Math.max(gapLeft, Math.min((innerWidth - width) / 2, gapRight - width));
+    document.body.style.setProperty('--selection-left', `${Math.round(left)}px`);
+    document.body.style.setProperty('--selection-width', `${Math.round(width)}px`);
+    const statusHeight = status.offsetHeight, wireHeight = wires.offsetHeight;
+    const headingHeight = heading?.offsetHeight || 0;
+    const statusGap = statusHeight ? 4 : 0, wireGap = wireHeight ? 4 : 0;
+    const infoHeight = info ? statusHeight + wireHeight + headingHeight + statusGap + wireGap : 0;
+    const safeBottom = Math.max(8, innerHeight - mapTop - mapHeight);
+    document.body.style.setProperty('--selection-bottom', `${safeBottom}px`);
+    document.body.style.setProperty('--selection-wire-bottom', `${safeBottom + statusHeight + statusGap}px`);
+    document.body.style.setProperty('--selection-title-bottom', `${safeBottom + statusHeight + statusGap + wireHeight + wireGap}px`);
     const strip = document.body.classList.contains('touch-building-menu');
-    const bottom = !strip && hud.width && hud.left < mapRight + 8
-      ? `${innerHeight - canvasBounds.top - x.openbw_minimap_bounds(1) * scaleY + 8}px` : 'var(--touch-bottom, 8px)';
-    document.body.style.setProperty('--hud-bottom', bottom);
+    const raised = !strip && cardBounds.width && (stacked || cardBounds.left < mapRight + 8);
+    const bottom = raised ? safeBottom + Math.max(mapHeight, infoHeight) + 8 : safeBottom;
+    document.body.style.setProperty('--hud-bottom', `${bottom}px`);
+    const top = Math.max($('resources').getBoundingClientRect().bottom, $('topbar').getBoundingClientRect().bottom) + 8;
+    const firstButton = card.querySelector('.cmd')?.getBoundingClientRect().height || 0;
+    const selectionTop = innerHeight - safeBottom - infoHeight;
+    const overlapsSelection = info && missionBounds.right > left && missionBounds.left < left + width;
+    const ceiling = Math.min(innerHeight - bottom - firstButton - 16, overlapsSelection ? selectionTop - 8 : innerHeight);
+    const dock = $('hud-objectives-dock').getBoundingClientRect();
+    const extra = Math.max(0, missionBounds.height - dock.height);
+    const textStyle = getComputedStyle(objectives);
+    const fixedHeight = dock.height - objectives.getBoundingClientRect().height + parseFloat(textStyle.paddingTop) + parseFloat(textStyle.paddingBottom);
+    const missionTop = !mission.hidden ? mission.getBoundingClientRect().top : top;
+    document.body.style.setProperty('--objectives-text-room', `${Math.max(24, Math.min(innerHeight * .28, ceiling - Math.max(top, missionTop) - extra - fixedHeight))}px`);
+    const missionBottom = !mission.hidden ? mission.getBoundingClientRect().bottom : top;
+    document.body.style.setProperty('--hud-headroom', `${Math.max(top, missionBottom + 8)}px`);
   }
   wireInput.updateHUDPlacement = updateHUDPlacement;
   wireInput.updateMinimap = updateZoomButtons;
@@ -1820,8 +1862,8 @@ async function boot(session) {
       const viewport = canvas.getBoundingClientRect();
       const leftLimit = Math.max(12, viewport.left + 8);
       const rightLimit = Math.min(innerWidth - 12, viewport.right - 8);
-      const topLimit = Math.max(8, viewport.top + 8);
-      const bottomLimit = Math.min(innerHeight - 8, viewport.bottom - 8);
+      const topLimit = Math.max(8, viewport.top + 8, $('topbar').getBoundingClientRect().bottom + 8, $('resources').getBoundingClientRect().bottom + 8);
+      let bottomLimit = Math.min(innerHeight - 8, viewport.bottom - 8);
       caption.style.maxHeight = `${Math.max(44, bottomLimit - topLimit)}px`;
       const bounds = caption.getBoundingClientRect();
       const objectives = $('mission-hud').getBoundingClientRect();
@@ -1840,6 +1882,13 @@ async function boot(session) {
         caption.style.transform = 'none';
         placed = caption.getBoundingClientRect();
       }
+      for (const element of [$('status'), $('wires'), $('card').querySelector('.card-heading'), $('card').querySelector('.command-grid')]) {
+        if (!element) continue;
+        const bounds = element.getBoundingClientRect();
+        if (bounds.width && bounds.height && bounds.top > topLimit && placed.left < bounds.right && placed.right > bounds.left) bottomLimit = Math.min(bottomLimit, bounds.top - 8);
+      }
+      caption.style.maxHeight = `${Math.max(24, bottomLimit - topLimit)}px`;
+      placed = caption.getBoundingClientRect();
       if (placed.bottom > bottomLimit || placed.top < topLimit)
         caption.style.top = `${Math.max(topLimit, Math.min(placed.top, bottomLimit - placed.height))}px`;
     }
@@ -2396,6 +2445,8 @@ async function boot(session) {
     updateCursor();
     updateCursorOverlay();
     updateMissionHud();
+    interfaceOptions.refreshHUD();
+    wireInput.updateHUDPlacement();
     requestAnimationFrame(frame);
   }
   function frame() {

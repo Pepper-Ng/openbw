@@ -177,11 +177,24 @@ export function createInterfaceOptions() {
   });
 
   const resolved = () => resolveUIOptions(current, media.matches);
+  let resourceLayout = '';
   const refreshHUD = () => {
+    const timer = $('mission-countdown');
+    const hasTimer = !!timer && !timer.hidden && !$('mission-hud').hidden;
+    const resourceBounds = $('resources').getBoundingClientRect();
+    const controls = $('topbar').getBoundingClientRect();
+    const signature = [innerWidth, innerHeight, current.scale, hasTimer, controls.right, controls.bottom,
+      resourceBounds.width, resourceBounds.height, $('resources').textContent].join(':');
+    if (signature === resourceLayout) return;
+    resourceLayout = signature;
+    document.body.classList.toggle('has-mission-timer', hasTimer);
+    const timerWidth = Math.max(80, Math.min(136, innerWidth - 224));
+    document.body.style.setProperty('--timer-width', `${timerWidth}px`);
     document.body.style.setProperty('--resource-font', `${resourceFontSize(current, innerWidth)}px`);
     const edge = $('topbar').getBoundingClientRect().right;
     const right = parseFloat(getComputedStyle($('resources')).right);
-    document.body.style.setProperty('--resources-room', `${Math.max(100, innerWidth - edge - right - 8)}px`);
+    const room = hasTimer ? innerWidth / 2 - timerWidth / 2 - right - 8 : innerWidth - edge - right - 8;
+    document.body.style.setProperty('--resources-room', `${Math.max(60, room)}px`);
     document.body.style.setProperty('--resources-bottom', `${$('resources').getBoundingClientRect().bottom + 8}px`);
   };
   const apply = () => {

@@ -873,6 +873,34 @@
     background: #263023; color: #ffe8ad; font: 13px system-ui, sans-serif; max-width: min(230px, calc(100vw - 24px)); }
   #objective-update[hidden], #objective-unread-badge[hidden] { display: none; }
 </style>
+<style id="mission-hud-layout">
+  body.has-mission-timer #topbar { max-width: calc(50vw - var(--timer-width, 136px) / 2 - 16px); flex-wrap: wrap; }
+  #mission-countdown:not([hidden]) { position: fixed; top: max(4px, env(safe-area-inset-top)); left: 50%; right: auto;
+    transform: translateX(-50%); width: var(--timer-width, 136px); max-width: var(--timer-width, 136px);
+    margin: 0; padding: 4px 6px; text-align: center; font-size: 13px; line-height: 18px; pointer-events: none; }
+  #mission-objectives-text { max-height: var(--objectives-text-room, 28svh); }
+  #hud #wires, #hud #status, #hud #card:not(.building-menu) .card-heading {
+    position: fixed; left: var(--selection-left, 160px); right: auto; width: var(--selection-width, 240px); box-sizing: border-box; }
+  #hud #status { bottom: var(--selection-bottom, 8px); padding: 0; min-height: 0; background: none; }
+  #hud #status:empty { display: none; }
+  #hud #status .q { padding: 4px 6px; min-height: 0; }
+  #hud #wires { bottom: var(--selection-wire-bottom, 8px); justify-content: center; min-height: 0;
+    max-height: 64px; flex-wrap: nowrap; overflow-x: auto; }
+  #hud #wires canvas { width: 44px; height: 44px; min-width: 44px; max-width: 44px;
+    min-height: 44px; max-height: 44px; flex: 0 0 44px; padding: 0; }
+  #hud #wires canvas.big { width: 64px; height: 64px; min-width: 64px; max-width: 64px;
+    min-height: 64px; max-height: 64px; flex-basis: 64px; }
+  #hud #card:not(.building-menu) .card-heading { bottom: var(--selection-title-bottom, 76px); display: flex;
+    justify-content: center; gap: 0 4px; flex-wrap: wrap; padding: 2px 4px; border-radius: 4px;
+    max-height: 32px; overflow: hidden; background: rgba(0,0,0,.65); font-size: 12px; line-height: 14px; text-align: center; }
+  #hud:has(#card.building-menu) #wires, #hud:has(#card.building-menu) #status { display: none; }
+  body.stacked-selection #hud #wires { max-height: 44px; }
+  body.stacked-selection #hud #wires canvas.big { width: 44px; height: 44px; min-width: 44px; max-width: 44px;
+    min-height: 44px; max-height: 44px; flex-basis: 44px; }
+  body.stacked-selection #hud #status { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; overflow-y: hidden; }
+  body.stacked-selection #hud #status .q { flex-shrink: 0; }
+  body.stacked-selection #hud #status .q.cur { flex: 0 0 100%; }
+</style>
 </head>
 <body>
 <div id="wrap"><canvas id="screen" width="1280" height="800"></canvas></div>
