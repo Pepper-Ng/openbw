@@ -380,6 +380,12 @@ OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mous
 OPENBW_EXPORT(openbw_preview_placement) void openbw_preview_placement(int mouse_x, int mouse_y) {
 	if (g_ui) g_ui->preview_placement(mouse_x, mouse_y);
 }
+OPENBW_EXPORT(openbw_placement_flags) int openbw_placement_flags() {
+	return g_ui && g_ui->pending_build ? 1 | (g_ui->pending_addon ? 2 : 0) | (g_ui->touch_placement_ready ? 4 : 0) : 0;
+}
+OPENBW_EXPORT(openbw_placement_contains) int openbw_placement_contains(int mouse_x, int mouse_y) {
+	return g_ui && g_ui->placement_contains(mouse_x, mouse_y) ? 1 : 0;
+}
 
 // Render a command-button icon (frame == unit id) to RGBA; returns a pointer into
 // wasm memory valid until the next call, with the size in openbw_icon_w/h.

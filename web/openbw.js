@@ -643,12 +643,22 @@ function wireInput(canvas, x) {
   wireInput.queue = false;
   wireInput.inspect = false;
   const park = () => x.openbw_mouse_move(-1, -1);
+  const cameraPlacement = () => interfaceOptions.preferences.placement === 'camera' &&
+    (x.openbw_placement_flags?.() & 3) === 1;
   const previewPlacement = (touch) => {
     const [px, py] = xy(touch);
-    const offset = Math.round(40 * canvas.height / canvas.getBoundingClientRect().height);
-    x.openbw_preview_placement?.(px | 0, Math.max(0, py - offset) | 0);
+    const offset = cameraPlacement() ? 0 : Math.round(40 * canvas.height / canvas.getBoundingClientRect().height);
+    const point = [px | 0, Math.max(0, py - offset) | 0];
+    if (!placementSurface(...point)) return;
+    x.openbw_preview_placement(...point);
     x.openbw_render(performance.now());
   };
+  function placementSurface(px, py) {
+    return px >= 0 && py >= 0 && px < x.openbw_framebuffer_width() && py < x.openbw_framebuffer_height() &&
+      !(px >= x.openbw_minimap_bounds(0) && py >= x.openbw_minimap_bounds(1) &&
+        px < x.openbw_minimap_bounds(0) + x.openbw_minimap_bounds(2) &&
+        py < x.openbw_minimap_bounds(1) + x.openbw_minimap_bounds(3));
+  }
   const cancelTouch = () => {
     lastSelectionTap = null;
     if (!tt) return;
@@ -739,8 +749,11 @@ function wireInput(canvas, x) {
     const t = e.changedTouches[0];
     const [px, py] = xy(t);
     if (touchControls && x.openbw_cursor() === 2 && x.openbw_preview_placement) {
-      tt = { id: t.identifier, mode: 'placement', x: px, y: py };
-      previewPlacement(t);
+      const camera = cameraPlacement();
+      tt = { id: t.identifier, mode: camera ? 'placement-pan' : 'placement', x: px, y: py,
+        cx: t.clientX, cy: t.clientY, moved: false,
+        confirm: camera && !!x.openbw_placement_contains?.(px | 0, py | 0) };
+      if (!camera) previewPlacement(t);
       return;
     }
     tt = { id: t.identifier, x0: px, y0: py, x: px, y: py, cx: t.clientX, cy: t.clientY,
@@ -772,6 +785,15 @@ function wireInput(canvas, x) {
     if (tt.mode === 'placement') { previewPlacement(t); return; }
     const [px, py] = xy(t);
     const far = d2(t.clientX, t.clientY, tt.cx, tt.cy) > MOVE2;
+    if (tt.mode === 'placement-pan') {
+      if (tt.moved || far) {
+        tt.moved = true;
+        x.openbw_pan(tt.x - px, tt.y - py);
+        x.openbw_render(performance.now());
+        tt.x = px; tt.y = py;
+      }
+      return;
+    }
     if (tt.mode === 'pending' && far) {
       clearTimeout(tt.timer);
       if (tt.armed) {
@@ -804,9 +826,13 @@ function wireInput(canvas, x) {
     if (!t) return;
     clearTimeout(tt.timer);
     const [px, py] = xy(t);
-    if (tt.mode === 'placement') {
+    if (tt.mode === 'placement' || tt.mode === 'placement-pan') {
       lastSelectionTap = null;
-      previewPlacement(t);
+      if (tt.mode === 'placement' || (!tt.moved && !tt.confirm)) previewPlacement(t);
+      else if (!tt.moved && tt.confirm && x.openbw_placement_contains?.(px | 0, py | 0)) {
+        const confirm = wireInput.shortcuts().rows.find(row => row.command.startsWith('confirm:'));
+        if (confirm?.fields[2] === '1') shortcuts.activateCommand(x, confirm.command);
+      }
     } else if (tt.mode === 'box') {
       lastSelectionTap = null;
       x.openbw_mouse_button(0, 1, px, py, 1);

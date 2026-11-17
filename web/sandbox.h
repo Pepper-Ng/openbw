@@ -2067,6 +2067,16 @@ struct play_ui : ui_functions {
 		touch_placement_ready = true;
 		refresh_card();
 	}
+	bool placement_contains(int screen_x, int screen_y) {
+		if (!pending_build || !touch_placement_ready || screen_x < 0 || screen_y < 0 || screen_x >= screen_width || screen_y >= screen_height) return false;
+		xy minimap_position;
+		if (minimap_point(screen_x, screen_y, minimap_position)) return false;
+		int tile_x, tile_y;
+		placement_tile(touch_placement_position, tile_x, tile_y);
+		xy position = screen_to_map(screen_x, screen_y);
+		return position.x >= tile_x * 32 && position.y >= tile_y * 32 &&
+		       position.x < tile_x * 32 + pending_build->placement_size.x && position.y < tile_y * 32 + pending_build->placement_size.y;
+	}
 
 	// Helpers for the flying-building commands, which act on the selected building itself.
 	xy u_pos_of_selected() { unit_t* u = primary_selected(); return u ? u->sprite->position : xy(); }

@@ -152,6 +152,12 @@ if (process.argv[2] === '--test-interface') {
   assert.equal(resolveUIOptions({}, false).commands, 'full');
   assert.equal(resolveUIOptions({}, true).pause, 'pinned', 'Pause stays visible by default; sound stays in the menu');
   assert.equal(resolveUIOptions({}, true).sound, 'menu');
+  assert.equal(readUIOptions(storage).placement, 'camera', 'Touch placement defaults to panning the map');
+  writeUIOptions(storage, { placement: 'outline' });
+  assert.equal(readUIOptions(storage).placement, 'outline', 'Outline dragging remains a saved preference');
+  writeUIOptions(storage, { placement: 'camera' });
+  assert.equal(readUIOptions(storage).placement, 'camera', 'Camera placement mode persists');
+  assert.throws(() => validateUIOptions({ placement: 'unknown' }));
   records.set(UI_OPTIONS_KEY, JSON.stringify({ version: 1, options: { scale: 125 } }));
   assert.equal(readUIOptions(storage).sound, 'menu', 'Older preferences receive the sound placement default');
   assert.equal(readUIOptions(storage).minimap, 100, 'Older preferences receive independent minimap sizing');
@@ -2773,6 +2779,15 @@ function testCommands(groupMines = false) {
   }
 
   const factory = buildNearBase(113, 'Factory');
+  x.openbw_set_touch_controls(1);
+  x.openbw_debug_select(Number(factory[0]), 0); x.openbw_render(0);
+  const addonCommand = read(x.openbw_card()).split('\n').map(line => line.split('\t')).find(fields => fields[1] === 'Machine Shop');
+  assert.ok(addonCommand);
+  assert.ok(activateCommand(x, addonCommand[10]) >= 0);
+  assert.equal(x.openbw_placement_flags() & 3, 3, 'Addon placement always identifies itself for outline dragging');
+  press(0, 41); x.openbw_render(0);
+  assert.equal(x.openbw_placement_flags(), 0, 'Cancelling an addon clears its placement mode');
+  x.openbw_set_touch_controls(0);
   const addonX = (Number(factory[3]) - 64) / 32 + 4;
   const addonY = (Number(factory[4]) - 48) / 32 + 1;
   send(factory, [12, 36, ...word(addonX), ...word(addonY), ...word(120)]);
@@ -3160,6 +3175,8 @@ function testCommands(groupMines = false) {
     assert.equal(commandRows()[0][2], '0');
   };
   chooseDepot();
+  assert.equal(x.openbw_placement_flags(), 1, 'A normal building starts without a saved placement');
+  assert.equal(x.openbw_placement_contains(100, 100), 0, 'A first tap cannot confirm an absent outline');
   press(99);
   x.openbw_render(0);
   assert.equal(records().length, 0, 'Confirm must not build before choosing a location');
@@ -3187,12 +3204,16 @@ function testCommands(groupMines = false) {
     }
   }
   assert.ok(validPreview, 'Test map must contain a valid Supply Depot location');
+  assert.equal(x.openbw_placement_flags(), 5, 'A normal building exposes its saved map-space outline');
+  assert.equal(x.openbw_placement_contains(previewScreenX, previewScreenY), 1, 'A tap inside the saved native outline is recognized');
+  assert.equal(x.openbw_placement_contains(-1, -1), 0, 'Out-of-viewport taps never confirm placement');
   x.openbw_mouse_move(-1, -1);
   x.openbw_render(0);
   assert.equal(commandRows()[0][2], '1', 'A parked cursor must not lose the saved preview');
   assert.equal(records().length, 0);
   x.openbw_pan(32, 32);
   x.openbw_render(0);
+  assert.equal(x.openbw_placement_contains(previewScreenX - 32, previewScreenY - 32), 1, 'The map-fixed outline moves on screen when the camera pans');
   press(99);
   x.openbw_render(0);
   const placed = records().find(record => record[0] === 12);
@@ -3203,6 +3224,7 @@ function testCommands(groupMines = false) {
   assert.equal(placed[2] | placed[3] << 8, expectedTileX, 'Camera movement must not change the preview map tile');
   assert.equal(placed[4] | placed[5] << 8, expectedTileY);
   assert.notEqual(x.openbw_cursor(), 2);
+  assert.equal(x.openbw_placement_flags(), 0, 'Confirming clears the saved outline');
   x.openbw_out_clear();
   x.openbw_pan(-32, -32);
   x.openbw_render(0);

@@ -4,6 +4,7 @@ export const DEFAULT_UI_OPTIONS = Object.freeze({
   input: 'auto', commands: 'auto', layout: 'adaptive', buildings: 'auto',
   unavailable: 'auto', scale: 100, objectives: 'collapsed', pause: 'auto',
   sound: 'menu', minimap: 100,
+  placement: 'camera',
   hotkeys: Object.freeze({ profile: 'classic', bindings: Object.freeze({}) }),
 });
 
@@ -16,6 +17,7 @@ const choices = {
   objectives: ['expanded', 'collapsed', 'menu'],
   pause: ['auto', 'pinned', 'menu'],
   sound: ['pinned', 'menu'],
+  placement: ['outline', 'camera'],
 };
 
 export function validateUIOptions(value) {
