@@ -2114,13 +2114,18 @@ static void among_ruins_mission_cases(data_loading::data_files_loader<>& load_da
 		}
 		for (int tick = 0; tick != opening_budget; ++tick) functions.next_frame();
 		if (scenario == 7) {
+			unit_t* colony = nullptr;
+			for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Creep_Colony)) { colony = unit; break; }
+			const auto* sunken = functions.get_unit_type(UnitTypes::Zerg_Sunken_Colony);
+			require(colony && st.game->unit_type_allowed[3][UnitTypes::Zerg_Sunken_Colony], "original Among the Ruins permits morphing its Creep Colony into a Sunken Colony");
+			require(!functions.unit_can_build(colony, sunken), "Sunken Colony remains unavailable before a Spawning Pool is completed");
 			for (unit_t* worker : ptr(st.player_units[3])) if (functions.unit_is(worker, UnitTypes::Zerg_Drone)) {
 				unit_t* mineral = functions.find_nearest_unit(worker, functions.map_bounds(), [&](unit_t* unit) { return functions.unit_is_mineral_field(unit) && functions.is_reachable(worker, unit); });
 				require(mineral, "original Drone has reachable original minerals");
 				functions.set_unit_order(worker, functions.get_order_type(Orders::MoveToMinerals), mineral);
 			}
-			for (int tick = 0; tick != 6000 && st.current_minerals[3] < 500; ++tick) functions.next_frame();
-			require(st.current_minerals[3] >= 500 && st.total_minerals_gathered[3] >= 300, "original Drones gather actual minerals for Zerg construction");
+			for (int tick = 0; tick != 6000 && st.current_minerals[3] < 550; ++tick) functions.next_frame();
+			require(st.current_minerals[3] >= 550 && st.total_minerals_gathered[3] >= 350, "original Drones gather actual minerals for Zerg construction and the Sunken morph");
 			auto build_paid = [&](UnitTypes id) -> unit_t* {
 				unit_t* worker = nullptr;
 				for (unit_t* unit : ptr(st.player_units[3])) if (functions.unit_is(unit, UnitTypes::Zerg_Drone) && !functions.unit_dying(unit)) { worker = unit; break; }
@@ -2146,6 +2151,15 @@ static void among_ruins_mission_cases(data_loading::data_files_loader<>& load_da
 				return nullptr;
 			};
 			require(build_paid(UnitTypes::Zerg_Spawning_Pool), "Drone completes a paid native Spawning Pool on original creep");
+			require(functions.unit_can_build(colony, sunken), "the completed Spawning Pool unlocks the original Sunken Colony morph");
+			unit_id colony_id = functions.get_unit_id(colony);
+			int before_morph = st.current_minerals[3];
+			int gathered_before_morph = st.total_minerals_gathered[3];
+			require(functions.campaign_ai_produce(3, sunken), "original Creep Colony starts a paid native Sunken morph");
+			for (int tick = 0; tick != sunken->build_time + 128 && (!functions.unit_is(colony, UnitTypes::Zerg_Sunken_Colony) || !functions.u_completed(colony)); ++tick) functions.next_frame();
+			require(functions.get_unit(colony_id) == colony && functions.unit_is(colony, UnitTypes::Zerg_Sunken_Colony) && functions.u_completed(colony), "the same original Creep Colony completes its native Sunken morph");
+			require(before_morph + st.total_minerals_gathered[3] - gathered_before_morph - st.current_minerals[3] == 50, "Sunken morph pays its normal fifty-mineral cost");
+			printf("Among the Ruins original Sunken availability, Pool prerequisite and paid morph passed.\n");
 			unit_t* extractor = build_paid(UnitTypes::Zerg_Extractor);
 			require(extractor, "Drone completes a paid native Extractor on an original geyser");
 			require(functions.campaign_ai_produce(3, functions.get_unit_type(UnitTypes::Zerg_Drone)), "native Larva production pays for a replacement Drone");
