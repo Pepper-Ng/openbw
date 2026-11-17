@@ -386,6 +386,40 @@ static void shared_combat_ai_checks(state& st) {
 	functions.progress_campaign_ai_combat(4);
 	require(nuclear_ghost->energy == fp8::integer(100) - cloak_cost, "pending nuclear cloak is never charged twice");
 	printf("Nuclear Ghost research, energy, travel and human-control guards passed.\n");
+	unit_t* lockdown_target = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Battlecruiser), nuclear_ghost->sprite->position + xy(128, 0), 1);
+	require(lockdown_target, "native mechanical enemy for the computer Ghost Lockdown decision");
+	st.game->tech_available[4][TechTypes::Lockdown] = true;
+	st.tech_researched[4][TechTypes::Lockdown] = true;
+	nuclear_ghost->energy = fp8::integer(150);
+	nuclear_ghost->defensive_matrix_hp = fp8::integer(1000);
+	nuclear_ghost->defensive_matrix_timer = 250;
+	functions.u_set_status_flag(nuclear_ghost, unit_t::status_flag_invincible);
+	functions.set_secondary_order(nuclear_ghost, functions.get_order_type(Orders::Nothing));
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::Guard));
+	functions.set_unit_order(lockdown_target, functions.get_order_type(Orders::HoldPosition));
+	st.tech_researched[4][TechTypes::Lockdown] = false;
+	require(!functions.try_campaign_ai_lockdown(nuclear_ghost) && nuclear_ghost->energy == fp8::integer(150), "automatic Lockdown cannot bypass unfinished research");
+	st.tech_researched[4][TechTypes::Lockdown] = true;
+	st.game->tech_available[4][TechTypes::Lockdown] = false;
+	require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "automatic Lockdown cannot bypass disabled mission technology");
+	st.game->tech_available[4][TechTypes::Lockdown] = true;
+	auto lockdown_cost = fp8::integer(functions.get_tech_type(TechTypes::Lockdown)->energy_cost);
+	nuclear_ghost->energy = lockdown_cost - 1_fp8;
+	require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "automatic Lockdown requires the native energy cost");
+	nuclear_ghost->energy = fp8::integer(150);
+	st.players[4].controller = player_t::controller_occupied;
+	require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "human Ghosts retain player control over Lockdown");
+	st.players[4].controller = controller;
+	for (Orders order : {Orders::NukePaint, Orders::CastNuclearStrike, Orders::NukeUnit, Orders::NukeTrack}) {
+		functions.set_unit_order(nuclear_ghost, functions.get_order_type(order));
+		require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "Lockdown cannot interrupt a nuclear mission");
+	}
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::Guard));
+	for (int tick = 0; tick != 256 && !lockdown_target->lockdown_timer; ++tick) functions.next_frame();
+	require(lockdown_target->lockdown_timer > 0, "computer Ghost tactically casts native Lockdown on a nearby mechanical enemy");
+	require(nuclear_ghost->energy >= fp8::integer(150) - lockdown_cost && nuclear_ghost->energy < fp8::integer(150), "native Lockdown spends its energy once rather than in the AI decision");
+	require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "a pending Lockdown cast is not restarted");
+	printf("Computer Ghost native Lockdown projectile and effect passed.\n");
 	printf("Player Stim research guards and native hero ability exceptions passed.\n");
 	printf("Shared combat frame integration and human-control isolation checks passed.\n");
 }

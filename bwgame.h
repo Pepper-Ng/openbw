@@ -19967,6 +19967,41 @@ struct state_functions {
 		return true;
 	}
 
+	bool try_campaign_ai_lockdown(unit_t* unit) {
+		if (st.players[unit->owner].controller != player_t::controller_computer_game || !unit_is_ghost(unit)) return false;
+		if (unit_dying(unit) || us_hidden(unit) || u_hallucination(unit) || unit_is_disabled(unit) || u_order_not_interruptible(unit) || u_iscript_nobrk(unit) || unit->spell_cooldown) return false;
+		switch (unit->order_type->id) {
+		case Orders::Guard: case Orders::PlayerGuard: case Orders::ComputerAI: case Orders::Nothing:
+		case Orders::Move: case Orders::AttackMove: case Orders::AttackUnit: case Orders::Patrol: case Orders::HoldPosition: break;
+		default: return false;
+		}
+		const auto* tech = get_tech_type(TechTypes::Lockdown);
+		if (!unit_can_use_tech(unit, tech) || unit->energy < fp8::integer(tech->energy_cost)) return false;
+		const auto* weapon = get_weapon_type(WeaponTypes::Lockdown);
+		int range = weapon_max_range(unit, weapon);
+		unit_t* best = nullptr;
+		int best_value = -1, best_distance = 0;
+		for (unit_t* target : find_units_noexpand(square_at(unit->sprite->position, range + 64))) {
+			if (unit_dying(target) || us_hidden(target) || ut_turret(target) || u_invincible(target) || target->lockdown_timer || target->stasis_timer) continue;
+			if (!unit_target_is_enemy(unit, target) || !unit_can_see_target(unit, target) || !weapon_can_target_unit(weapon, target, unit)) continue;
+			int distance = units_distance(unit, target);
+			if (distance > range) continue;
+			bool pending = false;
+			for (const unit_t* caster : ptr(st.player_units[unit->owner])) if (!unit_dying(caster) && caster->order_type->id == Orders::CastLockdown && caster->order_target.unit == target) pending = true;
+			for (const bullet_t* bullet : ptr(st.active_bullets)) if (bullet->owner == unit->owner && bullet->weapon_type->id == WeaponTypes::Lockdown && bullet->bullet_target == target) pending = true;
+			if (pending) continue;
+			int value = target->unit_type->mineral_cost + target->unit_type->gas_cost;
+			if (best && (value < best_value || (value == best_value && distance >= best_distance))) continue;
+			best = target; best_value = value; best_distance = distance;
+		}
+		if (!best) return false;
+		const auto* previous = unit->order_type;
+		order_target_t destination{unit->order_target.pos, unit->order_target.unit};
+		issue_order(unit, false, get_order_type(Orders::CastLockdown), {best->sprite->position, best});
+		if (previous->id == Orders::Move || previous->id == Orders::AttackMove || previous->id == Orders::Patrol) queue_order_back(unit, previous, destination);
+		return true;
+	}
+
 	void progress_campaign_ai_combat(int owner) {
 		if (st.current_frame % 8 || st.players[owner].controller != player_t::controller_computer_game) return;
 		for (unit_t* unit : ptr(st.player_units[owner])) {
@@ -19980,10 +20015,11 @@ struct state_functions {
 					return weapon && !unit_dying(target) && !ut_turret(target) && unit_target_is_enemy(unit, target) && unit_can_attack_target(unit, target) && unit_can_see_target(unit, target) && units_distance(unit, target) <= std::max(weapon_max_range(target, weapon), 160) + 96;
 				});
 				try_campaign_ai_wraith_cloak(unit, threat);
-			} else if (unit_is(unit, UnitTypes::Terran_Ghost)) {
+			} else if (unit_is_ghost(unit)) {
 				auto order = unit->order_type->id;
 				bool nuclear = order == Orders::NukePaint || order == Orders::CastNuclearStrike || order == Orders::NukeUnit || order == Orders::NukeTrack;
-				if (!nuclear || unit->secondary_order_type->id == Orders::Cloak || u_requires_detector(unit)) continue;
+				if (!nuclear) { try_campaign_ai_lockdown(unit); continue; }
+				if (unit->secondary_order_type->id == Orders::Cloak || u_requires_detector(unit)) continue;
 				const auto* tech = get_tech_type(TechTypes::Personnel_Cloaking);
 				auto cost = fp8::integer(tech->energy_cost);
 				if (!unit_can_use_tech(unit, tech) || unit->energy < cost * 2) continue;
