@@ -817,6 +817,14 @@ if (out) {
 } else if (campaign) {
   testCampaign();
   if (recoveryTest) {
+    if (missionId === 'terran03') {
+      for (let tick = 0; tick < 4000; tick++) {
+        x.openbw_step();
+        const events = readRecoveryString(x.openbw_mission_events()).trim();
+        if (events) x.openbw_mission_ack(Number(events.split('\n').at(-1).split('\t')[1]));
+      }
+      assert.ok(x.openbw_frame() >= 4000, 'Desperate Alliance recovery includes active regional attack selection, not just its introduction');
+    }
     const expectedChecksum = x.openbw_checksum();
     const expectedUnits = readRecoveryString(x.openbw_debug_units());
     const expectedNextScenario = readRecoveryString(x.openbw_mission_string(x.openbw_mission_next_scenario()));

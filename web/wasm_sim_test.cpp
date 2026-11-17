@@ -1400,17 +1400,37 @@ static void desperate_mission_cases(data_loading::data_files_loader<>& load_data
 			for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->group_flags & GroupFlags::Building) functions.kill_unit(unit);
 		}
 		if (scenario == 3) st.countdown_timer = 120;
-		if (scenario != 2) for (unit_t* unit : ptr(st.player_units[1])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+		if (scenario != 2 && scenario != 4) for (unit_t* unit : ptr(st.player_units[1])) functions.u_set_status_flag(unit, unit_t::status_flag_invincible);
+		struct entrance_observation { xy position; a_vector<unit_id> ground; int firing_frames = 0; };
+		a_vector<entrance_observation> entrances;
+		if (scenario == 4) for (unit_t* unit : ptr(st.player_units[1])) if (unit->unit_type->id == UnitTypes::Terran_Bunker) entrances.push_back({unit->sprite->position, {}, 0});
 		bool paused = false;
 		bool final_assault = false;
 		bool air_attack = false;
 		for (int tick = 0; tick != (scenario == 4 ? 32000 : 3500) && !st.players[1].victory_state; ++tick) {
+			if (scenario == 4) for (unit_t* unit : ptr(st.player_units[1])) if (!functions.unit_dying(unit)) {
+				unit->defensive_matrix_hp = fp8::integer(64000);
+				unit->defensive_matrix_timer = 250;
+				functions.set_unit_hp(unit, unit->unit_type->hitpoints);
+			}
 			player.next_frame();
 			paused = paused || st.scripted_pause;
 			if (st.campaign_ai[4].attacking.size() >= 20) final_assault = true;
 			for (unit_id id : st.campaign_ai[4].attacking) {
 				unit_t* unit = functions.get_unit(id);
 				if (unit && unit->unit_type->id == UnitTypes::Zerg_Mutalisk) air_attack = true;
+				if (scenario == 4 && unit && !functions.unit_dying(unit) && !functions.u_flying(unit)) for (auto& entrance : entrances) {
+					if (functions.xy_length(unit->sprite->position - entrance.position) > 256) continue;
+					if (std::find(entrance.ground.begin(), entrance.ground.end(), id) == entrance.ground.end()) entrance.ground.push_back(id);
+					if (unit->ground_weapon_cooldown) ++entrance.firing_frames;
+				}
+			}
+		}
+		if (scenario == 4) {
+			require(entrances.size() == 2, "both original entrance bunkers supply the route observation");
+			for (const auto& entrance : entrances) {
+				printf("Desperate Alliance entrance observation: bunker=%d,%d unique_ground_attackers=%d firing_frames=%d\n", entrance.position.x, entrance.position.y, int(entrance.ground.size()), entrance.firing_frames);
+				require(!entrance.ground.empty() && entrance.firing_frames > 0, "authored campaign attacks can reach and fight at both original base entrances");
 			}
 		}
 		if (scenario == 0 || scenario == 3 || scenario == 4) require(st.players[1].victory_state >= 3 && paused, "original survival ending reaches paused victory");

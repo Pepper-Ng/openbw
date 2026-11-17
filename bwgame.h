@@ -19701,7 +19701,7 @@ struct state_functions {
 
 	unit_t* campaign_ai_attack_target(int owner, const a_vector<unit_id>& party, size_t region = ~(size_t)0, bool allow_transport = false) {
 		auto eligible = [&](const unit_t* enemy) {
-			if (enemy->owner >= 8 || enemy->owner == owner || st.alliances[owner][enemy->owner] || unit_dying(enemy) || ut_turret(enemy)) return false;
+			if (enemy->owner >= 8 || enemy->owner == owner || st.alliances[owner][enemy->owner] || unit_dying(enemy) || us_hidden(enemy) || ut_turret(enemy)) return false;
 			if (region != ~(size_t)0 && get_region_at(enemy->sprite->position)->index != region) return false;
 			for (unit_id id : party) {
 				unit_t* unit = get_unit(id);
@@ -19714,6 +19714,23 @@ struct state_functions {
 				return unit_is_active_resource_depot(enemy) && eligible(enemy) && get_region_at(enemy->sprite->position) != get_region_at(game_st.start_locations[enemy->owner]);
 			});
 			if (expansion) return expansion;
+		}
+		if (st.campaign_ai[owner].campaign && region == ~(size_t)0) {
+			a_vector<size_t> target_regions;
+			for (int enemy_owner = 0; enemy_owner != 8; ++enemy_owner) {
+				if (enemy_owner == owner || st.alliances[owner][enemy_owner]) continue;
+				for (const unit_t* enemy : ptr(st.player_units[enemy_owner])) if (eligible(enemy)) {
+					size_t index = get_region_at(enemy->sprite->position)->index;
+					if (std::find(target_regions.begin(), target_regions.end(), index) == target_regions.end()) target_regions.push_back(index);
+				}
+			}
+			if (!target_regions.empty()) {
+				size_t destination = target_regions.front();
+				if (target_regions.size() > 1) destination = target_regions[lcg_rand(16) % target_regions.size()];
+				return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), [&](const unit_t* enemy) {
+					return eligible(enemy) && get_region_at(enemy->sprite->position)->index == destination;
+				});
+			}
 		}
 		return find_nearest_unit(st.campaign_ai[owner].home, map_bounds(), eligible);
 	}
