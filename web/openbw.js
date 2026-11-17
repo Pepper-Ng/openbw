@@ -2178,7 +2178,7 @@ async function boot(session) {
   // every frame, so only rebuild the chips when the item list changes and just move the
   // bar otherwise — rebuilding the whole thing each frame flickers and eats clicks.
   const statusEl = $('status');
-  let lastStatusKey = null, statusBar = null, lastBarPct = -1;
+  let lastStatusKey = null, statusBar = null, statusPercent = null, lastBarPct = -1;
   const BAR_W = 61;   // internal width; quantised the same way the wasm renderer expects
   const updateStatus = () => {
     const ptr = x.openbw_status();
@@ -2187,21 +2187,37 @@ async function boot(session) {
     const key = p.slice(1).join('\t');   // the chips (names), independent of progress
     if (key !== lastStatusKey) {
       lastStatusKey = key;
-      statusBar = null; lastBarPct = -1;
-      if (!text) { statusEl.innerHTML = ''; return; }
-      // Progress bar is a <canvas> rendered from the same health-bar palette the engine
-      // draws under units, so it matches the original exactly.
-      let html = `<canvas class="bar"></canvas>`;
-      // p[1..] are the queued units in order; chip i maps to build-queue slot i-1.
-      for (let i = 1; i < p.length; i++)
-        html += `<span class="q${i === 1 ? ' cur' : ''}" data-slot="${i - 1}" title="Click to cancel">${p[i]}</span>`;
-      statusEl.innerHTML = html;
-      statusBar = statusEl.querySelector('.bar');
+      statusBar = null; statusPercent = null; lastBarPct = -1;
+      statusEl.replaceChildren();
+      if (!text) return;
+      for (let i = 1; i < p.length; i++) {
+        const item = document.createElement('span');
+        item.className = `q${i === 1 ? ' cur' : ''}`;
+        item.dataset.slot = String(i - 1);
+        item.title = `Cancel ${p[i]}`;
+        const name = document.createElement('span');
+        name.textContent = p[i];
+        item.append(name);
+        if (i === 1) {
+          statusPercent = document.createElement('span');
+          statusPercent.className = 'status-pct';
+          statusBar = document.createElement('canvas');
+          statusBar.className = 'bar';
+          statusBar.setAttribute('role', 'progressbar');
+          statusBar.setAttribute('aria-label', `${p[i]} progress`);
+          statusBar.setAttribute('aria-valuemin', '0');
+          statusBar.setAttribute('aria-valuemax', '100');
+          item.append(statusPercent, statusBar);
+        }
+        statusEl.append(item);
+      }
     }
     if (statusBar) {
       const pct = Math.max(0, Math.min(100, parseInt(p[0], 10) || 0));
       if (pct === lastBarPct) return;
       lastBarPct = pct;
+      statusPercent.textContent = `${pct}%`;
+      statusBar.setAttribute('aria-valuenow', String(pct));
       const bp = x.openbw_progress_bar(pct, BAR_W);
       const w = x.openbw_progress_bar_w(), h = x.openbw_progress_bar_h();
       if (!bp || !w || !h) return;
