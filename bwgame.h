@@ -299,6 +299,7 @@ struct state_base_copyable {
 		a_vector<area_town> area_towns;
 		struct valued_region { size_t index; bool contested; };
 		a_vector<valued_region> valued_regions;
+		a_vector<uint8_t> detector_patrol_visited;
 		a_vector<size_t> guarded_regions;
 		a_vector<valued_region> help_regions;
 		struct defense_request { int category; int amount; UnitTypes type; };
@@ -5671,6 +5672,45 @@ struct state_functions {
 		}
 	}
 
+	void order_OverlordAIPatrol(unit_t* u) {
+		if (!u->order_queue.empty()) { order_Nothing(u); return; }
+		if (u->order_target.unit) {
+			const auto* target = u->order_target.unit;
+			if ((target->order_type->id == Orders::EnterTransport || target->order_type->id == Orders::Pickup4) && unit_can_load_target(u, target)) order_PickupIdle(u);
+			else order_Follow(u);
+			return;
+		}
+		if (st.players[u->owner].controller != player_t::controller_computer_game || !loaded_units(u).empty() || u->main_order_timer) return;
+		u->main_order_timer = 15;
+		if (!unit_is_at_move_target(u) && u_movement_flag(u, 2)) return;
+		auto& ai = st.campaign_ai[u->owner];
+		if (ai.detector_patrol_visited.size() != game_st.regions.regions.size()) ai.detector_patrol_visited.assign(game_st.regions.regions.size(), 0);
+		const auto* current = get_region_at(u->sprite->position);
+		ai.detector_patrol_visited[current->index] = 1;
+		a_vector<const regions_t::region*> candidates;
+		auto managed = [&](size_t index) { return index < ai.regions.size() && (ai.regions[index].owned || ai.regions[index].defended); };
+		for (const auto* neighbor : current->walkable_neighbors) if (managed(neighbor->index) && candidates.size() < 16) candidates.push_back(neighbor);
+		for (const auto* neighbor : current->non_walkable_neighbors) if (managed(neighbor->index) && candidates.size() < 16) candidates.push_back(neighbor);
+		const regions_t::region* destination = current;
+		if (!candidates.empty()) {
+			bool unvisited = std::any_of(candidates.begin(), candidates.end(), [&](const auto* region) { return !ai.detector_patrol_visited[region->index]; });
+			if (unvisited) candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [&](const auto* region) { return ai.detector_patrol_visited[region->index] != 0; }), candidates.end());
+			else std::fill(ai.detector_patrol_visited.begin(), ai.detector_patrol_visited.end(), 0);
+			destination = candidates[lcg_rand(55) % candidates.size()];
+		} else if (!managed(current->index)) {
+			int nearest = 0x7fffffff;
+			for (const auto& region : game_st.regions.regions) if (managed(region.index)) {
+				xy center(region.center.x.integer_part(), region.center.y.integer_part());
+				int distance = xy_length(center - u->sprite->position);
+				if (distance < nearest) { nearest = distance; destination = &region; }
+			}
+		}
+		ai.detector_patrol_visited[destination->index] = 1;
+		xy position(destination->center.x.integer_part(), destination->center.y.integer_part());
+		set_unit_move_target(u, position);
+		set_next_target_waypoint(u, position);
+	}
+
 	void order_PickupIdle(unit_t* u) {
 		unit_t* target = u->order_target.unit;
 		if (target) {
@@ -8395,7 +8435,7 @@ struct state_functions {
 				else order_Nothing(u);
 			} else {
 				if (!unit_is(u, UnitTypes::Zerg_Overlord)) error("unsupported AIPatrol behavior for unit %d owner %d", int(u->unit_type->id), u->owner);
-				order_PickupIdle(u);
+				order_OverlordAIPatrol(u);
 			}
 			break;
 		case Orders::GuardPost:

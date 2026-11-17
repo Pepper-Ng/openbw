@@ -420,6 +420,50 @@ static void shared_combat_ai_checks(state& st) {
 	require(nuclear_ghost->energy >= fp8::integer(150) - lockdown_cost && nuclear_ghost->energy < fp8::integer(150), "native Lockdown spends its energy once rather than in the AI decision");
 	require(!functions.try_campaign_ai_lockdown(nuclear_ghost), "a pending Lockdown cast is not restarted");
 	printf("Computer Ghost native Lockdown projectile and effect passed.\n");
+	unit_t* patrol_overlord = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Zerg_Overlord), xy(1024, 1024), 4);
+	require(patrol_overlord, "native computer Overlord for autonomous patrol");
+	functions.u_set_status_flag(patrol_overlord, unit_t::status_flag_invincible);
+	functions.set_unit_order(patrol_overlord, functions.get_order_type(Orders::AIPatrol));
+	const auto* home_region = functions.get_region_at(patrol_overlord->sprite->position);
+	require(!home_region->walkable_neighbors.empty() || !home_region->non_walkable_neighbors.empty(), "patrol fixture has a neighboring native region");
+	const auto* neighbor_region = !home_region->walkable_neighbors.empty() ? home_region->walkable_neighbors.front() : home_region->non_walkable_neighbors.front();
+	st.campaign_ai[4].regions.assign(st.game->regions.regions.size(), {});
+	st.campaign_ai[4].regions[home_region->index].owned = true;
+	st.campaign_ai[4].regions[neighbor_region->index].defended = true;
+	xy patrol_start = patrol_overlord->sprite->position;
+	for (int tick = 0; tick != 512; ++tick) functions.next_frame();
+	require(functions.xy_length(patrol_overlord->sprite->position - patrol_start) >= 32, "an unassigned computer Overlord actively patrols instead of remaining stationary");
+	a_vector<xy> patrol_destinations;
+	for (int tick = 0; tick != 2048; ++tick) {
+		functions.next_frame();
+		xy destination = patrol_overlord->move_target.pos;
+		if (std::find(patrol_destinations.begin(), patrol_destinations.end(), destination) == patrol_destinations.end()) patrol_destinations.push_back(destination);
+	}
+	require(patrol_destinations.size() >= 2 && patrol_overlord->order_type->id == Orders::AIPatrol, "computer Overlords continue covering multiple native regions after reaching a destination");
+	xy queued_destination = patrol_overlord->sprite->position + xy(128, 0);
+	functions.queue_order_back(patrol_overlord, functions.get_order_type(Orders::Move), {queued_destination, nullptr});
+	for (int tick = 0; tick != 8; ++tick) functions.next_frame();
+	require(patrol_overlord->order_type->id == Orders::Move && patrol_overlord->order_target.pos == queued_destination, "queued player or scripted movement takes priority over autonomous patrol");
+	unit_t* human_overlord = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Zerg_Overlord), xy(512, 1536), 1);
+	require(human_overlord, "native human Overlord for autonomous-patrol isolation");
+	functions.u_set_status_flag(human_overlord, unit_t::status_flag_invincible);
+	functions.set_unit_order(human_overlord, functions.get_order_type(Orders::PickupIdle));
+	xy human_position = human_overlord->sprite->position;
+	for (int tick = 0; tick != 128; ++tick) functions.next_frame();
+	require(human_overlord->sprite->position == human_position && human_overlord->order_type->id == Orders::PickupIdle, "human Overlords remain stationary until the player orders movement");
+	unit_t* transport_overlord = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Zerg_Overlord), xy(256, 96), 4);
+	unit_t* passenger = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Marine), xy(192, 96), 4);
+	require(transport_overlord && passenger, "native Overlord transport regression actors");
+	st.upgrade_levels[4][UpgradeTypes::Ventral_Sacs] = 1;
+	functions.u_set_status_flag(transport_overlord, unit_t::status_flag_invincible);
+	functions.u_set_status_flag(passenger, unit_t::status_flag_invincible);
+	functions.set_unit_order(passenger, functions.get_order_type(Orders::EnterTransport), transport_overlord);
+	functions.set_unit_order(transport_overlord, functions.get_order_type(Orders::AIPatrol), passenger);
+	for (int tick = 0; tick != 256 && !functions.us_hidden(passenger); ++tick) functions.next_frame();
+	bool loaded = false;
+	for (const unit_t* unit : functions.loaded_units(transport_overlord)) if (unit == passenger) loaded = true;
+	require(loaded && functions.us_hidden(passenger), "AI patrol still services native Overlord transport pickup");
+	printf("Computer Overlord regional patrol, continued coverage, queued movement, human isolation and transport pickup passed.\n");
 	printf("Player Stim research guards and native hero ability exceptions passed.\n");
 	printf("Shared combat frame integration and human-control isolation checks passed.\n");
 }
@@ -8526,6 +8570,9 @@ int main(int argc, char** argv) {
 			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Drone && unit->order_type != unit->unit_type->human_ai_idle) ++gathering;
 			require(gathering > 0, "campaign town assigns actual resource-gathering orders");
 			state_functions functions(player.st());
+			a_vector<std::pair<unit_id, xy>> original_overlords;
+			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Overlord) original_overlords.push_back({functions.get_unit_id(unit), unit->sprite->position});
+			require(!original_overlords.empty(), "original Ter3 actors include computer Overlords");
 			unit_t* worker = nullptr;
 			for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Drone) worker = unit;
 			require(worker != nullptr, "original Drone replacement fixture");
@@ -8536,6 +8583,12 @@ int main(int argc, char** argv) {
 				for (unit_t* unit : ptr(player.st().player_units[4])) if (unit->unit_type->id == UnitTypes::Zerg_Egg && !unit->build_queue.empty() && unit->build_queue.front()->id == UnitTypes::Zerg_Drone) saw_drone_egg = true;
 			}
 			require(saw_drone_egg && player.st().completed_unit_counts[4][UnitTypes::Zerg_Drone] == 6, "script build target replaces a Drone through a normal timed egg");
+			bool original_overlord_moved = false;
+			for (const auto& original : original_overlords) {
+				const unit_t* unit = functions.get_unit(original.first);
+				if (unit && !functions.unit_dying(unit) && functions.xy_length(unit->sprite->position - original.second) >= 32) original_overlord_moved = true;
+			}
+			require(original_overlord_moved, "untouched original Ter3 Overlords patrol under the authored campaign AI");
 			require(player.st().total_minerals_gathered[4] > 0, "computer economy gathers real minerals");
 			bool launched = false;
 			for (int tick = 0; tick != 4000 && !launched; ++tick) {
