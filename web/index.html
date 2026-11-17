@@ -452,39 +452,44 @@
     body { --command-columns: 3; }
     #mobilewarn { display: none !important; }
   }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card),
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) {
-    --command-label-height: clamp(24px, calc(120px - 1.5 * var(--action-size)), 48px);
-    --command-row-height: max(var(--action-size), calc(var(--action-icon) + var(--command-label-height) + 30px)); }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .command-grid,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .command-grid {
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card),
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) {
+    --command-row-height: var(--action-size); }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .command-grid,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .command-grid {
     grid-auto-rows: var(--command-row-height);
     max-height: min(calc(3 * var(--command-row-height) + 8px),
       calc(100dvh - var(--hud-bottom, 8px) - var(--hud-headroom, 128px))); }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd {
-    grid-template-rows: minmax(0, 1fr) var(--command-label-height) 24px;
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd {
+    grid-template-rows: minmax(0, 1fr) 20px;
     height: var(--command-row-height); }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd .ico,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd .ico { grid-column: 1; grid-row: 1; }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd .lbl,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd .lbl,
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl {
-    display: block; grid-column: 1; grid-row: 2; min-width: 0; min-height: 0; max-height: var(--command-label-height);
-    overflow: hidden; font-size: 10px; line-height: 12px;
-    white-space: normal; overflow-wrap: anywhere; }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .touch-cost,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .touch-cost {
-    display: flex; grid-column: 1; grid-row: 3; align-self: center; align-items: center; justify-content: center;
-    flex-wrap: wrap; align-content: center; gap: 0 3px; height: 24px;
-    min-width: 0; font-size: 10px; line-height: 12px; white-space: nowrap; }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .touch-cost b,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .touch-cost b {
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd .ico,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd .ico {
+    grid-column: 1; grid-row: 1; width: min(var(--action-icon), calc(var(--action-size) - 26px));
+    height: min(var(--action-icon), calc(var(--action-size) - 26px)); object-fit: contain; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd .lbl,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd .lbl,
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl { display: none; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd:not(:has(.touch-cost:not(:empty))),
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd:not(:has(.touch-cost:not(:empty))) { grid-template-rows: 1fr; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .cmd:not(:has(.touch-cost:not(:empty))) .ico,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .cmd:not(:has(.touch-cost:not(:empty))) .ico {
+    width: var(--action-icon); height: var(--action-icon); }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .touch-cost,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .touch-cost {
+    display: flex; grid-column: 1; grid-row: 2; align-self: center; align-items: center; justify-content: center;
+    flex-wrap: wrap; align-content: center; gap: 0 2px; height: 20px;
+    min-width: 0; font-size: 9px; line-height: 10px; white-space: nowrap; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .touch-cost:empty,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .touch-cost:empty { display: none; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .touch-cost b,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .touch-cost b {
     display: inline-flex; align-items: center; gap: 0; }
-  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .touch-cost .cico,
-  body[data-buildings="split"] #card.building-menu:not(.compact-card) .touch-cost .cico {
-    width: 10px; height: 10px; flex: none; object-fit: contain; image-rendering: pixelated; }
+  body[data-command-layout="grid"] #hud #card:not(.building-menu):not(.compact-card) .touch-cost .cico,
+  body[data-buildings="split"] #hud #card.building-menu:not(.compact-card) .touch-cost .cico {
+    width: 8px; height: 8px; flex: none; object-fit: contain; image-rendering: pixelated; }
 </style>
 <style>
   #play-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 12px 0 20px; }
