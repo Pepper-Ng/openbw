@@ -2574,6 +2574,7 @@ function testCommands(groupMines = false) {
     while (bytes[end]) end++;
     return new TextDecoder().decode(bytes.subarray(pointer, end));
   };
+  assert.equal(read(x.openbw_map_name()), 'Weave v1', 'The menu receives the loaded map title rather than its filename');
   const units = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
   const records = () => {
     const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len());

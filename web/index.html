@@ -617,7 +617,8 @@
   #mission-caption-text { white-space: pre-line; overflow-wrap: break-word; word-break: normal;
     font-size: clamp(11px, calc(14px * var(--dialogue-scale)), 22px); line-height: 1.4;
     max-width: 100%; max-height: calc(24svh * var(--dialogue-scale)); overflow-x: hidden; overflow-y: auto; }
-  #go-progress { font-size: 13px; color: #b6d8c8; margin: 12px 0; }
+  #go-progress { font-size: 13px; color: #b6d8c8; margin: 12px 0; overflow-wrap: anywhere; }
+  #settings-context { margin: 0 6px 8px; color: #b6d8c8; font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
   @media (max-height: 500px) {
     #mission-briefing { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
     .briefing-content { margin-top: 0; margin-bottom: 0; }
@@ -915,6 +916,7 @@
     <h3 id="settings-title">Game menu</h3>
     <button type="button" id="settings-close" aria-label="Close game menu"><i data-lucide="x"></i></button>
   </header>
+  <p id="settings-context"></p>
   <div id="settings-content">
   <div id="settings-page-root" data-menu-page="root">
     <nav class="settings-actions" aria-label="Game menu">

@@ -1288,13 +1288,14 @@ async function boot(session) {
   const showGameOver = (title, won) => {
     if (gameOverShown) return;
     gameOverShown = true;
+    $('go-progress').textContent = session.mission && won ? `Mission ${playingTitle} complete.` : playingContext;
     if (session.mission) {
       stopNarration();
       $('mission-caption').hidden = true;
       if (!campaignDebug) campaignSaves().then(storage => storage.deleteCampaignSave(`auto:${session.mission.id}`)).catch(() => {});
       if (won && !campaignDebug) {
-        try { saveCampaignVictory(session.mission.id, readCString(x.openbw_mission_string(x.openbw_mission_next_scenario()))); $('go-progress').textContent = 'Mission complete.'; }
-        catch { $('go-progress').textContent = 'Mission complete. Progress could not be saved.'; }
+        try { saveCampaignVictory(session.mission.id, readCString(x.openbw_mission_string(x.openbw_mission_next_scenario()))); }
+        catch { $('go-progress').textContent += ' Progress could not be saved.'; }
       }
       const next = campaignNextMission(session.mission.id, readCString(x.openbw_mission_string(x.openbw_mission_next_scenario())));
       $('go-next').hidden = !won || !next;
@@ -1774,6 +1775,9 @@ async function boot(session) {
     return missionDecoder.decode(bytes.subarray(pointer, end)).replace(/[\x01-\x09\x0b-\x1f\x7f]/g, '');
   };
   const missionString = index => index ? missionText(x.openbw_mission_string(index)) : '';
+  const playingTitle = session.mission?.title || (x.openbw_map_name ? missionText(x.openbw_map_name()) : '') || 'Custom map';
+  const playingContext = `${session.mission ? 'Mission' : 'Map'}: ${playingTitle}`;
+  $('settings-context').textContent = playingContext;
   const objectiveUpdates = createObjectiveUpdates();
   let objectiveNoticeUntil = 0;
   const objectivesViewed = () => !document.hidden && !briefingActive && !interfaceOptions.open &&

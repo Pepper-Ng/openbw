@@ -570,6 +570,7 @@ OPENBW_EXPORT(openbw_start_locations) int openbw_start_locations() {
 OPENBW_EXPORT(openbw_map_w) int openbw_map_w() { return g_ui ? (int)g_ui->game_st.map_tile_width : 0; }
 OPENBW_EXPORT(openbw_map_h) int openbw_map_h() { return g_ui ? (int)g_ui->game_st.map_tile_height : 0; }
 OPENBW_EXPORT(openbw_map_tileset) int openbw_map_tileset() { return g_ui ? (int)g_ui->game_st.tileset_index : 0; }
+OPENBW_EXPORT(openbw_map_name) const char* openbw_map_name() { return g_ui ? g_ui->game_st.scenario_name.c_str() : ""; }
 
 // Serialise the recorded game as a BW .rep and hand back the bytes. Returns 0 if nothing
 // was recorded. The result stays valid until the next call.
