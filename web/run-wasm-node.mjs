@@ -2649,6 +2649,12 @@ function testCommands(groupMines = false) {
   advance(1200);
   const shop = units().find(unit => unit[1] === 'Machine Shop');
   assert.ok(shop, 'Machine Shop must complete before training a tank');
+  x.openbw_debug_select(Number(shop[0]), 0);
+  x.openbw_render(0);
+  const siegeResearch = read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+    .find(fields => fields[10]?.startsWith('research:228:5:'));
+  assert.ok(siegeResearch, `Machine Shop offers Siege Mode research: ${read(x.openbw_card())}`);
+  const siegeResearchIcon = Number(siegeResearch[3]);
   send(shop, [48, 5]);
   send(factory, [31, 5, 0]);
   advance(2400);
@@ -2657,6 +2663,15 @@ function testCommands(groupMines = false) {
   x.openbw_debug_select(Number(tank[0]), 0);
   x.openbw_render(0);
   assert.match(read(x.openbw_card()), /\no\tSiege Mode\t1/);
+  const tankModeIcon = Number(read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+    .find(fields => fields[1] === 'Siege Mode')[3]);
+  assert.equal(tankModeIcon, siegeResearchIcon, 'Tank deployment uses the original Siege Mode artwork');
+  const commandIconPixels = icon => {
+    const pointer = x.openbw_command_icon(icon);
+    assert.ok(pointer, `Command icon ${icon} exists`);
+    return new Uint8Array(memory.buffer, pointer, x.openbw_icon_w() * x.openbw_icon_h() * 4).slice();
+  };
+  const tankModePixels = commandIconPixels(tankModeIcon);
   const targetX = Number(tank[3]) + (Number(tank[3]) < 1024 ? 160 : -160);
   send(tank, [21, ...word(targetX), ...word(Number(tank[4])), 0, 0, 228, 0, 6, 0]);
   assert.match(read(x.openbw_debug_dump()), /order=6 /);
@@ -2671,6 +2686,10 @@ function testCommands(groupMines = false) {
   advance(2400);
   x.openbw_render(0);
   assert.match(read(x.openbw_card()), /\no\tTank Mode\t1/, 'Tank must siege after finishing Move');
+  const siegeModeIcon = Number(read(x.openbw_card()).split('\n').map(line => line.split('\t'))
+    .find(fields => fields[1] === 'Tank Mode')[3]);
+  assert.notEqual(siegeModeIcon, tankModeIcon, 'Sieging changes the command icon frame');
+  assert.notDeepEqual(commandIconPixels(siegeModeIcon), tankModePixels, 'Unsiege artwork differs from the Siege icon');
   for (const [opcode, queued, expectedOrder] of [[37, 0, 99], [38, 1, 98], [37, 1, 99]]) {
     x.openbw_out_clear();
     x.openbw_key(queued, 0, 225);
