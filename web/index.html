@@ -368,7 +368,7 @@
       pointer-events: auto; }
     #card.building-menu .cmd { flex: 0 0 var(--action-size, 64px); scroll-snap-align: start; }
     #card.building-menu .cmd[aria-label="Cancel"] { order: -1; position: sticky; left: 0; z-index: 1; }
-    #card.building-menu .touch-cost { grid-row: 2 / span 2; align-self: center; }
+    body[data-buildings="strip"] #card.building-menu .touch-cost { grid-row: 2 / span 2; align-self: center; }
     #card .cmd:hover .cost, #card .cmd:hover .req { display: none; }
     #card .cmd.inspect .cost, #card .cmd.inspect .req { display: block; position: fixed;
       top: calc(var(--touch-top) + 52px); bottom: auto; left: var(--touch-left); right: auto;
@@ -452,6 +452,32 @@
     body { --command-columns: 3; }
     #mobilewarn { display: none !important; }
   }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card),
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) {
+    --command-label-height: clamp(24px, calc(120px - 1.5 * var(--action-size)), 36px);
+    --command-row-height: max(var(--action-size), calc(var(--action-icon) + var(--command-label-height) + 18px)); }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .command-grid,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .command-grid {
+    grid-auto-rows: var(--command-row-height);
+    max-height: min(calc(3 * var(--command-row-height) + 8px),
+      calc(100dvh - var(--hud-bottom, 8px) - var(--hud-headroom, 128px))); }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd {
+    grid-template-rows: minmax(0, 1fr) var(--command-label-height) 12px;
+    height: var(--command-row-height); }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd .ico,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd .ico { grid-column: 1; grid-row: 1; }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd .lbl,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd .lbl,
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .cmd:has(.touch-cost:not(:empty)) .lbl {
+    display: block; grid-column: 1; grid-row: 2; min-width: 0; min-height: 0; max-height: var(--command-label-height);
+    overflow: hidden; font-size: 10px; line-height: 12px;
+    white-space: normal; overflow-wrap: anywhere; }
+  body[data-command-layout="grid"] #card:not(.building-menu):not(.compact-card) .touch-cost,
+  body[data-buildings="split"] #card.building-menu:not(.compact-card) .touch-cost {
+    display: flex; grid-column: 1; grid-row: 3; align-self: center; align-items: center; justify-content: center;
+    gap: 1px; min-width: 0; font-size: 10px; line-height: 12px; white-space: nowrap; }
 </style>
 <style>
   #play-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 12px 0 20px; }
