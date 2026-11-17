@@ -720,11 +720,12 @@ if (process.argv[2] === '--test-campaign-menu') {
 
 const recoveryTest = process.argv[2] === '--test-campaign-save';
 const protossSelectionTest = process.argv[2] === '--test-protoss-selection';
+const zergMorphTest = process.argv[2] === '--test-zerg-morphs';
 const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? resolveCampaignMission(process.argv[3] || 'terran01').assetId : null;
 if (campaign) assert.ok(campaignPackMissions.includes(missionId), 'Unsupported test mission');
 const groupMinesTest = process.argv[2] === '--test-group-mines';
-const out = campaign || protossSelectionTest || groupMinesTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const out = campaign || protossSelectionTest || zergMorphTest || groupMinesTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
@@ -787,7 +788,7 @@ const x = recoveryTest ? {
   },
 } : nativeExports;
 if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot, mission.createStartingUnits ? 1 : 0);
-else x.openbw_init(1280, 800, protossSelectionTest ? 2 : 1, 0 /*slot*/);
+else x.openbw_init(1280, 800, zergMorphTest ? 0 : protossSelectionTest ? 2 : 1, 0 /*slot*/);
 if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
 
@@ -848,6 +849,8 @@ if (out) {
   }
 } else if (protossSelectionTest) {
   testProtossSelection();
+} else if (zergMorphTest) {
+  testZergMorphs();
 } else {
   testCommands(groupMinesTest);
 }
@@ -2429,6 +2432,133 @@ function testProtossSelection() {
   const move = applyQueued();
   assert.equal(move[2], 9); assert.equal(move[3], 3, 'Generic movement still applies to every selected type');
   console.log('Protoss three-type precedence, forward/reverse Tab, Probe commands and whole-group movement passed.');
+}
+
+function testZergMorphs() {
+  const read = readRecoveryString;
+  const units = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => unit[2] === '0');
+  const select = unit => { x.openbw_debug_select(Number(unit[0]), 0); x.openbw_render(0); };
+  const rows = () => read(x.openbw_card()).split('\n').slice(1).map(line => line.split('\t'));
+  const activate = (unit, prefix) => {
+    if (unit) select(unit);
+    const command = rows().find(fields => fields[10]?.startsWith(prefix));
+    assert.ok(command, `Player command ${prefix} must appear on ${unit?.[1] ?? 'the active card'}: ${read(x.openbw_card())}`);
+    assert.equal(command[2], '1', `${command[1]} is enabled after its prerequisites complete: ${JSON.stringify(command)}\n${read(x.openbw_debug_dump())}`);
+    x.openbw_out_clear();
+    assert.ok(activateCommand(x, command[10]) >= 0);
+    x.openbw_render(0);
+    return command;
+  };
+  const apply = () => {
+    const bytes = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
+    assert.ok(bytes.length, 'A player action emits a synchronized command');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(0, bytes.length); x.openbw_out_clear();
+  };
+  const incompleteOrders = new Set(['41', '42', '43', '44', '45']);
+  const completed = (id, label, budget = 3600, existing = new Set()) => {
+    for (let tick = 0; tick < budget; tick++) {
+      x.openbw_step();
+      if (tick % 16) continue;
+      const unit = units().find(unit => (!id || unit[0] === id) && unit[1] === label && !existing.has(unit[0]));
+      if (!unit || incompleteOrders.has(unit[5])) continue;
+      select(unit);
+      if (!rows().some(fields => fields[1] === 'Cancel')) return unit;
+    }
+    assert.fail(`${label} completes through the player's native command: ${JSON.stringify(units())}\n${read(x.openbw_debug_dump())}`);
+  };
+  const build = (type, label, width, height) => {
+    x.openbw_set_touch_controls(0);
+    const worker = units().find(unit => unit[1] === 'Drone');
+    assert.ok(worker, `Drone available to build ${label}`);
+    const others = units().filter(unit => unit[1] === 'Drone' && unit[0] !== worker[0]);
+    if (others.length) {
+      select(others[0]);
+      for (const other of others.slice(1)) x.openbw_debug_select(Number(other[0]), 1);
+      x.openbw_render(0); activate(null, 'move:');
+      x.openbw_mouse_button(1, 1, 96, 400, 1); x.openbw_mouse_button(0, 1, 96, 400, 1);
+      x.openbw_render(0); apply();
+      const moving = new Set(others.map(unit => unit[0]));
+      for (let tick = 0; tick < 1200 && units().some(unit => moving.has(unit[0]) && unit[5] === '6'); tick++) x.openbw_step();
+    }
+    const existing = new Set(units().filter(unit => unit[1] === label).map(unit => unit[0]));
+    activate(worker, 'build-menu:');
+    if (!rows().some(fields => fields[10]?.startsWith(`build:${type}:`))) activate(worker, 'advanced-menu:');
+    assert.ok(!rows().some(fields => [132, 133, 137, 144, 146].some(type => fields[10]?.startsWith(`build:${type}:`))),
+      'Building morphs never appear in the Drone construction menu');
+    activate(null, `build:${type}:`);
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    let site = null, nearest = Infinity;
+    for (let vertical = Math.ceil(Number(camera[2]) / 32); vertical * 32 < Number(camera[2]) + 640; vertical++) {
+      for (let horizontal = Math.ceil(Number(camera[1]) / 32); horizontal * 32 < Number(camera[1]) + 1120; horizontal++) {
+        const worldX = horizontal * 32 + width * 16, worldY = vertical * 32 + height * 16;
+        if ((x.openbw_debug_build_check(type, worldX, worldY) & 3) !== 3) continue;
+        const distance = Math.hypot(worldX - Number(worker[3]), worldY - Number(worker[4]));
+        if (distance < nearest) { nearest = distance; site = [worldX - Number(camera[1]), worldY - Number(camera[2])]; }
+      }
+    }
+    assert.ok(site, `Legal native placement for ${label}`);
+    x.openbw_mouse_button(1, 1, ...site, 1); x.openbw_mouse_button(0, 1, ...site, 1);
+    x.openbw_render(0); apply();
+    return completed(null, label, 3600, existing);
+  };
+  const resources = () => read(x.openbw_resources()).split('\t').slice(0, 2).map(Number);
+  const morph = (producer, type, label, action = 'morph-building') => {
+    for (const touch of [0, 1]) {
+      x.openbw_set_touch_controls(touch); select(producer);
+      assert.ok(rows().some(fields => fields[10]?.startsWith(`${action}:${type}:`) && fields[2] === '1'),
+        `${label} appears enabled in ${touch ? 'touch' : 'desktop'} controls`);
+    }
+    const command = activate(producer, `${action}:${type}:`), before = resources();
+    apply();
+    const result = completed(producer[0], label);
+    assert.equal(result[0], producer[0], 'Morphing preserves the original selected actor');
+    assert.deepEqual(resources(), [before[0] - Number(command[4]), before[1] - Number(command[5])],
+      `${label} pays exactly the mineral and gas price shown on its button`);
+    return result;
+  };
+  const fromLarva = (type, label) => {
+    let larva;
+    for (let tick = 0; tick < 900 && !larva; tick++) { larva = units().find(unit => unit[1] === 'Larva'); if (!larva) x.openbw_step(); }
+    assert.ok(larva, `Native Larva available for ${label}`);
+    return morph(larva, type, label, 'morph');
+  };
+  x.openbw_set_touch_controls(0);
+  x.openbw_debug_resources(20000, 20000);
+  const hatchery = units().find(unit => unit[1] === 'Hatchery');
+  assert.ok(hatchery);
+  select(hatchery);
+  assert.ok(!rows().some(fields => fields[10]?.startsWith('morph-building:132:') && fields[2] === '1'),
+    'Lair cannot be enabled before the Spawning Pool');
+  build(142, 'Spawning Pool', 3, 2);
+  const lair = morph(hatchery, 132, 'Lair');
+  select(lair);
+  assert.ok(!rows().some(fields => fields[10]?.startsWith('morph-building:133:') && fields[2] === '1'),
+    'Hive cannot be enabled before the Queens Nest');
+  fromLarva(42, 'Overlord');
+  for (let count = 0; count < 4; count++) fromLarva(41, 'Drone');
+  const sunken = build(143, 'Creep Colony', 2, 2);
+  morph(sunken, 146, 'Sunken Colony');
+  build(139, 'Evolution Chamber', 3, 2);
+  const spore = build(143, 'Creep Colony', 2, 2);
+  morph(spore, 144, 'Spore Colony');
+  build(138, "Queen's Nest", 3, 2);
+  morph(lair, 133, 'Hive');
+  const spire = build(141, 'Spire', 2, 2);
+  morph(spire, 137, 'Greater Spire');
+  morph(fromLarva(43, 'Mutalisk'), 44, 'Guardian', 'morph');
+  morph(fromLarva(43, 'Mutalisk'), 62, 'Devourer', 'morph');
+  const den = build(135, 'Hydralisk Den', 3, 2);
+  const hydralisk = fromLarva(38, 'Hydralisk');
+  select(hydralisk);
+  assert.ok(!rows().some(fields => fields[10]?.startsWith('morph:103:') && fields[2] === '1'),
+    'Lurker cannot be enabled before Lurker Aspect research');
+  select(den);
+  const research = rows().find(fields => fields[10]?.startsWith('research:') && fields[1].includes('Lurker'));
+  assert.ok(research, 'Hydralisk Den offers normal Lurker Aspect research');
+  activate(den, research[10]); apply(); completed(den[0], den[1]);
+  morph(hydralisk, 103, 'Lurker', 'morph');
+  console.log('Player controls, prerequisites, paid completion and identity passed for all five Zerg building morphs and Guardian/Devourer/Lurker in desktop and touch modes.');
 }
 
 function testCommands(groupMines = false) {

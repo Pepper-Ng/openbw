@@ -1273,7 +1273,7 @@ struct play_ui : ui_functions {
 			bool tb = ut_building(t), addon = ut_addon(t);
 			// Producer cards list units plus their addons (addons are buildings, but the
 			// producer builds them, not a worker); the worker submenu lists real buildings.
-			if (buildings_only ? (!tb || addon) : (tb && !addon)) continue;
+			if (buildings_only ? (!tb || addon) : (tb && !addon && !bw_is_building_morph(id))) continue;
 			if (cat && tb && bw_build_advanced(id) != (cat == 2)) continue;
 			bool can = unit_can_build(u, t);
 			if (hide_unavailable_commands() && !can) continue;
