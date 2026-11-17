@@ -19980,6 +19980,16 @@ struct state_functions {
 					return weapon && !unit_dying(target) && !ut_turret(target) && unit_target_is_enemy(unit, target) && unit_can_attack_target(unit, target) && unit_can_see_target(unit, target) && units_distance(unit, target) <= std::max(weapon_max_range(target, weapon), 160) + 96;
 				});
 				try_campaign_ai_wraith_cloak(unit, threat);
+			} else if (unit_is(unit, UnitTypes::Terran_Ghost)) {
+				auto order = unit->order_type->id;
+				bool nuclear = order == Orders::NukePaint || order == Orders::CastNuclearStrike || order == Orders::NukeUnit || order == Orders::NukeTrack;
+				if (!nuclear || unit->secondary_order_type->id == Orders::Cloak || u_requires_detector(unit)) continue;
+				const auto* tech = get_tech_type(TechTypes::Personnel_Cloaking);
+				auto cost = fp8::integer(tech->energy_cost);
+				if (!unit_can_use_tech(unit, tech) || unit->energy < cost * 2) continue;
+				if (xy_length(unit->order_target.pos - unit->sprite->position) > unit_sight_range(unit) * 2) continue;
+				unit->energy -= cost;
+				set_secondary_order(unit, get_order_type(Orders::Cloak));
 			} else if (unit_is_tank(unit)) try_campaign_ai_siege(unit);
 			else if (unit_is(unit, UnitTypes::Zerg_Lurker)) try_campaign_ai_lurker(unit);
 		}

@@ -349,6 +349,43 @@ static void shared_combat_ai_checks(state& st) {
 		st.game->tech_available[1][sample.second] = false;
 		require(!functions.unit_can_use_tech(hero, functions.get_tech_type(sample.second)), "hero research exception does not bypass disabled mission technology");
 	}
+	while (st.current_frame % 8) functions.next_frame();
+	unit_t* nuclear_ghost = functions.trigger_create_unit(functions.get_unit_type(UnitTypes::Terran_Ghost), original + xy(0, 64), 4);
+	require(nuclear_ghost, "native nuclear Ghost for automatic cloak guards");
+	const auto* cloak = functions.get_tech_type(TechTypes::Personnel_Cloaking);
+	auto cloak_cost = fp8::integer(cloak->energy_cost);
+	nuclear_ghost->energy = fp8::integer(100);
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::CastNuclearStrike), nuclear_ghost->sprite->position + xy(128, 0));
+	st.game->tech_available[4][TechTypes::Personnel_Cloaking] = true;
+	st.tech_researched[4][TechTypes::Personnel_Cloaking] = false;
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "nuclear Ghost cannot cloak before research completes");
+	st.tech_researched[4][TechTypes::Personnel_Cloaking] = true;
+	st.game->tech_available[4][TechTypes::Personnel_Cloaking] = false;
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "nuclear Ghost cannot bypass disabled mission technology");
+	st.game->tech_available[4][TechTypes::Personnel_Cloaking] = true;
+	nuclear_ghost->energy = cloak_cost * 2 - 1_fp8;
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == cloak_cost * 2 - 1_fp8 && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "nuclear Ghost retains enough energy for a useful cloak interval");
+	nuclear_ghost->energy = fp8::integer(100);
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::Move), nuclear_ghost->sprite->position + xy(128, 0));
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "ordinary Ghost movement does not trigger nuclear cloaking");
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::CastNuclearStrike), nuclear_ghost->sprite->position + xy(functions.unit_sight_range(nuclear_ghost) * 3, 0));
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "nuclear Ghost preserves cloak energy during distant travel");
+	functions.set_unit_order(nuclear_ghost, functions.get_order_type(Orders::CastNuclearStrike), nuclear_ghost->sprite->position + xy(128, 0));
+	auto controller = st.players[4].controller;
+	st.players[4].controller = player_t::controller_occupied;
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) && nuclear_ghost->secondary_order_type->id != Orders::Cloak, "human-controlled Ghosts never receive automatic nuclear cloak");
+	st.players[4].controller = controller;
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) - cloak_cost && nuclear_ghost->secondary_order_type->id == Orders::Cloak, "computer Ghost pays the native cloak cost near its nuclear target");
+	functions.progress_campaign_ai_combat(4);
+	require(nuclear_ghost->energy == fp8::integer(100) - cloak_cost, "pending nuclear cloak is never charged twice");
+	printf("Nuclear Ghost research, energy, travel and human-control guards passed.\n");
 	printf("Player Stim research guards and native hero ability exceptions passed.\n");
 	printf("Shared combat frame integration and human-control isolation checks passed.\n");
 }
@@ -8050,10 +8087,14 @@ int main(int argc, char** argv) {
 			require(!functions.try_campaign_ai_nuke(6) && nuclear_ai.next_nuke_frame == original_due, "missing ready missile cannot reset the authored nuclear cadence");
 			bool missile_ready = false;
 			bool launched = false;
+			bool cloaked_approach = false;
+			bool cloaked_launch = false;
+			bool nuclear_blast = false;
+			bool human_base_target = false;
 			std::array<bool, 2> ground_fire{};
 			std::array<bool, 2> air_fire{};
 			int combat_deadline = 45502 + 4 * (500 + 180 * 15) + 2 * functions.get_unit_type(UnitTypes::Terran_Battlecruiser)->build_time;
-			while (player.st().current_frame < combat_deadline && !(launched && ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1])) {
+			while (player.st().current_frame < combat_deadline && !(launched && nuclear_blast && ground_fire[0] && ground_fire[1] && air_fire[0] && air_fire[1])) {
 				for (unit_t* unit : ptr(player.st().player_units[1])) {
 					functions.u_set_status_flag(unit, unit_t::status_flag_invincible, unit->unit_type->id == UnitTypes::Hero_Jim_Raynor_Vulture);
 					unit->defensive_matrix_hp = fp8::integer(64000);
@@ -8063,8 +8104,14 @@ int main(int argc, char** argv) {
 				functions.next_frame();
 				for (unit_t* unit : ptr(player.st().player_units[6])) {
 					if (unit->unit_type->id == UnitTypes::Terran_Nuclear_Silo && unit->building.silo.ready) missile_ready = true;
-					if (unit->unit_type->id == UnitTypes::Terran_Ghost && unit->order_type->id == Orders::NukeTrack && unit->connected_unit && unit->connected_unit->unit_type->id == UnitTypes::Terran_Nuclear_Missile) launched = true;
+					if (unit->unit_type->id == UnitTypes::Terran_Ghost && unit->order_type->id == Orders::CastNuclearStrike && functions.u_cloaked(unit)) cloaked_approach = true;
+					if (unit->unit_type->id == UnitTypes::Terran_Ghost && unit->order_type->id == Orders::NukeTrack && unit->connected_unit && unit->connected_unit->unit_type->id == UnitTypes::Terran_Nuclear_Missile) {
+						launched = true;
+						cloaked_launch = cloaked_launch || functions.u_cloaked(unit);
+						for (const unit_t* target : ptr(player.st().player_units[1])) if (functions.ut_building(target) && target->sprite->position == unit->connected_unit->order_target.pos) human_base_target = true;
+					}
 				}
+				for (const bullet_t* bullet : ptr(player.st().active_bullets)) if (bullet->owner == 6 && bullet->weapon_type->hit_type == weapon_type_t::hit_type_nuclear_missile) nuclear_blast = true;
 				for (int index = 0; index != 2; ++index) for (unit_id id : player.st().campaign_ai[index ? 6 : 0].attacking) {
 					unit_t* unit = functions.get_unit(id);
 					if (!unit || functions.unit_dying(unit) || functions.us_hidden(unit)) continue;
@@ -8077,6 +8124,8 @@ int main(int argc, char** argv) {
 				if (player.st().current_frame < original_due) require(!launched && nuclear_ai.next_nuke_frame == original_due, "scripted nuclear launch cannot run before its original cadence");
 			}
 			require(missile_ready && launched && nuclear_ai.next_nuke_frame > original_due, "T12N pays for a native missile and launches it through an original Ghost at the scripted cadence");
+			require(cloaked_approach && cloaked_launch, "the original T12N Ghost cloaks before launch and maintains cloak during its nuclear strike");
+			require(human_base_target && nuclear_blast, "the original T12N nuclear strike targets a human building and reaches the native nuclear blast");
 			if (!ground_fire[0] || !ground_fire[1] || !air_fire[0] || !air_fire[1]) {
 				printf("Hammer combat diagnostic: frame=%d outcome=%d ground0=%d air0=%d ground6=%d air6=%d human_actors=%d human_buildings=%d\n", player.st().current_frame, player.st().players[1].victory_state, ground_fire[0], air_fire[0], ground_fire[1], air_fire[1], count_units(player.st(), 1), player.st().building_counts[1]);
 				for (const auto& script : player.st().campaign_ai_scripts) printf("Hammer script state: owner=%d position=%zu wait=%d\n", script.owner, script.position, script.wait);
