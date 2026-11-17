@@ -19835,6 +19835,8 @@ struct state_functions {
 				if (unit_dying(enemy) || ut_turret(enemy) || us_hidden(enemy)) continue;
 				const auto* region = get_region_at(enemy->sprite->position);
 				auto& defense = ai.regions.at(region->index);
+				const unit_t* attacked = enemy->order_target.unit;
+				if (attacked && attacked->owner == owner && ut_building(attacked) && !unit_dying(attacked) && (enemy->sprite->visibility_flags & (1 << owner)) && !unit_is_undetected(enemy, owner)) defense.defended = true;
 				defense.needed[0] += game_st.unit_ground_strength[enemy->unit_type->id];
 				defense.needed[1] += game_st.unit_air_strength[enemy->unit_type->id];
 				int category = campaign_ai_defense_category(enemy);
@@ -20042,6 +20044,38 @@ struct state_functions {
 		return true;
 	}
 
+	bool try_campaign_ai_yamato(unit_t* unit) {
+		if (st.players[unit->owner].controller != player_t::controller_computer_game || unit_dying(unit) || us_hidden(unit) || unit_is_disabled(unit) || u_hallucination(unit) || u_order_not_interruptible(unit) || u_iscript_nobrk(unit) || unit->spell_cooldown) return false;
+		switch (unit->order_type->id) {
+		case Orders::Guard: case Orders::PlayerGuard: case Orders::ComputerAI: case Orders::Nothing:
+		case Orders::Move: case Orders::AttackMove: case Orders::AttackUnit: case Orders::Patrol: case Orders::HoldPosition: break;
+		default: return false;
+		}
+		const auto* tech = get_tech_type(TechTypes::Yamato_Gun);
+		if (!unit_can_use_tech(unit, tech) || unit->energy < fp8::integer(tech->energy_cost)) return false;
+		const auto* order = get_order_type(Orders::FireYamatoGun);
+		const auto* weapon = get_weapon_type(order->weapon);
+		int range = weapon_max_range(unit, weapon), best_value = -1;
+		unit_t* best = nullptr;
+		for (unit_t* target : find_units_noexpand(square_at(unit->sprite->position, range + 64))) {
+			if (unit_dying(target) || us_hidden(target) || ut_turret(target) || u_invincible(target) || target->stasis_timer || target->hp + target->shield_points < fp8::integer(200)) continue;
+			if (!unit_target_is_enemy(unit, target) || !unit_can_see_target(unit, target) || !weapon_can_target_unit(weapon, target, unit) || units_distance(unit, target) > range) continue;
+			bool pending = false;
+			for (const unit_t* caster : ptr(st.player_units[unit->owner])) if (!unit_dying(caster) && (caster->order_type->id == Orders::FireYamatoGun || caster->order_type->id == Orders::MoveToFireYamatoGun) && caster->order_target.unit == target) pending = true;
+			for (const bullet_t* bullet : ptr(st.active_bullets)) if (bullet->owner == unit->owner && bullet->weapon_type == weapon && bullet->bullet_target == target) pending = true;
+			if (pending) continue;
+			int value = target->unit_type->mineral_cost + target->unit_type->gas_cost;
+			if (best && value <= best_value) continue;
+			best = target; best_value = value;
+		}
+		if (!best) return false;
+		const auto* previous = unit->order_type;
+		order_target_t destination{unit->order_target.pos, unit->order_target.unit};
+		issue_order(unit, false, order, {best->sprite->position, best});
+		if (previous->id == Orders::Move || previous->id == Orders::AttackMove || previous->id == Orders::Patrol) queue_order_back(unit, previous, destination);
+		return true;
+	}
+
 	void progress_campaign_ai_combat(int owner) {
 		if (st.current_frame % 8 || st.players[owner].controller != player_t::controller_computer_game) return;
 		for (unit_t* unit : ptr(st.player_units[owner])) {
@@ -20066,7 +20100,8 @@ struct state_functions {
 				if (xy_length(unit->order_target.pos - unit->sprite->position) > unit_sight_range(unit) * 2) continue;
 				unit->energy -= cost;
 				set_secondary_order(unit, get_order_type(Orders::Cloak));
-			} else if (unit_is_tank(unit)) try_campaign_ai_siege(unit);
+			} else if (unit_can_use_tech(unit, get_tech_type(TechTypes::Yamato_Gun))) try_campaign_ai_yamato(unit);
+			else if (unit_is_tank(unit)) try_campaign_ai_siege(unit);
 			else if (unit_is(unit, UnitTypes::Zerg_Lurker)) try_campaign_ai_lurker(unit);
 		}
 	}
@@ -20138,6 +20173,7 @@ struct state_functions {
 		}
 		auto unavailable = [&](const unit_t* unit) {
 			auto order = unit->order_type->id;
+			if (unit->order_type->tech_type != TechTypes::None) return true;
 			if (order == Orders::NukePaint || order == Orders::CastNuclearStrike || order == Orders::NukeUnit || order == Orders::NukeTrack) return true;
 			unit_id id = get_unit_id(unit);
 			return std::find(ai.attacking.begin(), ai.attacking.end(), id) != ai.attacking.end() || std::find(ai.attack_party.begin(), ai.attack_party.end(), id) != ai.attack_party.end() || std::any_of(ai.guards.begin(), ai.guards.end(), [&](const auto& guard) { return guard.unit == id; });
@@ -20165,7 +20201,7 @@ struct state_functions {
 				if (unit->order_type->id == Orders::AttackUnit || unit->order_type->id == Orders::AttackMove) issue_order(unit, false, get_order_type(Orders::AttackMove), {defender.home, nullptr});
 				return true;
 			}
-			if (unit->order_target.unit != target) issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
+			if (unit->order_type->tech_type == TechTypes::None && unit->order_target.unit != target) issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
 			for (int domain = 0; domain != 2; ++domain) ai.regions[defender.region].assigned[domain] += domain ? game_st.unit_air_strength[unit->unit_type->id] : game_st.unit_ground_strength[unit->unit_type->id];
 			++reserves[campaign_ai_type(unit->unit_type->id)];
 			return false;
@@ -20210,6 +20246,23 @@ struct state_functions {
 						}
 					}
 				} while (recruited && region.assigned[domain] < region.needed[domain]);
+				while (region.assigned[domain] < region.needed[domain]) {
+					unit_t* unit = find_nearest_unit(target->sprite->position, map_bounds(), [&](const unit_t* candidate) {
+						if (candidate->owner != owner || unit_dying(candidate) || us_hidden(candidate) || !u_completed(candidate) || ut_worker(candidate) || ut_building(candidate) || ut_turret(candidate) || !worker_idle(candidate) || unavailable(candidate) || is_defending(candidate) || !unit_can_attack_target(candidate, target)) return false;
+						UnitTypes type = campaign_ai_type(candidate->unit_type->id);
+						if (std::any_of(ai.defenses.begin(), ai.defenses.end(), [&](const auto& defense) { return defense.category >= 4 && defense.type == type; })) return false;
+						const auto* origin = get_region_at(candidate->sprite->position);
+						bool local = origin->index == path_region.index || std::find(path_region.walkable_neighbors.begin(), path_region.walkable_neighbors.end(), origin) != path_region.walkable_neighbors.end() || std::find(path_region.non_walkable_neighbors.begin(), path_region.non_walkable_neighbors.end(), origin) != path_region.non_walkable_neighbors.end();
+						const unit_t* attacked = target->order_target.unit;
+						if (attacked && attacked->owner == owner && ut_building(attacked) && !unit_dying(attacked) && xy_length(candidate->sprite->position - attacked->sprite->position) <= 384) local = true;
+						return local && (u_flying(candidate) || is_reachable(candidate, target));
+					});
+					if (!unit) break;
+					ai.defending.push_back({get_unit_id(unit), path_region.index, unit->sprite->position});
+					issue_order(unit, false, unit->unit_type->attack_unit, {target->sprite->position, target});
+					for (int target_domain = 0; target_domain != 2; ++target_domain) region.assigned[target_domain] += target_domain ? game_st.unit_air_strength[unit->unit_type->id] : game_st.unit_ground_strength[unit->unit_type->id];
+					++reserves[campaign_ai_type(unit->unit_type->id)];
+				}
 				if (region.assigned[domain] < region.needed[domain]) for (const auto& defense : ai.defenses) if (defense.category == category) defense_build[defense.type] += defense.amount;
 			}
 		}
