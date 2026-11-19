@@ -1855,8 +1855,9 @@ async function boot(session) {
     if (!session.mission || briefingActive) return;
     updateObjectives(missionText(x.openbw_mission_objectives()));
     const remaining = x.openbw_mission_countdown();
-    $('mission-countdown').hidden = remaining < 0;
-    if (remaining >= 0) $('mission-countdown').textContent = `Time Left: ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
+    const countdown = $('mission-countdown');
+    countdown.hidden = remaining <= 0;
+    if (!countdown.hidden) countdown.textContent = `Time Left: ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`;
     const leaderboard = readCString(x.openbw_mission_leaderboard()).trim();
     $('mission-leaderboard').hidden = !leaderboard;
     if (leaderboard) {
