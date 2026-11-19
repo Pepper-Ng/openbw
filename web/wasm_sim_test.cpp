@@ -1480,21 +1480,17 @@ static void jacobs_mission_cases(data_loading::data_files_loader<>& load_data_fi
 			}
 			require(trap != nullptr, "original disabled floor gun trap");
 			xy previous_position = marine->sprite->position;
+			for (int tick = 0; tick != 120; ++tick) functions.next_frame();
+			require(functions.u_disabled(trap) && trap->order_type->id == Orders::HiddenGun, "original floor trap stays disabled before entering its activation area");
 			functions.move_unit(marine, trap->sprite->position + xy(48, 0));
 			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
 			functions.u_set_status_flag(trap, unit_t::status_flag_invincible);
 			auto previous_hp = marine->hp;
-			for (int tick = 0; tick != 120; ++tick) {
-				functions.set_sprite_visibility(marine->sprite, 0xff);
-				functions.next_frame();
-			}
-			require(marine->hp == previous_hp && functions.u_disabled(trap) && trap->order_type->id == Orders::HiddenGun, "disabled floor trap cannot attack an adjacent visible enemy");
-			functions.set_doodad_state(trap, true);
 			for (int tick = 0; tick != 240 && marine->hp == previous_hp; ++tick) {
 				functions.set_sprite_visibility(marine->sprite, 0xff);
 				functions.next_frame();
 			}
-			require(marine->hp < previous_hp && !functions.u_disabled(trap), "enabled floor trap reveals and fires its native weapon");
+			require(marine->hp < previous_hp && !functions.u_disabled(trap), "the original area trigger enables the floor trap and it reveals and fires its native weapon");
 			functions.move_unit(marine, previous_position);
 			functions.set_unit_order(marine, functions.get_order_type(Orders::HoldPosition));
 			for (int tick = 0; tick != 240; ++tick) functions.next_frame();
@@ -2570,7 +2566,7 @@ static void agent_swarm_mission_cases(data_loading::data_files_loader<>& load_da
 }
 
 static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_file, const char* map_file) {
-	for (int scenario = 0; scenario != 4; ++scenario) {
+	for (int scenario = 0; scenario != 5; ++scenario) {
 		game_player player(load_data_file);
 		data_loading::mpq_file<> map_loader(map_file);
 		game_load_functions loader(player.st());
@@ -2578,7 +2574,13 @@ static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_f
 		loader.load_map(map_loader);
 		auto& st = player.st();
 		st.strict_triggers = true;
-		state_functions functions(st);
+		struct observed_functions : state_functions {
+			using state_functions::state_functions;
+			bool ambush_transmission = false;
+			void on_trigger_action(int, const trigger::action& action) override {
+				if (action.type == 7 && action.location == 16 && action.extra_n == int(UnitTypes::Terran_Marine)) ambush_transmission = true;
+			}
+		} functions(st);
 		auto step = [&]() {
 			for (unit_t* unit : ptr(st.player_units[3])) {
 				unit->defensive_matrix_hp = fp8::integer(64000);
@@ -2625,6 +2627,26 @@ static void amerigo_mission_cases(data_loading::data_files_loader<>& load_data_f
 			for (int tick = 0; tick != 800; ++tick) { step(); if (functions.xy_length(zergling->sprite->position - position_at(6)) < 192) teleported = true; }
 			require(teleported, "native movement onto the original beacon activates the repeatable sector-five-to-six teleporter");
 			require(!st.players[3].victory_state, "door controls, reinforcements and teleporting do not invent victory");
+		} else if (scenario == 4) {
+			std::array<unit_t*, 3> doors{};
+			for (size_t index = 0; index != doors.size(); ++index) {
+				for (unit_t* unit : functions.find_units(st.locations.at(59 + index).area))
+					if (functions.unit_is_door(unit)) doors[index] = unit;
+				require(doors[index] && functions.u_disabled(doors[index]) && functions.u_no_collide(doors[index]), "all three original ambush doors start visually and physically open");
+			}
+			unit_t* entrance = doors.front();
+			require(!functions.is_blocked(kerrigan, entrance->sprite->position).first, "Kerrigan can pass through the originally open door");
+			xy approach = entrance->sprite->position - xy(48, 48);
+			require(!functions.is_blocked(kerrigan, approach).first, "the ambush approach is outside the open entrance");
+			functions.move_unit(kerrigan, approach);
+			functions.issue_order(kerrigan, false, functions.get_order_type(Orders::Move), {position_at(59), nullptr});
+			for (int tick = 0; tick != 360 && !st.trigger_switches[4]; ++tick) step();
+			require(st.trigger_switches[4] && functions.ambush_transmission, "walking into the ambush plays the original Marine transmission");
+			for (unit_t* door : doors) require(!functions.u_no_collide(door) && !functions.u_disabled(door), "both original toggle encodings close the ambush doors");
+			functions.issue_order(kerrigan, false, functions.get_order_type(Orders::Move), {position_at(14), nullptr});
+			auto all_open = [&]() { return std::all_of(doors.begin(), doors.end(), [&](unit_t* door) { return functions.u_no_collide(door) && functions.u_disabled(door); }); };
+			for (int tick = 0; tick != 450 && !all_open(); ++tick) step();
+			require(all_open(), "walking onto the release beacon reopens all three original ambush doors");
 		} else {
 			if (scenario == 1) functions.move_unit(kerrigan, position_at(20));
 			if (scenario == 2) functions.kill_unit(kerrigan);
@@ -8602,7 +8624,7 @@ int main(int argc, char** argv) {
 			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);
 			require(!functions.u_no_collide(door), "door opening waits for its animation signal before removing collision");
 			for (int tick = 0; tick != 120; ++tick) player.next_frame();
-			require(functions.u_status_flag(door, unit_t::status_flag_no_collide) && functions.u_disabled(door), "legacy original doodad action opens a door after its native animation");
+			require(functions.u_status_flag(door, unit_t::status_flag_no_collide) && functions.u_disabled(door), "the original zero-modifier toggle opens a closed door after its native animation");
 			require(!functions.is_blocked(marines[0], door->sprite->position).first, "open door becomes passable to native collision and terrain checks");
 			action.num_n = 4;
 			functions.execute_trigger_action(effects, 0, running, running.actions[0], action);

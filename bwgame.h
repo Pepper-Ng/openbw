@@ -6908,12 +6908,16 @@ struct state_functions {
 		else set_doodad_state(u, enabled);
 	}
 
-	void order_Door(unit_t* u, bool open) {
-		if (!(u->order_signal & 1)) return;
-		u->order_signal &= ~1;
+	void set_door_open_state(unit_t* u, bool open) {
 		u_set_status_flag(u, unit_t::status_flag_no_collide, open);
 		u_set_status_flag(u, unit_t::status_flag_disabled, open);
 		u->sprite->elevation_level = open ? 1 : u->unit_type->elevation_level;
+	}
+
+	void order_Door(unit_t* u, bool open) {
+		if (!(u->order_signal & 1)) return;
+		u->order_signal &= ~1;
+		set_door_open_state(u, open);
 		u->user_action_flags |= 1;
 		u_unset_status_flag(u, unit_t::status_flag_order_not_interruptible);
 		order_done(u);
@@ -20929,7 +20933,7 @@ struct state_functions {
 		case 42:
 			{
 				int modifier = a.num_n;
-				if (!modifier && game_st.scenario_format == 59) modifier = 5;
+				if (!modifier) modifier = 6;
 				if (modifier != 4 && modifier != 5 && modifier != 6) error("unsupported doodad state %d", modifier);
 				const auto& location = st.locations.at(a.location - 1);
 				for (unit_t* unit : find_units(location.area)) {
@@ -23411,7 +23415,8 @@ struct game_load_functions : state_functions {
 					if (use_map_settings || owner == 11) {
 						unit_t* unit = create_initial_unit(get_unit_type(unit_type), xy(x, y), owner);
 						if (unit && (flags & 0x80)) {
-							u_set_status_flag(unit, unit_t::status_flag_disabled);
+							if (unit_is_door(unit)) set_door_open_state(unit, true);
+							else u_set_status_flag(unit, unit_t::status_flag_disabled);
 							sprite_run_anim(unit->sprite, iscript_anims::Disable);
 						}
 					}
