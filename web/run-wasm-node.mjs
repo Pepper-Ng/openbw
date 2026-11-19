@@ -8,7 +8,7 @@ import { WASI } from 'node:wasi';
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
+import { sealCampaignSave, validateCampaignSave, verifyCampaignReplay } from './campaign-saves.js';
 import { campaignPackMissions, readPlainMissionPack, auditScenario, scenarioSections } from './prepare-campaign.mjs';
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 import { activateCommand, commandShortcuts } from './hotkeys.js';
@@ -669,7 +669,7 @@ if (process.argv[2] === '--test-campaign-menu') {
   assert.equal(validateCampaignSave(variantSave).variant, 'Terran05b.scx');
   const tutorialSave = sealCampaignSave({ ...variantSave, mission: 'tutorial', variant: undefined, title: 'Boot Camp' });
   assert.equal(validateCampaignSave(tutorialSave).mission, 'tutorial', 'Optional tutorial saves use the normal bounded journal and compatibility validation');
-  assert.throws(() => validateCampaignSave(variantSave, { ...variantSave, variant: 'Terran05a.scx' }), /requires the engine/);
+  assert.throws(() => validateCampaignSave(variantSave, { ...variantSave, variant: 'Terran05a.scx' }), /different mission or variant/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, variant: undefined })), /variant/);
   assert.throws(() => validateCampaignSave(sealCampaignSave({ ...variantSave, mission: 'bwterran05b' })), /Invalid saved game/);
   assert.deepEqual(ids.filter(id => id.startsWith('bwzerg04')), ['bwzerg04'], 'Six Liberation assets occupy one story position');
@@ -685,7 +685,7 @@ if (process.argv[2] === '--test-campaign-menu') {
     assert.equal(asset('?mission=bwzerg04&variant=Zerg04a.scx', { bwzerg03: 'Zerg04a.scx' }, save.variant, 'bwzerg04').scenario, save.variant, 'Resume preserves the saved original variant after predecessor replay');
     for (const other of liberationManifests.filter(other => other !== manifest)) {
       assert.throws(() => validateManifest(manifest, 'bwzerg04', other.variant), /variant/);
-      assert.throws(() => validateCampaignSave(save, { ...save, variant: other.variant }), /requires the engine/);
+      assert.throws(() => validateCampaignSave(save, { ...save, variant: other.variant }), /different mission or variant/);
     }
     assert.throws(() => validateCampaignSave(sealCampaignSave({ ...save, variant: undefined })), /variant/);
   }
@@ -867,7 +867,12 @@ if (out) {
       turns: recordedTurns.map(turn => ({ tick: turn.tick, bytes: Array.from(turn.bytes) })), view: { camera: [0, 0], selection: [] },
     }))));
     assert.throws(() => validateCampaignSave({ ...saved, checksum: saved.checksum ^ 1 }), /integrity|Invalid/, 'Corrupt save cannot load');
-    assert.throws(() => validateCampaignSave(saved, { ...saved, engineHash: '0'.repeat(64) }), /requires the engine/, 'Incompatible runtime cannot load');
+    const updated = { ...saved, engineHash: '0'.repeat(64) };
+    const verifyUpdate = { allowEngineMismatch: true };
+    assert.throws(() => validateCampaignSave(saved, updated), /requires the engine/, 'An engine mismatch needs an explicit verification attempt');
+    assert.equal(validateCampaignSave(saved, updated, verifyUpdate), saved);
+    assert.throws(() => validateCampaignSave(saved, { ...updated, packHash: '0'.repeat(64) }, verifyUpdate), /original mission data/);
+    assert.throws(() => validateCampaignSave(saved, { ...updated, assetHashes: ['0'.repeat(14), ...updated.assetHashes.slice(1)] }, verifyUpdate), /original game data files/);
     const resumedWasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
     const resumed = await WebAssembly.instantiate(module, { ...resumedWasi.getImportObject(), env });
     memory = resumed.exports.memory;
@@ -887,8 +892,11 @@ if (out) {
       const events = readRecoveryString(restored.openbw_mission_events()).trim();
       if (events) restored.openbw_mission_ack(Number(events.split('\n').at(-1).split('\t')[1]));
     }
-    assert.equal(turn, saved.turns.length, 'All saved command turns replay at their original service tick');
-    assert.equal(restored.openbw_checksum(), expectedChecksum, 'Recovered simulation checksum matches the saved game');
+    const recoveredFrame = restored.openbw_frame(), recoveredChecksum = restored.openbw_checksum();
+    verifyCampaignReplay(saved, recoveredFrame, recoveredChecksum, turn);
+    assert.throws(() => verifyCampaignReplay(saved, recoveredFrame, recoveredChecksum ^ 1, turn), /did not match/);
+    assert.throws(() => verifyCampaignReplay(saved, recoveredFrame + 1, recoveredChecksum, turn), /did not match/);
+    assert.throws(() => verifyCampaignReplay(saved, recoveredFrame, recoveredChecksum, turn + 1), /did not match/);
     assert.equal(readRecoveryString(restored.openbw_debug_units()), expectedUnits, 'Recovered actors, ownership, positions and orders match');
     assert.equal(readRecoveryString(restored.openbw_mission_string(restored.openbw_mission_next_scenario())), expectedNextScenario, 'Recovered authored next-scenario choice matches');
     console.log(`Campaign deterministic recovery passed: ${recordedTicks} service ticks, ${recordedTurns.length} command batches.`);

@@ -20,7 +20,7 @@ export function sealCampaignSave(payload) {
   return { ...value, integrity: fingerprint(value) };
 }
 
-export function validateCampaignSave(value, expected = null) {
+export function validateCampaignSave(value, expected = null, { allowEngineMismatch = false } = {}) {
   if (!value || value.version !== campaignSaveVersion || !validMission(value.mission) || typeof value.title !== 'string' || value.title.length > 200 || !integer(value.ticks, 2000000) || !integer(value.frame, value.ticks + 8) || !integer(value.checksum, 0xffffffff) || !Number.isFinite(value.savedAt) || value.savedAt <= 0) throw new Error('Invalid saved game.');
   const variant = value.variant === undefined ? '' : value.variant;
   if (resolveCampaignMission(value.mission, variant).scenario !== variant) throw new Error('Invalid saved game variant.');
@@ -38,8 +38,18 @@ export function validateCampaignSave(value, expected = null) {
   const payload = { ...value };
   delete payload.integrity;
   if (value.integrity !== fingerprint(payload)) throw new Error('Saved game integrity check failed.');
-  if (expected && (value.mission !== expected.mission || (value.variant || '') !== (expected.variant || '') || value.packHash !== expected.packHash || value.engineHash !== expected.engineHash || JSON.stringify(value.assetHashes) !== JSON.stringify(expected.assetHashes))) throw new Error('This saved game requires the engine and mission data that created it.');
+  if (expected) {
+    if (value.mission !== expected.mission || variant !== (expected.variant || '')) throw new Error('This save belongs to a different mission or variant.');
+    if (value.packHash !== expected.packHash) throw new Error('This save needs the original mission data.');
+    if (expected.assetHashes?.length !== value.assetHashes.length || value.assetHashes.some((hash, index) => hash !== expected.assetHashes[index])) throw new Error('This save needs the original game data files.');
+    if (!allowEngineMismatch && value.engineHash !== expected.engineHash) throw new Error('This save requires the engine build that created it.');
+  }
   return value;
+}
+
+export function verifyCampaignReplay(save, frame, checksum, turns) {
+  if (turns !== save.turns.length || frame !== save.frame || (checksum >>> 0) !== save.checksum)
+    throw new Error('The replay did not match the saved game.');
 }
 
 let database;

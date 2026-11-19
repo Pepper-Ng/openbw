@@ -551,10 +551,10 @@
   #campaign-resume { background: #7bc79c; }
   #campaign-saves { border-top: 1px solid #30383c; margin-top: 22px; }
   #campaign-saves h3 { font-size: 14px; margin: 14px 0 6px; }
-  .campaign-save-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px; align-items: center; gap: 6px; border-bottom: 1px solid #30383c; padding: 9px 0; }
+  .campaign-save-row { display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px); align-items: center; gap: 6px; border-bottom: 1px solid #30383c; padding: 9px 0; }
   .campaign-save-row strong, .campaign-save-row small { display: block; overflow-wrap: anywhere; }
   .campaign-save-row small { color: #96a4ad; font-size: 11px; }
-  .campaign-save-row button { display: grid; place-items: center; width: 38px; height: 38px; padding: 9px; margin: 0; background: #28353b; color: #dce5e9; }
+  .campaign-save-row button { display: grid; place-items: center; width: 44px; height: 44px; padding: 9px; margin: 0; background: #28353b; color: #dce5e9; }
   .campaign-save-row button:disabled { opacity: .4; cursor: default; }
   #campaign-save-controls { margin: 0; padding: 0; }
   #campaign-save-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
@@ -1081,6 +1081,7 @@
     <button id="load-cancel" type="button" hidden><i data-lucide="x"></i>Cancel</button>
     <button id="load-retry" type="button"><i data-lucide="rotate-cw"></i>Retry</button>
     <button id="load-return" type="button"><i data-lucide="arrow-left"></i>Return</button>
+    <button id="load-export-save" type="button" hidden><i data-lucide="download"></i>Export Save</button>
     <button id="load-fresh" type="button" hidden><i data-lucide="rotate-ccw"></i>Start Fresh</button>
   </div>
   <div id="mobilewarn">

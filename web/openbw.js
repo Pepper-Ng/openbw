@@ -1121,7 +1121,9 @@ async function boot(session) {
   const x = instance.exports;
   memory = x.memory;
   const saveCompatibility = session.mission ? { mission: session.mission.id, ...(session.mission.variant ? { variant: session.mission.variant } : {}), packHash: session.mission.pack.sha256, engineHash, assetHashes: assets.slice(0, 3).map(cyrb53) } : null;
-  if (session.resume) (await campaignSaves()).validateCampaignSave(session.resume, saveCompatibility);
+  const recoveryStorage = session.resume ? await campaignSaves() : null;
+  const updatedEngine = !!session.resume && session.resume.engineHash !== engineHash;
+  if (session.resume) recoveryStorage.validateCampaignSave(session.resume, saveCompatibility, { allowEngineMismatch: true });
 
   const canvas = $('screen');
   const ctx = canvas.getContext('2d');
@@ -1658,7 +1660,7 @@ async function boot(session) {
     if (sessionFailed) return;
     try { runStepLoop(); } catch (error) { failSession(error); }
   };
-  stepTimer = setTimeout(stepLoop, stepMs);
+  if (!recovering) stepTimer = setTimeout(stepLoop, stepMs);
 
   // Reload is how players go back to the main menu, and a same-origin reload reuses the
   // renderer process — so anything the page doesn't release outlives it. AudioContexts
@@ -2508,14 +2510,7 @@ async function boot(session) {
         window.lucide?.createIcons();
       }
     };
-    const autosave = () => saveCurrentGame(`auto:${session.mission.id}`).catch(() => {});
-    const saveTimer = setInterval(autosave, 15000);
-    saveBeforeLeave = autosave;
-    document.addEventListener('visibilitychange', () => { if (document.hidden) autosave(); });
-    addEventListener('pagehide', () => clearInterval(saveTimer), { once: true });
-    pauseBtn.addEventListener('click', () => { if (paused) autosave(); });
     if (session.resume) {
-      clearTimeout(stepTimer);
       x.openbw_set_paused(1);
       const saved = session.resume;
       $('overlay').style.display = 'grid';
@@ -2523,30 +2518,36 @@ async function boot(session) {
       $('mission-briefing').hidden = true;
       briefingActive = false;
       briefingPlaying = false;
-      x.openbw_mission_begin();
-      stopNarration();
-      let turn = 0;
-      while (missionTicks < saved.ticks) {
+      try {
+        x.openbw_mission_begin();
+        stopNarration();
+        let turn = 0;
+        while (missionTicks < saved.ticks) {
+          session.signal?.throwIfAborted();
+          const until = performance.now() + 16;
+          do {
+            while (saved.turns[turn]?.tick === missionTicks) {
+              const command = saved.turns[turn++];
+              const input = x.openbw_in_ptr(command.bytes.length);
+              new Uint8Array(memory.buffer).set(command.bytes, input);
+              x.openbw_apply(mySlot, command.bytes.length);
+            }
+            x.openbw_step();
+            missionTicks++;
+            consumeMissionEvents();
+            if (x.openbw_outcome()) throw new Error('Saved game reached an unexpected mission outcome.');
+          } while (missionTicks < saved.ticks && performance.now() < until);
+          const progress = missionTicks / Math.max(1, saved.ticks);
+          setMsg(`${updatedEngine ? 'Verifying save on the updated engine' : `Restoring ${session.mission.title}`}: ${Math.floor(progress * 100)}%`);
+          setBar(progress);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
         session.signal?.throwIfAborted();
-        const until = performance.now() + 16;
-        do {
-          while (saved.turns[turn]?.tick === missionTicks) {
-            const command = saved.turns[turn++];
-            const input = x.openbw_in_ptr(command.bytes.length);
-            new Uint8Array(memory.buffer).set(command.bytes, input);
-            x.openbw_apply(mySlot, command.bytes.length);
-          }
-          x.openbw_step();
-          missionTicks++;
-          consumeMissionEvents();
-          if (x.openbw_outcome()) throw new Error('Saved game reached an unexpected mission outcome.');
-        } while (missionTicks < saved.ticks && performance.now() < until);
-        setMsg(`Restoring ${session.mission.title}: ${Math.floor(missionTicks * 100 / Math.max(1, saved.ticks))}%`);
-        setBar(missionTicks / Math.max(1, saved.ticks));
-        await new Promise(resolve => setTimeout(resolve, 0));
+        recoveryStorage.verifyCampaignReplay(saved, x.openbw_frame(), x.openbw_checksum(), turn);
+      } catch (error) {
+        if (updatedEngine && error.name !== 'AbortError') throw new Error('Save verification failed on this engine build. The original build is needed to resume.', { cause: error });
+        throw error;
       }
-      session.signal?.throwIfAborted();
-      if (turn !== saved.turns.length || x.openbw_frame() !== saved.frame || (x.openbw_checksum() >>> 0) !== saved.checksum) throw new Error('Saved game could not be reconstructed exactly.');
       for (const command of saved.turns) missionTurns.push({ tick: command.tick, bytes: command.bytes.slice() });
       lockstep.frame = saved.ticks;
       lockstep.nextLocalFrame = saved.ticks;
@@ -2566,10 +2567,16 @@ async function boot(session) {
       applyPause();
       $('mission-hud').hidden = false;
       $('overlay').style.display = 'none';
-      $('save-status').textContent = 'Saved game restored.';
+      $('save-status').textContent = updatedEngine ? 'Saved game verified and restored on the updated engine.' : 'Saved game restored.';
       stepClock = performance.now();
       stepTimer = setTimeout(stepLoop, stepMs);
     }
+    const autosave = () => saveCurrentGame(`auto:${session.mission.id}`).catch(() => {});
+    const saveTimer = setInterval(autosave, 15000);
+    saveBeforeLeave = autosave;
+    document.addEventListener('visibilitychange', () => { if (document.hidden) autosave(); });
+    addEventListener('pagehide', () => clearInterval(saveTimer), { once: true });
+    pauseBtn.addEventListener('click', () => { if (paused) autosave(); });
     const address = new URL(location.href);
     address.searchParams.delete('fresh');
     address.searchParams.delete('resume');
@@ -2892,6 +2899,23 @@ function campaignAddress(mission, resume = null, fresh = false, variant = '') {
   if (campaignDebug) address.searchParams.set('campaign-debug', '1');
   return address;
 }
+async function exportCampaignSave(key, button, status) {
+  button.disabled = true;
+  try {
+    const save = await (await campaignSaves()).readCampaignSave(key);
+    if (!save) throw new Error('Saved game was not found.');
+    const url = URL.createObjectURL(new Blob([JSON.stringify(save)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    const source = key.startsWith('auto:') ? 'autosave' : key.replace(':', '-');
+    link.download = `openbw-${save.mission}-${source}.json`;
+    try { link.click(); } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    status.textContent = 'Save download started.';
+  } catch (error) {
+    status.textContent = `Save export failed: ${error.message}`;
+  } finally { button.disabled = false; }
+}
+
 async function refreshCampaignSaves(mission) {
   if (campaignDebug) { $('campaign-resume').hidden = true; $('campaign-saves').replaceChildren(); return; }
   try {
@@ -2917,6 +2941,9 @@ async function refreshCampaignSaves(mission) {
       const resume = document.createElement('button'); resume.type = 'button'; resume.title = resume.ariaLabel = `Resume ${save.title}`;
       resume.innerHTML = '<i data-lucide="play"></i>'; resume.disabled = !campaignUnlocked(save.mission);
       resume.onclick = () => location.replace(campaignAddress(save.mission, save.key));
+      const backup = document.createElement('button'); backup.type = 'button'; backup.title = backup.ariaLabel = `Export ${save.title} ${save.key.startsWith('auto:') ? 'autosave' : `slot ${save.key.split(':')[1]}`}`;
+      backup.innerHTML = '<i data-lucide="download"></i>';
+      backup.onclick = () => exportCampaignSave(save.key, backup, $('mission-size'));
       const remove = document.createElement('button'); remove.type = 'button'; remove.title = remove.ariaLabel = `Delete ${save.title} ${save.key.startsWith('auto:') ? 'autosave' : `slot ${save.key.split(':')[1]}`}`;
       remove.innerHTML = '<i data-lucide="trash-2"></i>';
       remove.onclick = async () => {
@@ -2924,7 +2951,7 @@ async function refreshCampaignSaves(mission) {
         try { await storage.deleteCampaignSave(save.key); await refreshCampaignSaves($('mission-select').value); }
         catch (error) { $('mission-size').textContent = `Saved game could not be deleted: ${error.message}`; }
       };
-      row.append(label, resume, remove); container.append(row);
+      row.append(label, resume, backup, remove); container.append(row);
     }
     window.lucide?.createIcons();
   } catch (error) { $('mission-size').textContent = `Saved games unavailable: ${error.message}`; }
@@ -2939,7 +2966,7 @@ function validateMissionManifest(manifest, missionId, variant = '') {
   if (url.origin !== location.origin || url.pathname !== new URL(`data/campaign/${selection.assetId}.mpq`, location.href).pathname) throw new Error('Invalid mission pack location.');
   if (manifest.requirements.some(required => !/^(condition|action|briefing)\.\d+$/.test(required))) throw new Error('Invalid mission capability metadata.');
 }
-function campaignFailure(error) {
+function campaignFailure(error, recoveryKey = null) {
   console.error('[campaign]', error);
   $('overlay').style.display = 'grid';
   $('controls').style.display = 'none';
@@ -2949,7 +2976,12 @@ function campaignFailure(error) {
   $('load-return').hidden = false;
   $('mission-briefing').hidden = true;
   $('load-fresh').hidden = !campaignSupportedMissionIds.includes($('mission-select').value);
-  setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : `Mission unavailable: ${error.message}`);
+  const backup = $('load-export-save');
+  backup.hidden = !recoveryKey;
+  backup.onclick = recoveryKey ? () => exportCampaignSave(recoveryKey, backup, $('msg')) : null;
+  setMsg(error.name === 'AbortError' ? 'Mission loading cancelled.' : recoveryKey
+    ? `Could not restore saved game: ${error.message} Your save was kept.`
+    : `Mission unavailable: ${error.message}`);
 }
 const returnToStartup = () => location.replace(campaignMenuAddress());
 $('load-return').onclick = returnToStartup;
@@ -2978,6 +3010,8 @@ $('campaign-start').onclick = async () => {
   $('load-cancel').hidden = false;
   $('load-retry').hidden = true;
   $('load-return').hidden = true;
+  $('load-export-save').hidden = true;
+  let recoveryKey = null;
   try {
     const missionId = $('mission-select').value;
     if (!campaignSupportedMissionIds.includes(missionId)) throw new Error('Unsupported mission selection.');
@@ -2990,6 +3024,7 @@ $('campaign-start').onclick = async () => {
       catch (error) { if (parameters.has('resume')) throw error; $('mission-size').textContent = `Recovery unavailable: ${error.message}`; throw error; }
       if (!resume && parameters.has('resume')) throw new Error('Saved game was not found.');
       if (resume && resume.mission !== missionId) throw new Error('Saved game belongs to a different mission.');
+      if (resume) recoveryKey = resumeKey;
     }
     const selection = campaignSelectedAsset(missionId, resume?.variant);
     if (campaignManifest?.id !== missionId || (campaignManifest?.variant || '') !== selection.scenario) campaignManifest = null;
@@ -3007,7 +3042,7 @@ $('campaign-start').onclick = async () => {
     history.replaceState(null, '', address);
     $('controls').style.display = 'none';
     await boot({ mission: campaignManifest, resume, signal: campaignDownload.signal, slots: [{ slot: campaignManifest.humanSlot, race: campaignManifest.race }], mySlot: campaignManifest.humanSlot });
-  } catch (error) { campaignFailure(error); }
+  } catch (error) { campaignFailure(error, recoveryKey); }
 };
 $('campaign-delete').onclick = async () => {
   try {
