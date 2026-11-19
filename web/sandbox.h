@@ -368,8 +368,8 @@ struct play_ui : ui_functions {
 	a_vector<alert_t> alerts;                     // units whose minimap dot is blinking
 	int ping_col[6] = { -1, -1, -1, -1, -1, -1 };
 	xy last_event_pos; bool have_last_event = false;   // Space recenters here
-	a_unordered_map<uint16_t, int> last_life;     // per own unit: last hp+shields, to spot damage
-	a_unordered_map<uint16_t, uint8_t> last_stim; // per own unit: stim active last frame (its self-damage is no attack)
+	struct life_sample { UnitTypes type = UnitTypes::None; int life = 0; bool stimulated = false; };
+	a_unordered_map<uint16_t, life_sample> last_life;
 	a_unordered_set<uint16_t> announced;          // own units whose ready sound has fired
 	bool events_seeded = false;                   // first poll seeds silently (no startup spam)
 	// System message log (eliminations, later chat), shown as fading lines top-left.
@@ -2036,14 +2036,12 @@ struct play_ui : ui_functions {
 				if (!mission_speech_muted) play_sound(u->unit_type->ready_sound, u->sprite->position, u, false);
 				ping_minimap(u, 0);
 			}
-			int life = u->hp.ceil().integer_part() + u->shield_points.integer_part();
-			auto it = last_life.find(id);
+			life_sample current{u->unit_type->id, u->hp.ceil().integer_part() + u->shield_points.integer_part(), u->stim_timer != 0};
+			auto& previous = last_life[id];
 			// A freshly popped stim costs its own HP — that's not being under attack.
-			uint8_t stim_now = u->stim_timer ? 1 : 0;
-			uint8_t stim_prev = last_stim[id];
-			last_stim[id] = stim_now;
-			if (it != last_life.end() && life < it->second && !seeding && !(stim_now && !stim_prev)) add_alert(u);
-			last_life[id] = life;
+			if (!seeding && current.type == previous.type && current.life < previous.life &&
+			    !(current.stimulated && !previous.stimulated)) add_alert(u);
+			previous = current;
 		}
 		events_seeded = true;
 		check_last_standing();

@@ -780,7 +780,7 @@ const env = {
   },
   // no audio in headless Node — stubs so instantiation doesn't fail
   js_sound_load: (pointer, size) => {
-    if (!campaign) return -1;
+    if (!campaign && !zergMorphTest) return -1;
     missionSoundLoads.push({ pointer, size });
     return missionSoundLoads.length - 1;
   }, js_sound_play: (...args) => { soundPlays.push(args); }, js_sound_is_playing: () => 0,
@@ -2645,6 +2645,29 @@ function testZergMorphs() {
   x.openbw_debug_resources(20000, 20000);
   const hatchery = units().find(unit => unit[1] === 'Hatchery');
   assert.ok(hatchery);
+
+  assert.ok(read(x.openbw_debug_units()).trim().split('\n').every(row => row.split('\t')[2] === '0'), 'Hatch warning fixture has no opponents');
+  const larva = units().find(unit => unit[1] === 'Larva');
+  assert.ok(larva);
+  activate(larva, 'morph:41:'); apply();
+  for (let tick = 0; tick < 16 && !units().some(unit => unit[0] === larva[0] && unit[1] === 'Egg'); tick++) x.openbw_step();
+  const egg = units().find(unit => unit[0] === larva[0] && unit[1] === 'Egg');
+  assert.ok(egg, 'Native Drone Egg is visible to the event poll before hatching');
+  select(egg);
+  const eggLife = Number(read(x.openbw_card()).match(/\tHP (\d+)\//)?.[1]);
+  const originalCameraY = x.openbw_camera(1);
+  x.openbw_pan(0, Number(egg[4]) < 1024 ? 2048 : -2048); x.openbw_render(0);
+  assert.ok(Number(egg[4]) < x.openbw_camera(1) || Number(egg[4]) >= x.openbw_camera(1) + x.openbw_framebuffer_height(), 'The Egg is off screen');
+  const soundStart = soundPlays.length;
+  const drone = completed(egg[0], 'Drone', 600);
+  const droneLife = Number(read(x.openbw_card()).match(/\tHP (\d+)\//)?.[1]);
+  assert.ok(eggLife > droneLife && droneLife === 40, 'The same actor hatches at the Drone\'s normal full HP');
+  const alertCount = () => Number(read(x.openbw_debug_dump()).match(/\nalerts=(\d+)\b/)?.[1]);
+  assert.deepEqual({ pings: alertCount(), clips: soundPlays.length - soundStart }, { pings: 0, clips: 0 }, 'Hatching off screen must not send an attack ping or play the advisor');
+  x.openbw_debug_set_life(Number(drone[0]), droneLife - 1, -1); x.openbw_render(0);
+  assert.deepEqual({ pings: alertCount(), clips: soundPlays.length - soundStart }, { pings: 1, clips: 1 }, 'A real HP loss on the same Drone still sends both warnings');
+  x.openbw_pan(0, originalCameraY - x.openbw_camera(1)); x.openbw_render(0);
+
   select(hatchery);
   assert.ok(!rows().some(fields => fields[10]?.startsWith('morph-building:132:') && fields[2] === '1'),
     'Lair cannot be enabled before the Spawning Pool');
