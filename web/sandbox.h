@@ -282,7 +282,7 @@ struct play_ui : ui_functions {
 	int icon_w = 0, icon_h = 0;              // size of the last render_icon() result
 	a_vector<uint8_t> icon_index, icon_rgba; // scratch: 8-bit frame, then RGBA
 
-	enum targ_t { T_ATTACK, T_MOVE, T_PATROL, T_GATHER, T_REPAIR, T_RALLY, T_SPELL };
+	enum targ_t { T_ATTACK, T_MOVE, T_PATROL, T_GATHER, T_REPAIR, T_RALLY, T_SPELL, T_UNLOAD };
 	targ_t pending_targ = T_ATTACK;
 	Orders pending_spell_order{};   // the spell to cast once its target is clicked
 	bool pending_spell_unit = false;   // does that spell target a unit (vs the ground)?
@@ -1451,14 +1451,15 @@ struct play_ui : ui_functions {
 		// Cargo: a bunker/transport shows each carried unit (click its icon to eject just
 		// that one) plus an Unload button that ejects everything.
 		if (unit_provides_space(u)) {
-			bool any = false;
+			bool bunker = u_grounded_building(u);
+			bool loaded = !loaded_units(u).empty();
+			if (!bunker) card.push_back({pick_key("Unload"), "Unload All", C_UNLOADALL, U::None, loaded});
 			for (unit_t* c : loaded_units(u)) {
 				card.push_back({pick_key(unit_name(c->unit_type->id)), unit_name(c->unit_type->id),
 				                C_UNLOAD, c->unit_type->id, true, TechTypes::None, UpgradeTypes::None,
 				                get_unit_id(c).raw_value});
-				any = true;
 			}
-			if (any) card.push_back({pick_key("Unload"), "Unload", C_UNLOADALL, U::None});
+			if (bunker) card.push_back({pick_key("Unload"), "Unload", C_UNLOADALL, U::None, loaded});
 		}
 		return unit_name(id);
 	}
@@ -1552,6 +1553,7 @@ struct play_ui : ui_functions {
 				break;
 			case C_STIM:  c.enabled = player_has_researched(my_player, TechTypes::Stim_Packs); break;
 			case C_SIEGE: c.enabled = player_has_researched(my_player, TechTypes::Tank_Siege_Mode); break;
+			case C_UNLOADALL: break;
 			case C_BUILD: case C_TRAIN: case C_MORPH: case C_MORPHBLDG:
 			case C_UPGRADE: case C_RESEARCH: case C_SPELL: break;   // enabled already set
 			default:      c.enabled = true;
@@ -1632,7 +1634,8 @@ struct play_ui : ui_functions {
 			case C_LIFT: icon = 282; break;
 			case C_LAND: icon = 283; break;
 			case C_RALLY: icon = 286; break;
-			case C_UNLOAD: case C_UNLOADALL: icon = 312; break;
+			case C_UNLOAD: if (u_grounded_building(u)) icon = 312; break;
+			case C_UNLOADALL: icon = 312; break;
 			case C_ARCHON: icon = (int)UnitTypes::Protoss_Archon; break;
 			case C_DARCHON: icon = (int)UnitTypes::Protoss_Dark_Archon; break;
 			case C_UPGRADE: icon = get_upgrade_type(c.upg)->icon; break;
@@ -1659,7 +1662,9 @@ struct play_ui : ui_functions {
 			const char* desc = c.act == C_UPGRADE ? bw_upgrade_desc(c.upg)
 			                 : (c.act == C_RESEARCH || c.act == C_SPELL) ? bw_tech_desc(c.tech) : "";
 			// KEY \t Label \t enabled \t icon \t minerals \t gas \t affordable \t requires \t desc \t active
-			card_text += '\n'; card_text += c.key; card_text += '\t'; card_text += c.label;
+			card_text += '\n'; card_text += c.key; card_text += '\t';
+			if (c.act == C_UNLOAD && !u_grounded_building(u)) card_text += "Unload ";
+			card_text += c.label;
 			card_text += '\t'; card_text += (c.enabled ? '1' : '0');
 			card_text += '\t'; card_text += format("%d", icon).c_str();
 			card_text += '\t'; card_text += format("%d", minc).c_str();
@@ -2145,7 +2150,10 @@ struct play_ui : ui_functions {
 			case C_LAND:      pending_build = get_unit_type(c.ut != UnitTypes::None ? c.ut : landing_type());
 			                  pending_land = true; menu = 0; refresh_card(); break;
 			case C_UNLOAD:    sync_selection(); cmds.unload(c.unit); break;
-			case C_UNLOADALL: sync_subgroup(); cmds.unload_all(key_shift()); break;
+			case C_UNLOADALL:
+				if (u_grounded_building(primary_selected())) { sync_subgroup(); cmds.unload_all(key_shift()); }
+				else start_target(T_UNLOAD);
+				break;
 			case C_RETURN:    sync_selection(); cmds.return_cargo(key_shift()); break;
 			case C_BURROW:    sync_subgroup(); cmds.burrow(key_shift()); break;
 			case C_UNBURROW:  sync_subgroup(); cmds.unburrow(); break;
@@ -2239,7 +2247,8 @@ struct play_ui : ui_functions {
 		if (target && pending_targ != T_PATROL) flash_target(target);
 		else show_marker(pos);
 		bool group_mines = pending_targ == T_SPELL && pending_spell_order == Orders::PlaceMine;
-		if (pending_targ == T_SPELL && !group_mines) sync_primary();
+		if (pending_targ == T_UNLOAD) sync_subgroup();
+		else if (pending_targ == T_SPELL && !group_mines) sync_primary();
 		else sync_selection();
 		bool q = key_shift();
 		switch (pending_targ) {
@@ -2263,6 +2272,7 @@ struct play_ui : ui_functions {
 		case T_GATHER: cmd_default_order(pos, target, q); break;
 		case T_REPAIR: cmd_order(Orders::Repair, pos, target, q); break;
 		case T_RALLY:  cmd_order(target ? Orders::RallyPointUnit : Orders::RallyPointTile, pos, target, false); break;
+		case T_UNLOAD: cmd_order(Orders::MoveUnload, pos, target, q); break;
 		case T_SPELL:  cmd_order(pending_spell_order, pos, pending_spell_unit ? target : nullptr, group_mines && q); break;
 		}
 		if (unit_t* u = acknowledgement_unit())

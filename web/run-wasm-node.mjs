@@ -2127,37 +2127,81 @@ function testCampaign() {
     assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), initialMinerals - 50, 'Native Probe production charges fifty minerals without test funding');
     console.log(`${mission.title} paid native Probe production passed.`);
   }
-  if (missionId === 'protoss05') {
+  if (missionId === 'protoss05' || missionId === 'terran08') {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
-    const shuttle = owned().find(unit => unit[1] === 'Shuttle'), passenger = owned().find(unit => unit[1] === 'Zealot');
-    assert.ok(shuttle && passenger && owned().some(unit => unit[1] === 'Tassadar'), 'Original Shuttle, escort and naturally rescued Tassadar remain present');
+    const terran = missionId === 'terran08';
+    const ship = owned().find(unit => unit[1] === (terran ? 'Dropship' : 'Shuttle'));
+    const passengers = owned().filter(unit => unit[1] === (terran ? 'Marine' : 'Zealot')).slice(0, terran ? 3 : 1);
+    assert.ok(ship && passengers.length === (terran ? 3 : 1), 'Original transport and escort remain available');
     const applyQueued = () => {
       const output = new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()).slice();
       assert.ok(output.length > 0, 'Transport controls use normal synchronized input');
       new Uint8Array(memory.buffer, x.openbw_in_ptr(output.length), output.length).set(output);
       x.openbw_apply(mission.humanSlot, output.length); x.openbw_out_clear();
     };
+    const card = () => read(x.openbw_card()).trim().split('\n').slice(1).map(row => row.split('\t'));
+    const cargo = () => card().filter(row => row[10]?.startsWith('unload:'));
+    const selectShip = () => { x.openbw_debug_select(Number(ship[0]), 0); x.openbw_render(0); };
     const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
-    x.openbw_debug_select(Number(passenger[0]), 0); x.openbw_render(0); x.openbw_out_clear();
-    const targetX = Number(shuttle[3]) - Number(camera[1]), targetY = Number(shuttle[4]) - Number(camera[2]);
+    passengers.forEach((unit, index) => x.openbw_debug_select(Number(unit[0]), index ? 1 : 0));
+    x.openbw_render(0); x.openbw_out_clear();
+    const targetX = Number(ship[3]) - Number(camera[1]), targetY = Number(ship[4]) - Number(camera[2]);
     x.openbw_mouse_button(1, 3, targetX, targetY, 1); x.openbw_mouse_button(0, 3, targetX, targetY, 1); x.openbw_render(0); applyQueued();
-    x.openbw_debug_select(Number(shuttle[0]), 0);
-    for (let tick = 0; tick < 600; tick++) {
-      x.openbw_step(); x.openbw_render(0);
-      if (/\tUnload\t/.test(read(x.openbw_card()))) break;
+    selectShip();
+    for (let tick = 0; tick < 600 && cargo().length !== passengers.length; tick++) { x.openbw_step(); x.openbw_render(0); }
+    assert.equal(cargo().length, passengers.length, 'All selected passengers board the original transport');
+    if (terran) {
+      x.openbw_set_touch_controls(1);
+      for (let tick = 0; tick < 24; tick++) x.openbw_step();
+      x.openbw_render(0);
+      const single = cargo()[0];
+      assert.equal(single[1], 'Unload Marine');
+      assert.equal(activateCommand(x, single[10]), 1);
+      applyQueued(); x.openbw_render(0);
+      assert.equal(cargo().length, passengers.length - 1, 'The passenger button unloads just its Marine');
+      const ejectedId = Number(single[10].split(':').at(-1));
+      assert.ok(passengers.some(unit => Number(unit[0]) === ejectedId));
+      passengers.splice(passengers.findIndex(unit => Number(unit[0]) === ejectedId), 1);
     }
-    const unload = read(x.openbw_card()).trim().split('\n').map(line => line.split('\t')).find(row => row[1] === 'Unload');
-    assert.ok(unload?.[0], 'Normal escort right-click boards the original Shuttle and exposes native Unload');
-    x.openbw_out_clear(); x.openbw_key(1, unload[0].charCodeAt(0), 0); x.openbw_key(0, unload[0].charCodeAt(0), 0); x.openbw_render(0); applyQueued();
+    const unload = card().find(row => row[1] === 'Unload All');
+    assert.equal(unload?.[2], '1', 'A boarded escort enables Unload All');
+    const shipPosition = owned().find(unit => unit[0] === ship[0]).slice(3, 5).map(Number);
+    if (terran) {
+      const previousRoute = shipPosition.map((position, axis) => position - Number(camera[axis + 1]) - (axis ? 160 : 128));
+      x.openbw_mouse_button(1, 3, ...previousRoute, 1); x.openbw_mouse_button(0, 3, ...previousRoute, 1); x.openbw_render(0); applyQueued();
+      for (let tick = 0; tick < 12; tick++) x.openbw_step();
+      x.openbw_render(0);
+      const flying = owned().find(unit => unit[0] === ship[0]);
+      assert.equal(flying[5], '6', 'The Dropship is already flying an ordinary Move route');
+      assert.notDeepEqual(flying.slice(3, 5).map(Number), shipPosition, 'The ship is in motion before retargeting');
+      assert.equal(cargo().length, passengers.length);
+    }
+    const landing = owned().filter(unit => unit[1] === (terran ? 'SCV' : 'Zealot') && !passengers.some(passenger => unit[0] === passenger[0]))
+      .map(unit => unit.slice(3, 5).map(Number)).sort((left, right) =>
+        Math.hypot(right[0] - shipPosition[0], right[1] - shipPosition[1]) - Math.hypot(left[0] - shipPosition[0], left[1] - shipPosition[1]))[0];
+    assert.ok(Math.hypot(landing[0] - shipPosition[0], landing[1] - shipPosition[1]) > 48, 'Choose a destination away from the loaded ship');
+    x.openbw_out_clear(); assert.equal(activateCommand(x, unload[10]), 1); x.openbw_render(0);
+    assert.ok([1, 4].includes(x.openbw_cursor()), 'Unload All waits for a destination');
+    assert.equal(x.openbw_out_len(), 0, 'Arming Unload All does not unload or move');
+    const dropPoint = landing.map((position, axis) => position - Number(camera[axis + 1]));
+    x.openbw_mouse_button(1, 1, ...dropPoint, 1); x.openbw_mouse_button(0, 1, ...dropPoint, 1); x.openbw_render(0); applyQueued();
+    assert.equal(owned().find(unit => unit[0] === ship[0])[5], '112', 'The target click sends the native MoveUnload order');
     for (let tick = 0; tick < 400; tick++) {
       x.openbw_step(); x.openbw_render(0);
-      if (!/\tUnload\t/.test(read(x.openbw_card()))) break;
+      const movingShip = owned().find(unit => unit[0] === ship[0]);
+      if (movingShip[5] === '112') assert.equal(cargo().length, passengers.length, 'Cargo stays aboard during the flight');
+      if (!cargo().length) break;
     }
-    assert.doesNotMatch(read(x.openbw_card()), /\tUnload\t/, 'Native Unload returns the carried escort to ground play');
-    assert.ok(owned().some(unit => unit[0] === passenger[0]), 'The same original Zealot survives boarding and unloading');
-    assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 100, 'Transport commands do not invent resources after the paid Probe');
-    assert.equal(x.openbw_outcome(), 0, 'Local boarding and unloading cannot satisfy the distant original entrance objective');
-    console.log('Choosing Sides normal Shuttle boarding/unloading and native actor identity passed.');
+    assert.equal(cargo().length, 0, 'The transport finishes unloading');
+    assert.equal(card().find(row => row[1] === 'Unload All')?.[2], '0', 'An empty transport cannot arm Unload All');
+    for (const passenger of passengers) {
+      const landed = owned().find(unit => unit[0] === passenger[0]);
+      assert.ok(landed && Math.hypot(Number(landed[3]) - landing[0], Number(landed[4]) - landing[1]) < 64,
+        'Each original passenger unloads at the chosen destination');
+    }
+    if (!terran) assert.equal(Number(read(x.openbw_resources()).split('\t')[0]), 100, 'Transport commands do not change resource costs');
+    assert.equal(x.openbw_outcome(), 0, 'Local boarding and unloading cannot complete the mission');
+    console.log(`${mission.title} native ${ship[1]} boarding and destination unloading passed.`);
   }
   if (missionId === 'protoss10') {
     const owned = () => read(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t')).filter(unit => Number(unit[2]) === mission.humanSlot);
