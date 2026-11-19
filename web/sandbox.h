@@ -596,6 +596,7 @@ struct play_ui : ui_functions {
 	}
 	void cmd_order(Orders o, xy pos, unit_t* target, bool q) {
 		cmds.order(o, pos, get_unit_id(target).raw_value, q);
+		if (o == Orders::AttackMove && !target) show_marker(pos, true);
 	}
 	void cmd_liftoff(xy pos) { cmds.liftoff(pos); }
 	void cmd_bare(int opcode) { cmds.bare(opcode); }
@@ -2223,7 +2224,6 @@ struct play_ui : ui_functions {
 		unit_t* target = select_get_unit_at(pos);
 		if (target && !unit_hidden_by_fog(target)) return false;
 
-		show_marker(pos);
 		sync_selection();
 		cmd_order(Orders::AttackMove, pos, nullptr, queued);
 		if (unit_t* unit = acknowledgement_unit())
@@ -2655,12 +2655,21 @@ struct play_ui : ui_functions {
 	// and desync multiplayer). Plays through the GRP's frames once over its short life.
 	xy marker_pos;
 	double marker_start = -1;
+	bool marker_attack_move = false;
 	static constexpr double MARKER_MS = 400;
-	void show_marker(xy pos) { marker_pos = pos; marker_start = ui_now; }
+	void show_marker(xy pos, bool attack_move = false) {
+		marker_pos = pos;
+		marker_start = ui_now;
+		marker_attack_move = attack_move;
+	}
 	void draw_cursor_marker(uint8_t* data, size_t pitch) {
 		if (marker_start < 0) return;
 		double e = ui_now - marker_start;
 		if (e >= MARKER_MS) { marker_start = -1; return; }
+		if (marker_attack_move) {
+			draw_attack_move_marker(data, pitch, marker_pos, 10 - (int)(e / 100));
+			return;
+		}
 		auto* it = get_image_type(ImageTypes::IMAGEID_Cursor_Marker);
 		auto* grp = global_st.image_grp[(size_t)it->id];
 		if (grp->frames.empty()) return;
@@ -2740,10 +2749,17 @@ struct play_ui : ui_functions {
 					data[(size_t)py * data_pitch + px] = color;
 			}
 	}
+	void draw_attack_move_marker(uint8_t* data, size_t pitch, xy pos, int radius = 7) {
+		if (line_atk_color < 0) line_atk_color = nearest_palette_color(240, 40, 40);
+		for (xy axis : {xy(1, 0), xy(0, 1)}) {
+			xy outer(axis.x * radius, axis.y * radius);
+			xy inner(axis.x * 3, axis.y * 3);
+			draw_map_line(data, pitch, pos - outer, pos - inner, line_atk_color);
+			draw_map_line(data, pitch, pos + inner, pos + outer, line_atk_color);
+		}
+	}
 	static bool close_xy(xy a, xy b) { int dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy < 16 * 16; }
 
-	// Selected units' orders as lines (green move/rally, red attack) with a diamond at
-	// each destination, so where things are headed — and a producer's rally — is visible.
 	void draw_order_lines(uint8_t* data, size_t data_pitch) {
 		if (!show_order_lines || current_selection.empty()) return;
 		if (line_move_color < 0) {
@@ -2762,20 +2778,23 @@ struct play_ui : ui_functions {
 				continue;
 			}
 			// Mobile unit: its active destination, then any shift-queued waypoints.
-			xy prev = u->sprite->position; bool any = false;
-			auto seg = [&](xy to, unit_t* tu) {
+			xy prev = u->sprite->position;
+			auto seg = [&](xy to, unit_t* target, Orders order) {
 				if (to == xy() || close_xy(to, prev)) return;
-				uint8_t col = (tu && tu->owner != my_player && tu->owner < 8) ? line_atk_color : line_move_color;
-				draw_map_line(data, data_pitch, prev, to, col);
-				prev = to; any = true;
+				bool attack_move = order == Orders::AttackMove;
+				bool hostile = target && target->owner != my_player && target->owner < 8;
+				uint8_t color = attack_move || hostile ? line_atk_color : line_move_color;
+				draw_map_line(data, data_pitch, prev, to, color);
+				if (attack_move) draw_attack_move_marker(data, data_pitch, to);
+				else draw_marker(data, data_pitch, to, color);
+				prev = to;
 			};
-			if (u->move_target.pos != xy()) seg(u->move_target.pos, u->order_target.unit);
+			seg(u->move_target.pos, u->order_target.unit, u->order_type->id);
 			for (order_t* o : ptr(u->order_queue)) {
 				xy t = o->target.position;
 				if (t == xy() && o->target.unit) t = o->target.unit->sprite->position;
-				seg(t, o->target.unit);
+				seg(t, o->target.unit, o->order_type->id);
 			}
-			if (any) draw_marker(data, data_pitch, prev, line_move_color);
 		}
 	}
 

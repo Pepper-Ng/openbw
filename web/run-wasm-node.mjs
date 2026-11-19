@@ -3593,6 +3593,45 @@ function testCommands(groupMines = false) {
   assert.equal(x.openbw_out_len(), 0, 'Paused identity dispatch cannot issue orders');
   x.openbw_set_paused(0);
   assert.equal(activateCommand(x, 'train:227:44:61:0'), -1, 'Unavailable identities are rejected without substituting a command');
+  x.openbw_set_touch_controls(1);
+  const markerUnit = units().find(unit => {
+    if (unit[2] !== '0' || !['Marine', 'Vulture', 'Ghost'].includes(unit[1]) || unit[5] === '0') return false;
+    x.openbw_debug_select(Number(unit[0]), 0);
+    return x.openbw_touch_attack_move_available() === 1;
+  });
+  assert.ok(markerUnit, 'A commandable combat unit is available for the raster check');
+  const markerPoint = [[1000, 200], [1000, 400], [800, 200], [400, 200]].find(point => {
+    x.openbw_mouse_move(...point); x.openbw_render(0);
+    return x.openbw_cursor() === 0;
+  });
+  assert.ok(markerPoint, 'Empty map ground for the order marker');
+  const markerPixel = ([screenX, screenY], dx = 0, dy = 0) => {
+    const pointer = x.openbw_framebuffer() + 4 * ((screenY + dy) * x.openbw_framebuffer_width() + screenX + dx);
+    return Array.from(new Uint8Array(memory.buffer, pointer, 3));
+  };
+  const crosshairPixels = point => [[-7, 0], [7, 0], [0, -7], [0, 7]].map(offset => markerPixel(point, ...offset));
+  assert.equal(x.openbw_touch_attack_move(...markerPoint, 0), 1);
+  x.openbw_mouse_move(-1, -1); x.openbw_render(0);
+  const attackColor = crosshairPixels(markerPoint)[0];
+  assert.ok(attackColor[0] > attackColor[1] && attackColor[0] > attackColor[2], 'Attack-Move uses the attack palette');
+  assert.deepEqual(crosshairPixels(markerPoint), Array(4).fill(attackColor), 'Immediate Attack-Move draws a four-armed marker');
+  x.openbw_mouse_button(1, 3, ...markerPoint, 1); x.openbw_mouse_button(0, 3, ...markerPoint, 1);
+  x.openbw_mouse_move(-1, -1); x.openbw_render(0);
+  assert.notDeepEqual(crosshairPixels(markerPoint), Array(4).fill(attackColor), 'An ordinary Move restores the original marker');
+
+  const attackWaypoint = [1040, 416], moveWaypoint = [928, 392];
+  const toScreen = point => {
+    const camera = read(x.openbw_debug_dump()).match(/camera=(-?\d+),(-?\d+)/);
+    return point.map((value, axis) => value - Number(camera[axis + 1]));
+  };
+  for (const [pos, order, queued] of [[[1120, 388], 6, 0], [attackWaypoint, 14, 1], [moveWaypoint, 6, 1]]) {
+    send(markerUnit, [21, ...word(pos[0]), ...word(pos[1]), 0, 0, 228, 0, order, queued]);
+  }
+  x.openbw_set_order_lines(1); x.openbw_render(500);
+  assert.deepEqual(crosshairPixels(toScreen(attackWaypoint)), Array(4).fill(attackColor), 'A queued Attack-Move retains its crosshair before a later Move');
+  const moveColor = markerPixel(toScreen(moveWaypoint));
+  assert.ok(moveColor[1] > moveColor[0] && moveColor[1] > moveColor[2], 'The subsequent Move retains its green diamond');
+  console.log('Immediate and queued Attack-Move markers are distinct from Move.');
   console.log('Command identity dispatch, paid Marine training, hidden commands, Shift queueing and pause guards passed.');
   console.log('Independent minimap sizing and native contextual-order coordinates passed at four scales.');
   console.log('Independent command visibility, building menus, stable identities and hidden keyboard actions passed.');
