@@ -46,6 +46,10 @@ if (process.argv[2] === '--test-gameplay-ui') {
   assert.equal(removed.primary[4].command, 'spell:228:20:61:0');
   const additional = plan([...caster, row('spell', '1', '228:20:61:0'), row('archon')], 'templar');
   assert.ok(additional.secondary.some(row => row.command.startsWith('archon:')), 'Less common abilities use More once primary slots are occupied');
+  const pinned = plan([...caster, row('spell', '1', '228:20:61:0')], 'templar', true);
+  assert.deepEqual(pinned.primary.map(row => row?.command.split(':')[0] ?? null), ['attack', 'move', 'hold', 'stop', 'spell', null]);
+  assert.ok(pinned.secondary.some(row => row.command === 'spell:228:20:61:0'), 'An ability displaced by Move remains under More');
+  assert.deepEqual(plan(worker, 'scv', true), first, 'Worker shortcuts do not change');
   for (const [before, after, context] of [['cloak', 'decloak', 'ghost'], ['burrow', 'unburrow', 'zerg'], ['siege', 'unsiege', 'tank']]) {
     const a = plan([...base, row(before)], context), b = plan([...base, row(after)], context);
     assert.equal(a.primary.findIndex(row => row?.command.startsWith(`${before}:`)),
@@ -161,14 +165,17 @@ if (process.argv[2] === '--test-interface') {
   records.set(UI_OPTIONS_KEY, JSON.stringify({ version: 1, options: { scale: 125 } }));
   assert.equal(readUIOptions(storage).sound, 'menu', 'Older preferences receive the sound placement default');
   assert.equal(readUIOptions(storage).minimap, 100, 'Older preferences receive independent minimap sizing');
+  assert.equal(readUIOptions(storage).groundTap, 'move', 'Older preferences keep ordinary ground movement');
   assert.equal(resolveUIOptions({ commands: 'full', input: 'touch' }, true).commands, 'full');
   assert.equal(resolveUIOptions({ commands: 'contextual', input: 'mouse' }, false).commands, 'contextual');
   assert.equal(resolveUIOptions({ buildings: 'split', input: 'touch' }, true).buildings, 'split');
   assert.equal(resolveUIOptions({ buildings: 'strip', input: 'mouse' }, false).buildings, 'strip');
   const custom = validateUIOptions({ input: 'mouse', commands: 'full', buildings: 'split', scale: 137,
-    objectives: 'menu', pause: 'pinned', sound: 'pinned', minimap: 175, unavailable: 'show', layout: 'grid' });
+    objectives: 'menu', pause: 'pinned', sound: 'pinned', minimap: 175, unavailable: 'show', layout: 'grid', groundTap: 'attack-move' });
   writeUIOptions(storage, custom);
   assert.deepEqual(readUIOptions(storage), custom);
+  assert.equal(resolveUIOptions(custom, true).groundTap, 'attack-move', 'The army tap choice is independent of card layout');
+  assert.throws(() => validateUIOptions({ groundTap: 'attack' }));
   for (const invalid of [null, [], { input: 'unknown' }, { scale: 74 }, { scale: 151 }, { scale: 100.5 },
     { scale: '100' }, { minimap: 49 }, { minimap: 201 }, { minimap: 100.5 }, { sound: 'unknown' }])
     assert.throws(() => validateUIOptions(invalid));
@@ -3184,8 +3191,33 @@ function testCommands(groupMines = false) {
   x.openbw_render(0);
   assert.match(read(x.openbw_card()), /Nuclear Strike/);
 
+  const armyTap = [[1000, 200], [1000, 400], [800, 200], [400, 200]].find(point => {
+    x.openbw_mouse_move(...point); x.openbw_render(0);
+    return x.openbw_cursor() === 0;
+  });
+  assert.ok(armyTap, 'Empty map ground for the implicit army order');
+  const vultureForTap = units().find(unit => unit[1] === 'Vulture' && unit[2] === '0');
+  assert.ok(vultureForTap, 'A second mobile attacker is available');
+  x.openbw_debug_select(Number(vultureForTap[0]), 1);
+  x.openbw_out_clear();
+  assert.equal(x.openbw_touch_attack_move_available(), 0);
+  assert.equal(x.openbw_touch_attack_move(...armyTap, 0), 0, 'Mouse mode cannot issue the implicit army order');
   x.openbw_set_touch_controls(1);
+  assert.equal(x.openbw_touch_attack_move_available(), 1, 'A mobile army gets the explicit Move slot');
+  for (const queued of [0, 1]) {
+    x.openbw_out_clear();
+    assert.equal(x.openbw_touch_attack_move(...armyTap, queued), 1);
+    assert.equal(records().find(record => record[0] === 9)?.[1], 2, 'The ground tap retains both attackers');
+    const attackMove = records().find(record => record[0] === 21);
+    assert.equal(attackMove?.[9], 14, 'An opted-in army tap emits AttackMove');
+    assert.equal(attackMove[10], queued, 'An opted-in army tap respects queueing');
+  }
+  x.openbw_debug_select(Number(ghost[0]), 0);
   x.openbw_debug_select(Number(worker[0]), 1);
+  x.openbw_out_clear();
+  assert.equal(x.openbw_touch_attack_move_available(), 0, 'The same eligibility determines movement and visibility');
+  assert.equal(x.openbw_touch_attack_move(...armyTap, 0), 0, 'An army including a worker keeps contextual movement');
+  assert.equal(x.openbw_out_len(), 0);
   for (const queued of [false, true]) {
     x.openbw_out_clear();
     x.openbw_key(queued ? 1 : 0, 0, 225);

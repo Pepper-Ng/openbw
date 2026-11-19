@@ -883,14 +883,22 @@ function wireInput(canvas, x) {
     } else if (tt.mode === 'pending') {
       const cursor = x.openbw_cursor();
       const targeting = cursor === 1 || cursor === 2 || cursor === 4;
-      const button = targeting ? 1 : tt.armed ? 3 : !touchControls ? 1
-        : x.openbw_touch_button ? x.openbw_touch_button(px | 0, py | 0) : 1;
       const now = performance.now();
-      const selectionTap = button === 1 && !targeting && !tt.armed;
-      const doubleTap = selectionTap && lastSelectionTap && now - lastSelectionTap.time <= DOUBLE_TAP_MS
-        && d2(t.clientX, t.clientY, lastSelectionTap.x, lastSelectionTap.y) <= MOVE2;
-      tap(button, px, py, doubleTap ? 2 : 1);
-      lastSelectionTap = selectionTap && !doubleTap ? { time: now, x: t.clientX, y: t.clientY } : null;
+      const attackMove = !targeting && !tt.armed && touchControls &&
+        interfaceOptions.preferences.groundTap === 'attack-move' &&
+        x.openbw_touch_attack_move?.(px | 0, py | 0, wireInput.queue ? 1 : 0);
+      if (attackMove) {
+        lastSelectionTap = null;
+        x.openbw_render(now);
+      } else {
+        const button = targeting ? 1 : tt.armed ? 3 : !touchControls ? 1
+          : x.openbw_touch_button ? x.openbw_touch_button(px | 0, py | 0) : 1;
+        const selectionTap = button === 1 && !targeting && !tt.armed;
+        const doubleTap = selectionTap && lastSelectionTap && now - lastSelectionTap.time <= DOUBLE_TAP_MS
+          && d2(t.clientX, t.clientY, lastSelectionTap.x, lastSelectionTap.y) <= MOVE2;
+        tap(button, px, py, doubleTap ? 2 : 1);
+        lastSelectionTap = selectionTap && !doubleTap ? { time: now, x: t.clientX, y: t.clientY } : null;
+      }
     } else lastSelectionTap = null;
     tt = null;
     park();
@@ -1982,14 +1990,17 @@ async function boot(session) {
     const ptr = x.openbw_card();
     const text = ptr ? readCString(ptr) : '';
     const mobile = coarsePointer();
-    const strip = interfaceOptions.resolved.buildings === 'strip';
+    const options = interfaceOptions.resolved;
+    const strip = options.buildings === 'strip';
     const live = wireInput.shortcuts();
     const cursor = x.openbw_cursor();
     const targeting = cursor === 1 || cursor === 2 || cursor === 4;
-    const compact = compactCommandsEnabled(interfaceOptions.resolved, mobile, cursor, live.context)
-      ? compactCommands(live.rows.filter(row => !strip || !row.command.startsWith('advanced-menu:')), live.context) : null;
+    const useCompact = compactCommandsEnabled(options, mobile, cursor, live.context);
+    const pinMove = useCompact && options.groundTap === 'attack-move' && x.openbw_touch_attack_move_available?.() === 1;
+    const compact = useCompact
+      ? compactCommands(live.rows.filter(row => !strip || !row.command.startsWith('advanced-menu:')), live.context, pinMove) : null;
     const selection = compact ? readCString(x.openbw_wires()).split('\n').filter(Boolean).map(row => row.split('\t')[0]).join(',') : '';
-    const context = compact ? `${live.context}|${selection}` : '';
+    const context = compact ? `${live.context}|${selection}|${pinMove}` : '';
     if (context !== moreContext || !compact) moreCommands = false;
     moreContext = context;
     cardEl.classList.toggle('compact-card', !!compact);

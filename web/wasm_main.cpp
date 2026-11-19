@@ -377,6 +377,14 @@ OPENBW_EXPORT(openbw_touch_button) int openbw_touch_button(int mouse_x, int mous
 	return 3;
 }
 
+OPENBW_EXPORT(openbw_touch_attack_move_available) int openbw_touch_attack_move_available() {
+	return g_ui && g_ui->touch_attack_move_available();
+}
+
+OPENBW_EXPORT(openbw_touch_attack_move) int openbw_touch_attack_move(int mouse_x, int mouse_y, int queued) {
+	return g_ui && g_ui->touch_attack_move(mouse_x, mouse_y, queued != 0);
+}
+
 OPENBW_EXPORT(openbw_preview_placement) void openbw_preview_placement(int mouse_x, int mouse_y) {
 	if (g_ui) g_ui->preview_placement(mouse_x, mouse_y);
 }

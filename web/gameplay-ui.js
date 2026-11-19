@@ -16,12 +16,14 @@ export function compactCommandsEnabled(options, mobile, cursor, context) {
 
 export function createCompactCommands() {
   const contexts = new Map();
-  return (rows, context) => {
+  return (rows, context, keepMove = false) => {
     if (!rows.some(row => kind(row) === 'move')) return null;
     const worker = rows.some(row => kind(row) === 'build-menu');
     const take = action => rows.find(row => kind(row) === action) || null;
-    const primary = worker ? [take('attack'), take('build-menu'), take('stop')]
-      : [take('attack'), take('hold'), take('stop')];
+    const attack = take('attack');
+    const pinMove = keepMove && attack !== null && !worker;
+    const primary = worker ? [attack, take('build-menu'), take('stop')]
+      : [attack, take('hold'), take('stop')];
     if (!worker) {
       const abilities = rows.filter(row => abilityPriority.includes(kind(row)))
         .sort((a, b) => abilityPriority.indexOf(kind(a)) - abilityPriority.indexOf(kind(b)));
@@ -31,7 +33,8 @@ export function createCompactCommands() {
         if (slots.length < 2 && !slots.includes(family)) slots.push(family);
       }
       contexts.set(context, slots);
-      for (let index = 0; index < 2; index++)
+      if (pinMove) primary.splice(1, 0, take('move'));
+      for (let index = 0; index < (pinMove ? 1 : 2); index++)
         primary.push(abilities.find(row => abilityFamily(row) === slots[index]) || null);
     }
     const ids = new Set(primary.filter(Boolean).map(row => row.command));

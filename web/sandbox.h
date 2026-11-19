@@ -2199,6 +2199,38 @@ struct play_ui : ui_functions {
 		return false;
 	}
 
+	bool touch_attack_move_available() {
+		if (!touch_controls || spectator) return false;
+		bool has_mobile_attacker = false;
+		const order_type_t* attack_move = get_order_type(Orders::AttackMove);
+		for (unit_id id : current_selection) {
+			unit_t* unit = get_unit(id);
+			if (!unit || unit->owner != my_player || unit_dying(unit) || u_loaded(unit)) continue;
+			if (ut_worker(unit)) return false;
+			if ((unit_can_attack(unit) || unit_is_carrier(unit) || unit_is_reaver(unit)) &&
+			    unit_can_receive_order(unit, attack_move, my_player)) has_mobile_attacker = true;
+		}
+		return has_mobile_attacker;
+	}
+
+	bool touch_attack_move(int screen_x, int screen_y, bool queued) {
+		if (paused || pending_build || targeting || menu || !touch_attack_move_available()) return false;
+		if (screen_x < 0 || screen_y < 0 || screen_x >= (int)screen_width || screen_y >= (int)screen_height) return false;
+		xy pos;
+		if (minimap_point(screen_x, screen_y, pos)) return false;
+		pos = screen_to_map(screen_x, screen_y);
+		if (!is_in_map_bounds(pos)) return false;
+		unit_t* target = select_get_unit_at(pos);
+		if (target && !unit_hidden_by_fog(target)) return false;
+
+		show_marker(pos);
+		sync_selection();
+		cmd_order(Orders::AttackMove, pos, nullptr, queued);
+		if (unit_t* unit = acknowledgement_unit())
+			play_unit_ack(unit, unit->unit_type->first_yes_sound, unit->unit_type->last_yes_sound);
+		return true;
+	}
+
 	void issue_target(xy pos) {
 		unit_t* target = select_get_unit_at(pos);
 		if (target && unit_hidden_by_fog(target)) target = nullptr;   // can't target through fog
