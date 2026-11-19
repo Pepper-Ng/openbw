@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { sealCampaignSave, validateCampaignSave } from './campaign-saves.js';
-import { campaignPackMissions, readPlainMissionPack, auditScenario } from './prepare-campaign.mjs';
+import { campaignPackMissions, readPlainMissionPack, auditScenario, scenarioSections } from './prepare-campaign.mjs';
 import { campaignVariants, resolveCampaignMission } from './campaign-variants.js';
 import { activateCommand, commandShortcuts } from './hotkeys.js';
 
@@ -731,7 +731,8 @@ const campaign = process.argv[2] === '--test-campaign' || recoveryTest;
 const missionId = campaign ? resolveCampaignMission(process.argv[3] || 'terran01').assetId : null;
 if (campaign) assert.ok(campaignPackMissions.includes(missionId), 'Unsupported test mission');
 const groupMinesTest = process.argv[2] === '--test-group-mines';
-const out = campaign || protossSelectionTest || zergMorphTest || groupMinesTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
+const defenseCommandsTest = process.argv[2] === '--test-defense-commands';
+const out = campaign || protossSelectionTest || zergMorphTest || groupMinesTest || defenseCommandsTest || process.argv[2] === '--test-commands' ? null : process.argv[2] || 'wasm-shot.ppm';
 const mission = campaign ? JSON.parse(readFileSync(`web/data/campaign/${missionId}.json`, 'utf8')) : null;
 
 // Archive index mapping must match wasm_main.cpp's js_file_reader.
@@ -739,8 +740,31 @@ const files = [
   readFileSync('web/data/STARDAT.MPQ'),
   readFileSync('web/data/BROODAT.MPQ'),
   readFileSync('web/data/patch_rt.mpq'),
-  readFileSync(campaign ? `web/data/campaign/${missionId}.mpq` : 'web/maps/Weave_v1.scx'),
+  readFileSync(defenseCommandsTest ? 'web/data/campaign/terran03.mpq' : campaign ? `web/data/campaign/${missionId}.mpq` : 'web/maps/Weave_v1.scx'),
 ];
+
+const defenseFixtures = [
+  ['Missile Turret', 124, 224, 2368, 42],
+  ['Sunken Colony', 146, 768, 480, 124],
+  ['Spore Colony', 144, 1568, 608, 42],
+  ['Photon Cannon', 162, 928, 2720, 124],
+];
+if (defenseCommandsTest) {
+  const sections = scenarioSections(readPlainMissionPack(files[3])('staredit/scenario.chk'));
+  sections.get('TRIG').fill(0);
+  sections.get('MBRF').fill(0);
+  const placements = [[214, 1, 224, 2368], [125, 1, 112, 2304], [156, 1, 1056, 2752]];
+  for (const [, type, worldX, worldY, targetType] of defenseFixtures)
+    placements.push([type, 1, worldX, worldY], [targetType, 4, worldX + 96, worldY], [targetType, 4, worldX, worldY + 96]);
+  const units = sections.get('UNIT').fill(0);
+  for (let offset = 0; offset < units.length; offset += 36) {
+    const [type, owner, worldX, worldY] = placements[offset / 36] ?? placements[0];
+    units.writeUInt16LE(worldX, offset + 4);
+    units.writeUInt16LE(worldY, offset + 6);
+    units.writeUInt16LE(type, offset + 8);
+    units[offset + 16] = owner;
+  }
+}
 
 const wasi = new WASI({ version: 'preview1', args: ['openbw'], preopens: {} });
 
@@ -793,7 +817,8 @@ const x = recoveryTest ? {
     nativeExports.openbw_apply(owner, length);
   },
 } : nativeExports;
-if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot, mission.createStartingUnits ? 1 : 0);
+if (defenseCommandsTest) x.openbw_init_campaign(1280, 800, 1, 1, 0);
+else if (campaign) x.openbw_init_campaign(1280, 800, mission.race, mission.humanSlot, mission.createStartingUnits ? 1 : 0);
 else x.openbw_init(1280, 800, zergMorphTest ? 0 : protossSelectionTest ? 2 : 1, 0 /*slot*/);
 if (!campaign) for (let i = 0; i < 4; i++) x.openbw_step();
 x.openbw_render(0);
@@ -865,6 +890,8 @@ if (out) {
   testProtossSelection();
 } else if (zergMorphTest) {
   testZergMorphs();
+} else if (defenseCommandsTest) {
+  testDefenseCommands();
 } else {
   testCommands(groupMinesTest);
 }
@@ -874,6 +901,83 @@ function readRecoveryString(pointer) {
   let end = pointer;
   while (bytes[end]) end++;
   return new TextDecoder().decode(bytes.subarray(pointer, end));
+}
+
+function testDefenseCommands() {
+  const units = () => readRecoveryString(x.openbw_debug_units()).trim().split('\n').map(line => line.split('\t'));
+  const actorAt = (owner, worldX, worldY) => units().find(unit => Number(unit[2]) === owner && Number(unit[3]) === worldX && Number(unit[4]) === worldY);
+  const targetNear = (worldX, worldY) => units().find(unit => unit[2] === '4' && Math.hypot(Number(unit[3]) - worldX, Number(unit[4]) - worldY) <= 32);
+  const select = unit => { x.openbw_debug_select(Number(unit[0]), 0); x.openbw_render(0); };
+  const card = () => readRecoveryString(x.openbw_card()).split('\n');
+  const hitPoints = unit => {
+    if (!units().some(row => row[0] === unit[0])) return 0;
+    select(unit);
+    return Number(card()[0].match(/\tHP (\d+)\//)?.[1]);
+  };
+  const click = (worldX, worldY, button = 1) => {
+    const screenX = worldX - x.openbw_camera(0), screenY = worldY - x.openbw_camera(1);
+    x.openbw_mouse_button(1, button, screenX, screenY, 1);
+    x.openbw_mouse_button(0, button, screenX, screenY, 1);
+    x.openbw_render(0);
+  };
+  const apply = () => {
+    const bytes = Buffer.from(new Uint8Array(memory.buffer, x.openbw_out_ptr(), x.openbw_out_len()));
+    assert.ok(bytes.length, 'A defense command emits synchronized input');
+    new Uint8Array(memory.buffer, x.openbw_in_ptr(bytes.length), bytes.length).set(bytes);
+    x.openbw_apply(1, bytes.length);
+    x.openbw_out_clear();
+    return bytes;
+  };
+  x.openbw_mission_begin();
+  for (let tick = 0; tick < 4; tick++) x.openbw_step();
+  select(actorAt(1, 112, 2304));
+  assert.ok(card().some(row => row.includes('\tUnload\t')));
+  assert.ok(!card().some(row => row.includes('\tAttack\t')), 'Bunkers retain their original unload-only commands');
+
+  const fights = defenseFixtures.map(([name, , worldX, worldY]) => {
+    const defense = actorAt(1, worldX, worldY);
+    const targets = [targetNear(worldX + 96, worldY), targetNear(worldX, worldY + 96)];
+    assert.equal(defense?.[1], name, `Fixture has its ${name}`);
+    assert.ok(targets.every(Boolean), `${name} has two valid targets: ${JSON.stringify(units().filter(unit => unit[2] === '4'))}`);
+    return { name, worldX, worldY, defense, targets };
+  });
+  for (const [index, button] of [[0, 1], [1, 3]]) {
+    const before = fights.map(({ targets }) => hitPoints(targets[index]));
+    for (const { name, worldX, worldY, defense, targets } of fights) {
+      x.openbw_pan(worldX - x.openbw_camera(0) - 320, worldY - x.openbw_camera(1) - 250);
+      x.openbw_mouse_move(-1, -1);
+      select(defense);
+      assert.deepEqual(card().slice(1).map(row => row.split('\t')[1]).sort(), ['Attack', 'Stop'], name);
+      x.openbw_out_clear();
+      if (!index) {
+        x.openbw_key(1, 97, 4);
+        x.openbw_key(0, 97, 4);
+        x.openbw_render(0);
+        assert.ok([1, 4].includes(x.openbw_cursor()), `${name} arms Attack with A`);
+      }
+      const target = units().find(row => row[0] === targets[index][0]);
+      assert.ok(target, `${name}'s target is still present`);
+      click(Number(target[3]), Number(target[4]), button);
+      const command = apply().subarray(index ? -10 : -11);
+      assert.equal(command[0], index ? 20 : 21);
+      assert.equal(command.readUInt16LE(5), Number(target[0]), `${name} names the clicked unit in the order`);
+      if (!index) assert.equal(command[9], 19, 'Attack on a unit sends TowerAttack');
+    }
+    for (let tick = 0; tick < 48; tick++) x.openbw_step();
+    for (const [fightIndex, { name, worldX, worldY, targets }] of fights.entries()) {
+      assert.ok(hitPoints(targets[index]) < before[fightIndex], `${name} damages the specific target ordered by ${index ? 'right-click' : 'A'}`);
+      assert.ok(actorAt(1, worldX, worldY), `${name} remains stationary`);
+    }
+  }
+  const { defense, worldX, worldY } = fights[0];
+  x.openbw_pan(worldX - x.openbw_camera(0) - 320, worldY - x.openbw_camera(1) - 250);
+  select(defense);
+  x.openbw_key(1, 97, 4); x.openbw_key(0, 97, 4);
+  click(worldX + 160, worldY - 64);
+  assert.equal(apply().at(-2), 18, 'Attack on empty ground sends TowerGuard, not AttackMove');
+  x.openbw_key(1, 115, 22); x.openbw_key(0, 115, 22); x.openbw_render(0);
+  assert.equal(apply().at(-2), 26, 'Stop uses the normal synchronized stop command');
+  console.log('Classic defense cards and native focus fire passed for all four towers; Bunkers retain Unload.');
 }
 
 function testCampaign() {

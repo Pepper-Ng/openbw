@@ -1318,6 +1318,10 @@ struct play_ui : ui_functions {
 	}
 
 	// The unit-specific part of the card (not the build submenu); returns the title.
+	bool can_command_tower(unit_t* unit) {
+		return unit && u_completed(unit) && unit_can_receive_order(unit, get_order_type(Orders::TowerGuard), my_player);
+	}
+
 	const char* card_for_unit(unit_t* u, UnitTypes id) {
 		using U = UnitTypes;
 		// A Terran SCV mid-construction shows only Cancel (Esc), like the original — all the
@@ -1331,6 +1335,10 @@ struct play_ui : ui_functions {
 		bool building = ut_building(u), worker = ut_worker(u);
 		// Movement orders for commandable mobile units (not buildings, larvae, eggs).
 		if (!building && !unit_is(u, U::Zerg_Larva) && !unit_is_egg(u)) add_move_orders();
+		else if (can_command_tower(u)) {
+			card.push_back({'s', "Stop", C_STOP, U::None});
+			card.push_back({'a', "Attack", C_ATTACK, U::None});
+		}
 		if (worker) {
 			// Carrying minerals/gas swaps Gather for Return Cargo in the same slot, as in
 			// the original.
@@ -1459,10 +1467,11 @@ struct play_ui : ui_functions {
 	static int order_active_act(Orders id) {
 		using O = Orders;
 		switch (id) {
-		case O::Stop: case O::Guard: case O::PlayerGuard:                      return C_STOP;
+		case O::Stop: case O::Guard: case O::PlayerGuard: case O::TowerGuard:  return C_STOP;
 		case O::Move: case O::Follow:                                          return C_MOVE;
 		case O::AttackDefault: case O::MoveToAttack: case O::AttackUnit:
-		case O::AttackFixedRange: case O::AttackTile: case O::AttackMove:      return C_ATTACK;
+		case O::AttackFixedRange: case O::AttackTile: case O::AttackMove:
+		case O::TowerAttack:                                                  return C_ATTACK;
 		case O::HoldPosition: case O::QueenHoldPosition:                       return C_HOLD;
 		case O::Patrol:                                                        return C_PATROL;
 		case O::Harvest1: case O::Harvest2: case O::MoveToGas: case O::WaitForGas:
@@ -2207,7 +2216,11 @@ struct play_ui : ui_functions {
 		// A unit target force-attacks it (AttackDefault → the unit's attack_unit); a-move to
 		// ground uses AttackMove directly. AttackDefault + no target resolves to the unit's
 		// attack_move, which is Guard for workers (they'd stand still) — AttackMove moves them.
-		case T_ATTACK: cmd_order(target ? Orders::AttackDefault : Orders::AttackMove, pos, target, q); break;
+		case T_ATTACK:
+			if (can_command_tower(primary_selected()))
+				cmd_order(target ? Orders::TowerAttack : Orders::TowerGuard, pos, target, q);
+			else cmd_order(target ? Orders::AttackDefault : Orders::AttackMove, pos, target, q);
+			break;
 		// Move onto a unit follows it (any unit — chasing an enemy without attacking
 		// is the classic use), as in the original.
 		case T_MOVE:
